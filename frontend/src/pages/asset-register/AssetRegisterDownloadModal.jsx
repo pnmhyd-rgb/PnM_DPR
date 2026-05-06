@@ -9,6 +9,7 @@ const CATEGORIES = [
 ]
 
 const COLS = [
+  { header: '#',               val: (m, i) => i + 1 },
   { header: 'Project',         val: m => m.project_code || '' },
   { header: 'SL No',           val: m => m.slno || '' },
   { header: 'Ownership',       val: m => m.ownership || '' },
@@ -41,7 +42,7 @@ function buildFilename(proj, selectedCount, categories, ext) {
 
 function downloadCSV(rows, filename) {
   const escape = v => { const s = String(v); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s }
-  const csv  = [COLS.map(c => c.header).join(','), ...rows.map(m => COLS.map(c => escape(c.val(m))).join(','))].join('\n')
+  const csv  = [COLS.map(c => c.header).join(','), ...rows.map((m, i) => COLS.map(c => escape(c.val(m, i))).join(','))].join('\n')
   const blob = new Blob([csv], { type: 'text/csv' })
   const url  = URL.createObjectURL(blob)
   const a    = document.createElement('a'); a.href = url; a.download = filename; a.click()
@@ -58,15 +59,15 @@ async function downloadExcel(rows, filename, projName, catLabels) {
   const dateRow    = [`Generated: ${new Date().toLocaleString('en-IN')}`]
   const blankRow   = []
   const headerRow  = COLS.map(c => c.header)
-  const dataRows   = rows.map(m => COLS.map(c => c.val(m)))
+  const dataRows   = rows.map((m, i) => COLS.map(c => c.val(m, i)))
 
   const wsData = [titleRow, catRow, dateRow, blankRow, headerRow, ...dataRows]
   const ws     = XLSX.utils.aoa_to_sheet(wsData)
 
   // Column widths
-  ws['!cols'] = COLS.map((c, i) => {
-    const max = Math.max(c.header.length, ...rows.map(m => String(c.val(m)).length))
-    return { wch: Math.min(Math.max(max + 2, 10), 40) }
+  ws['!cols'] = COLS.map((c, ci) => {
+    const max = Math.max(c.header.length, ...rows.map((m, ri) => String(c.val(m, ri)).length))
+    return { wch: ci === 0 ? 5 : Math.min(Math.max(max + 2, 10), 40) }
   })
 
   // Style header row (row index 4, 0-based)
@@ -87,10 +88,8 @@ async function downloadPDF(rows, filename, projName, catLabels) {
 
   const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' })
 
-  // Header block
-  doc.setFillColor(30, 58, 95)
-  doc.rect(0, 0, doc.internal.pageSize.getWidth(), 22, 'F')
-  doc.setTextColor(255, 255, 255)
+  // Plain text header — no dark background
+  doc.setTextColor(0, 0, 0)
   doc.setFontSize(13)
   doc.setFont('helvetica', 'bold')
   doc.text('RVR Projects Pvt Ltd — Asset Register', 14, 10)
@@ -98,16 +97,15 @@ async function downloadPDF(rows, filename, projName, catLabels) {
   doc.setFont('helvetica', 'normal')
   doc.text(`Project: ${projName}   |   Categories: ${catLabels}   |   Generated: ${new Date().toLocaleString('en-IN')}`, 14, 17)
 
-  doc.setTextColor(0, 0, 0)
-
   autoTable(doc, {
-    startY: 26,
+    startY: 22,
     head: [COLS.map(c => c.header)],
-    body: rows.map(m => COLS.map(c => String(c.val(m)))),
+    body: rows.map((m, i) => COLS.map(c => String(c.val(m, i)))),
     styles: { fontSize: 6.5, cellPadding: 1.5, overflow: 'linebreak' },
-    headStyles: { fillColor: [30, 58, 95], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+    headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold', fontSize: 7 },
     alternateRowStyles: { fillColor: [245, 247, 250] },
-    margin: { top: 26, left: 8, right: 8 },
+    columnStyles: { 0: { cellWidth: 8 } },
+    margin: { top: 22, left: 8, right: 8 },
     didDrawPage: (data) => {
       // Page number footer
       const pageCount = doc.internal.getNumberOfPages()
