@@ -18,12 +18,12 @@ const NAV = [
 ]
 
 const ADMIN_GENERAL_NAV = [
-  { label: 'Users',   href: '/admin/users' },
-  { label: 'Entries', href: '/admin/entries' },
+  { label: 'Users',    href: '/admin/users' },
+  { label: 'Entries',  href: '/admin/entries' },
+  { label: 'Projects', href: '/admin/projects' },
 ]
 
 const ADMIN_ASSET_NAV = [
-  { label: 'Projects',        href: '/admin/projects' },
   { label: 'Machines',        href: '/admin/machines' },
   { label: 'Equipment Types', href: '/admin/equipment-types' },
 ]
