@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { getMachines, getProjects } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
-import { Plus } from 'lucide-react'
+import { Plus, Download } from 'lucide-react'
 import AddAssetModal from './AddAssetModal'
+import AssetRegisterDownloadModal from './AssetRegisterDownloadModal'
 
 export default function OwnMeasurable() {
   const { isAdmin, user }         = useAuth()
@@ -12,6 +13,7 @@ export default function OwnMeasurable() {
   const [filterProj, setFilterProj] = useState('')
   const [loading, setLoading]     = useState(true)
   const [showAdd, setShowAdd]     = useState(false)
+  const [showDownload, setShowDownload] = useState(false)
 
   useEffect(() => {
     getProjects().then(r => setProjects(r.data.data))
@@ -35,11 +37,16 @@ export default function OwnMeasurable() {
           <h1 className="text-xl font-bold text-gray-900">Own Asset Register — Measurable Assets</h1>
           <p className="text-sm text-gray-500 mt-0.5">Company-owned equipment tracked by Hours / KM meter</p>
         </div>
-        {canAdd && (
-          <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 px-3 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 transition-colors">
-            <Plus size={15} />Add Asset
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowDownload(true)} className="flex items-center gap-2 px-3 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition-colors">
+            <Download size={15} />Download
           </button>
-        )}
+          {canAdd && (
+            <button onClick={() => setShowAdd(true)} className="flex items-center gap-2 px-3 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 transition-colors">
+              <Plus size={15} />Add Asset
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="bg-white rounded-xl border border-gray-200 p-4">
@@ -97,6 +104,7 @@ export default function OwnMeasurable() {
       </div>
 
       {showAdd && <AddAssetModal onClose={() => setShowAdd(false)} onSaved={load} />}
+      {showDownload && <AssetRegisterDownloadModal onClose={() => setShowDownload(false)} />}
     </div>
   )
 }
