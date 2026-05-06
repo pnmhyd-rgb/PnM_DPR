@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { X, Download, Loader2 } from 'lucide-react'
+import { X, Download, Loader2, FileSpreadsheet, FileText, Sheet } from 'lucide-react'
 import { getMachines, getProjects } from '../../lib/api'
 
 const CATEGORIES = [
@@ -8,7 +8,7 @@ const CATEGORIES = [
   { key: 'hire',               label: 'Hire Assets',                 match: m => m.ownership === 'Hire' },
 ]
 
-const CSV_COLS = [
+const COLS = [
   { header: 'Project',         val: m => m.project_code || '' },
   { header: 'SL No',           val: m => m.slno || '' },
   { header: 'Ownership',       val: m => m.ownership || '' },
@@ -33,100 +33,174 @@ const CSV_COLS = [
   { header: 'Price (INR)',     val: m => m.price || '' },
 ]
 
-function toCSV(rows) {
-  const escape = v => {
-    const s = String(v)
-    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s
-  }
-  const header = CSV_COLS.map(c => c.header).join(',')
-  const lines  = rows.map(m => CSV_COLS.map(c => escape(c.val(m))).join(','))
-  return [header, ...lines].join('\n')
+function buildFilename(proj, selectedCount, categories, ext) {
+  const catLabel  = selectedCount === 3 ? 'All' : CATEGORIES.filter(c => categories[c.key]).map(c => c.key).join('+')
+  const projLabel = proj ? proj.code : 'AllProjects'
+  return `AssetRegister_${projLabel}_${catLabel}_${new Date().toISOString().slice(0, 10)}.${ext}`
+}
+
+function downloadCSV(rows, filename) {
+  const escape = v => { const s = String(v); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s }
+  const csv  = [COLS.map(c => c.header).join(','), ...rows.map(m => COLS.map(c => escape(c.val(m))).join(','))].join('\n')
+  const blob = new Blob([csv], { type: 'text/csv' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a'); a.href = url; a.download = filename; a.click()
+  URL.revokeObjectURL(url)
+}
+
+async function downloadExcel(rows, filename, projName, catLabels) {
+  const XLSX = await import('xlsx')
+  const wb   = XLSX.utils.book_new()
+
+  // Title rows then data
+  const titleRow   = [`Asset Register — ${projName}`]
+  const catRow     = [`Categories: ${catLabels}`]
+  const dateRow    = [`Generated: ${new Date().toLocaleString('en-IN')}`]
+  const blankRow   = []
+  const headerRow  = COLS.map(c => c.header)
+  const dataRows   = rows.map(m => COLS.map(c => c.val(m)))
+
+  const wsData = [titleRow, catRow, dateRow, blankRow, headerRow, ...dataRows]
+  const ws     = XLSX.utils.aoa_to_sheet(wsData)
+
+  // Column widths
+  ws['!cols'] = COLS.map((c, i) => {
+    const max = Math.max(c.header.length, ...rows.map(m => String(c.val(m)).length))
+    return { wch: Math.min(Math.max(max + 2, 10), 40) }
+  })
+
+  // Style header row (row index 4, 0-based)
+  const headerRowIdx = 4
+  COLS.forEach((_, ci) => {
+    const cellRef = XLSX.utils.encode_cell({ r: headerRowIdx, c: ci })
+    if (!ws[cellRef]) return
+    ws[cellRef].s = { font: { bold: true }, fill: { fgColor: { rgb: '1E3A5F' } }, font: { bold: true, color: { rgb: 'FFFFFF' } } }
+  })
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Asset Register')
+  XLSX.writeFile(wb, filename)
+}
+
+async function downloadPDF(rows, filename, projName, catLabels) {
+  const { jsPDF }    = await import('jspdf')
+  const { default: autoTable } = await import('jspdf-autotable')
+
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a3' })
+
+  // Header block
+  doc.setFillColor(30, 58, 95)
+  doc.rect(0, 0, doc.internal.pageSize.getWidth(), 22, 'F')
+  doc.setTextColor(255, 255, 255)
+  doc.setFontSize(13)
+  doc.setFont('helvetica', 'bold')
+  doc.text('RVR Projects Pvt Ltd — Asset Register', 14, 10)
+  doc.setFontSize(8)
+  doc.setFont('helvetica', 'normal')
+  doc.text(`Project: ${projName}   |   Categories: ${catLabels}   |   Generated: ${new Date().toLocaleString('en-IN')}`, 14, 17)
+
+  doc.setTextColor(0, 0, 0)
+
+  autoTable(doc, {
+    startY: 26,
+    head: [COLS.map(c => c.header)],
+    body: rows.map(m => COLS.map(c => String(c.val(m)))),
+    styles: { fontSize: 6.5, cellPadding: 1.5, overflow: 'linebreak' },
+    headStyles: { fillColor: [30, 58, 95], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+    alternateRowStyles: { fillColor: [245, 247, 250] },
+    margin: { top: 26, left: 8, right: 8 },
+    didDrawPage: (data) => {
+      // Page number footer
+      const pageCount = doc.internal.getNumberOfPages()
+      doc.setFontSize(7)
+      doc.setTextColor(150)
+      doc.text(
+        `Page ${data.pageNumber}`,
+        doc.internal.pageSize.getWidth() - 20,
+        doc.internal.pageSize.getHeight() - 6
+      )
+    }
+  })
+
+  doc.save(filename)
 }
 
 export default function AssetRegisterDownloadModal({ onClose, defaultProject = '' }) {
   const [projects,    setProjects]    = useState([])
   const [projectId,   setProjectId]   = useState(defaultProject)
   const [categories,  setCategories]  = useState({ own_measurable: true, own_non_measurable: true, hire: true })
+  const [format,      setFormat]      = useState('excel')
   const [downloading, setDownloading] = useState(false)
   const [error,       setError]       = useState('')
 
-  useEffect(() => {
-    getProjects().then(r => setProjects(r.data.data)).catch(() => {})
-  }, [])
+  useEffect(() => { getProjects().then(r => setProjects(r.data.data)).catch(() => {}) }, [])
 
-  const toggleCat = key => setCategories(prev => ({ ...prev, [key]: !prev[key] }))
-
+  const toggleCat     = key => setCategories(prev => ({ ...prev, [key]: !prev[key] }))
   const selectedCount = Object.values(categories).filter(Boolean).length
 
   const handleDownload = async () => {
     if (selectedCount === 0) { setError('Select at least one category.'); return }
     setError(''); setDownloading(true)
     try {
-      const proj = projects.find(p => String(p.id) === String(projectId))
-      const res  = await getMachines(proj ? { project_code: proj.code } : {})
-      let all    = res.data.data
-
-      // filter by selected categories
+      const proj     = projects.find(p => String(p.id) === String(projectId))
+      const res      = await getMachines(proj ? { project_code: proj.code } : {})
       const matchers = CATEGORIES.filter(c => categories[c.key]).map(c => c.match)
-      const filtered = all.filter(m => matchers.some(fn => fn(m)))
+      const filtered = res.data.data.filter(m => matchers.some(fn => fn(m)))
 
       if (filtered.length === 0) { setError('No assets found for the selected filters.'); setDownloading(false); return }
 
-      const csv  = toCSV(filtered)
-      const blob = new Blob([csv], { type: 'text/csv' })
-      const url  = URL.createObjectURL(blob)
-      const a    = document.createElement('a'); a.href = url
+      const projName  = proj ? `${proj.name}${proj.code ? ` (${proj.code})` : ''}` : 'All Projects'
+      const catLabels = selectedCount === 3 ? 'All Categories' : CATEGORIES.filter(c => categories[c.key]).map(c => c.label).join(', ')
 
-      const catLabel = selectedCount === 3 ? 'All' : CATEGORIES.filter(c => categories[c.key]).map(c => c.key).join('+')
-      const projLabel = proj ? proj.code : 'AllProjects'
-      a.download = `AssetRegister_${projLabel}_${catLabel}_${new Date().toISOString().slice(0,10)}.csv`
-      a.click()
-      URL.revokeObjectURL(url)
+      if (format === 'csv') {
+        downloadCSV(filtered, buildFilename(proj, selectedCount, categories, 'csv'))
+      } else if (format === 'excel') {
+        await downloadExcel(filtered, buildFilename(proj, selectedCount, categories, 'xlsx'), projName, catLabels)
+      } else {
+        await downloadPDF(filtered, buildFilename(proj, selectedCount, categories, 'pdf'), projName, catLabels)
+      }
+
       onClose()
     } catch (e) {
-      setError('Failed to fetch data. Please try again.')
+      console.error(e)
+      setError('Failed to generate report. Please try again.')
     } finally {
       setDownloading(false)
     }
   }
 
+  const FORMAT_OPTS = [
+    { key: 'excel', label: 'Excel (.xlsx)', icon: FileSpreadsheet, color: 'text-green-700 border-green-400 bg-green-50' },
+    { key: 'pdf',   label: 'PDF (.pdf)',    icon: FileText,        color: 'text-red-700 border-red-400 bg-red-50' },
+    { key: 'csv',   label: 'CSV (.csv)',    icon: Sheet,           color: 'text-blue-700 border-blue-400 bg-blue-50' },
+  ]
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
           <h2 className="font-semibold text-gray-900">Download Asset Register</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>
         </div>
 
         <div className="p-5 space-y-5">
-          {/* Project filter */}
+          {/* Project */}
           <div>
             <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Project</label>
-            <select
-              value={projectId}
-              onChange={e => setProjectId(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
+            <select value={projectId} onChange={e => setProjectId(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">All Projects</option>
-              {projects.map(p => (
-                <option key={p.id} value={p.id}>{p.name}{p.code ? ` (${p.code})` : ''}</option>
-              ))}
+              {projects.map(p => <option key={p.id} value={p.id}>{p.name}{p.code ? ` (${p.code})` : ''}</option>)}
             </select>
           </div>
 
-          {/* Category checkboxes */}
+          {/* Categories */}
           <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Categories to include</label>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Categories</label>
             <div className="space-y-2">
               {CATEGORIES.map(cat => (
                 <label key={cat.key} className="flex items-center gap-3 p-3 rounded-lg border border-gray-200 cursor-pointer hover:bg-gray-50 transition-colors">
-                  <input
-                    type="checkbox"
-                    checked={categories[cat.key]}
-                    onChange={() => toggleCat(cat.key)}
-                    className="w-4 h-4 accent-blue-600 flex-shrink-0"
-                  />
+                  <input type="checkbox" checked={categories[cat.key]} onChange={() => toggleCat(cat.key)}
+                    className="w-4 h-4 accent-blue-600 flex-shrink-0" />
                   <span className="text-sm text-gray-800">{cat.label}</span>
                 </label>
               ))}
@@ -139,18 +213,33 @@ export default function AssetRegisterDownloadModal({ onClose, defaultProject = '
             </div>
           </div>
 
+          {/* Format */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Format</label>
+            <div className="grid grid-cols-3 gap-2">
+              {FORMAT_OPTS.map(f => {
+                const Icon = f.icon
+                return (
+                  <button key={f.key} onClick={() => setFormat(f.key)}
+                    className={`flex flex-col items-center gap-1.5 p-3 rounded-xl border-2 transition-all text-xs font-medium ${
+                      format === f.key ? f.color + ' border-current' : 'border-gray-200 text-gray-500 hover:border-gray-300'
+                    }`}>
+                    <Icon size={20} />
+                    {f.label}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
           {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
         </div>
 
-        {/* Footer */}
         <div className="px-5 py-4 border-t border-gray-200 flex gap-3">
-          <button
-            onClick={handleDownload}
-            disabled={downloading || selectedCount === 0}
-            className="flex-1 flex items-center justify-center gap-2 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors"
-          >
+          <button onClick={handleDownload} disabled={downloading || selectedCount === 0}
+            className="flex-1 flex items-center justify-center gap-2 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors">
             {downloading ? <Loader2 size={15} className="animate-spin" /> : <Download size={15} />}
-            {downloading ? 'Preparing…' : `Download CSV${selectedCount > 0 ? ` (${selectedCount} categor${selectedCount === 1 ? 'y' : 'ies'})` : ''}`}
+            {downloading ? 'Preparing…' : `Download ${format.toUpperCase()}`}
           </button>
           <button onClick={onClose} className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">Cancel</button>
         </div>
