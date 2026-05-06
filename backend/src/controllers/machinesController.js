@@ -7,7 +7,8 @@ const FULL_FIELDS = `
 const getAll = async (req, res) => {
   try {
     const { project_id, project_code } = req.query;
-    let query = `SELECT ${FULL_FIELDS} FROM machines m JOIN projects p ON m.project_id = p.id WHERE m.active = true`;
+    const { include_inactive } = req.query;
+    let query = `SELECT ${FULL_FIELDS} FROM machines m JOIN projects p ON m.project_id = p.id WHERE (m.active = true${include_inactive === 'true' ? ' OR m.active = false' : ''})`;
     const params = [];
 
     if (project_id) { params.push(project_id); query += ` AND m.project_id = $${params.length}`; }
