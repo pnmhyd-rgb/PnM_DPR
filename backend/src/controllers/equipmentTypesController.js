@@ -4,7 +4,9 @@ const getAll = async (req, res) => {
   try {
     const result = await db.query(`
       SELECT et.id, et.name, et.asset_category,
-             COUNT(m.id) FILTER (WHERE m.active = true) AS usage_count
+             COUNT(m.id) FILTER (WHERE m.active = true)                          AS usage_count,
+             COUNT(m.id) FILTER (WHERE m.active = true AND m.ownership = 'Own')  AS own_count,
+             COUNT(m.id) FILTER (WHERE m.active = true AND m.ownership = 'Hire') AS hire_count
       FROM equipment_types et
       LEFT JOIN machines m ON LOWER(m.eq_type) = LOWER(et.name)
       GROUP BY et.id, et.name, et.asset_category
@@ -39,18 +41,30 @@ const create = async (req, res) => {
 
 const bulkCreate = async (req, res) => {
   try {
-    const { names } = req.body;
-    if (!Array.isArray(names) || names.length === 0)
-      return res.status(400).json({ error: 'names array is required' });
+    // Accept { items: [{name, asset_category}] } or legacy { names: [] }
+    let items = req.body.items;
+    if (!items && Array.isArray(req.body.names))
+      items = req.body.names.map(n => ({ name: n }));
+    if (!Array.isArray(items) || items.length === 0)
+      return res.status(400).json({ error: 'items array is required' });
     const results = []; const errors = [];
-    for (const raw of names) {
-      const name = raw?.trim();
+    for (const raw of items) {
+      const name = (typeof raw === 'string' ? raw : raw?.name)?.trim();
+      const asset_category = typeof raw === 'object' ? raw.asset_category || null : null;
       if (!name) continue;
+      if (asset_category && !VALID_CATS.includes(asset_category)) {
+        errors.push({ name, error: `Invalid category "${asset_category}"` });
+        continue;
+      }
       try {
-        const r = await db.query('INSERT INTO equipment_types (name) VALUES ($1) RETURNING *', [name]);
+        const r = await db.query(
+          'INSERT INTO equipment_types (name, asset_category) VALUES ($1, $2) RETURNING *',
+          [name, asset_category]
+        );
         results.push(r.rows[0]);
       } catch (err) {
-        errors.push({ name, error: err.code === '23505' ? 'Already exists' : 'Failed' });
+        console.error(`Bulk insert error for "${name}":`, err.code, err.message);
+        errors.push({ name, error: err.code === '23505' ? 'Already exists' : (err.message || 'Failed') });
       }
     }
     res.status(201).json({ created: results.length, failed: errors.length, results, errors });

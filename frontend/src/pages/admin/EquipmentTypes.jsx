@@ -5,35 +5,51 @@ import {
 } from '../../lib/api'
 import {
   Plus, Trash2, Pencil, Check, X, Search, List,
-  AlertTriangle, FileSpreadsheet, FileText, Download
+  AlertTriangle, FileSpreadsheet, FileText, Download, Upload
 } from 'lucide-react'
 
 const CATEGORIES = ['Measurable', 'Non-Measurable']
 
 /* ── Export helpers ───────────────────────────────────────────────────────── */
 const COLS = [
-  { header: 'Sl No',          val: (t, i) => i + 1 },
-  { header: 'Equipment Type', val: t => t.name },
-  { header: 'Category',       val: t => t.asset_category || '—' },
-  { header: 'Machines in Use',val: t => parseInt(t.usage_count) || 0 },
+  { header: 'Sl No',           val: (t, i) => i + 1 },
+  { header: 'Equipment Type',  val: t => t.name },
+  { header: 'Category',        val: t => t.asset_category || '—' },
+  { header: 'Own (Working)',   val: t => parseInt(t.own_count)   || 0 },
+  { header: 'Hire (Working)',  val: t => parseInt(t.hire_count)  || 0 },
+  { header: 'Total Machines',  val: t => parseInt(t.usage_count) || 0 },
 ]
 
 async function exportExcel(rows) {
   const XLSX = await import('xlsx')
   const wb   = XLSX.utils.book_new()
-  const ws   = XLSX.utils.aoa_to_sheet([
+
+  const totalOwn  = rows.reduce((s, t) => s + (parseInt(t.own_count)   || 0), 0)
+  const totalHire = rows.reduce((s, t) => s + (parseInt(t.hire_count)  || 0), 0)
+  const totalAll  = rows.reduce((s, t) => s + (parseInt(t.usage_count) || 0), 0)
+  const totalsRow = ['', 'GRAND TOTAL', '', totalOwn, totalHire, totalAll]
+
+  const ws = XLSX.utils.aoa_to_sheet([
     ['Equipment Types'],
     [`Generated: ${new Date().toLocaleString('en-IN')}`],
     [],
     COLS.map(c => c.header),
     ...rows.map((t, i) => COLS.map(c => c.val(t, i))),
+    [],
+    totalsRow,
   ])
-  ws['!cols'] = [{ wch: 8 }, { wch: 30 }, { wch: 18 }, { wch: 16 }]
-  // Bold header row (row index 3)
+  ws['!cols'] = [{ wch: 8 }, { wch: 36 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }]
+
   COLS.forEach((_, ci) => {
     const ref = XLSX.utils.encode_cell({ r: 3, c: ci })
     if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'DCDCDC' } } }
   })
+  const totalsR = 4 + rows.length + 1
+  totalsRow.forEach((_, ci) => {
+    const ref = XLSX.utils.encode_cell({ r: totalsR, c: ci })
+    if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0E0FF' } } }
+  })
+
   XLSX.utils.book_append_sheet(wb, ws, 'Equipment Types')
   XLSX.writeFile(wb, `EquipmentTypes_${new Date().toISOString().slice(0, 10)}.xlsx`)
 }
@@ -41,22 +57,44 @@ async function exportExcel(rows) {
 async function exportPDF(rows) {
   const { jsPDF } = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' })
+
+  const totalOwn  = rows.reduce((s, t) => s + (parseInt(t.own_count)   || 0), 0)
+  const totalHire = rows.reduce((s, t) => s + (parseInt(t.hire_count)  || 0), 0)
+  const totalAll  = rows.reduce((s, t) => s + (parseInt(t.usage_count) || 0), 0)
 
   doc.setFontSize(13); doc.setFont('helvetica', 'bold')
   doc.text('Equipment Types', 14, 12)
   doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(100)
-  doc.text(`Total: ${rows.length} types   |   Generated: ${new Date().toLocaleString('en-IN')}`, 14, 19)
+  doc.text(
+    `${rows.length} types  |  Own: ${totalOwn}  Hire: ${totalHire}  Total Machines: ${totalAll}  |  Generated: ${new Date().toLocaleString('en-IN')}`,
+    14, 19
+  )
   doc.setTextColor(0)
 
   autoTable(doc, {
     startY: 24,
     head: [COLS.map(c => c.header)],
-    body: rows.map((t, i) => COLS.map(c => String(c.val(t, i)))),
+    body: [
+      ...rows.map((t, i) => COLS.map(c => String(c.val(t, i)))),
+      ['', 'GRAND TOTAL', '', String(totalOwn), String(totalHire), String(totalAll)],
+    ],
     styles: { fontSize: 9, cellPadding: 2 },
     headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 249, 250] },
-    columnStyles: { 0: { cellWidth: 16 }, 2: { cellWidth: 34 } },
+    columnStyles: {
+      0: { cellWidth: 14 },
+      2: { cellWidth: 28 },
+      3: { cellWidth: 26, halign: 'center' },
+      4: { cellWidth: 26, halign: 'center' },
+      5: { cellWidth: 26, halign: 'center' },
+    },
+    didParseCell: d => {
+      if (d.row.index === rows.length) {
+        d.cell.styles.fontStyle = 'bold'
+        d.cell.styles.fillColor = [208, 224, 255]
+      }
+    },
     margin: { left: 14, right: 14 },
     didDrawPage: d => {
       doc.setFontSize(7); doc.setTextColor(150)
@@ -64,6 +102,61 @@ async function exportPDF(rows) {
     }
   })
   doc.save(`EquipmentTypes_${new Date().toISOString().slice(0, 10)}.pdf`)
+}
+
+/* ── Bulk upload helpers ──────────────────────────────────────────────────── */
+async function downloadTemplate() {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.utils.book_new()
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['Equipment Types Bulk Upload Template'],
+    ['Fill in Equipment Type (required) and Category (Measurable or Non-Measurable). Do not edit the header row (row 4).'],
+    [],
+    ['Sl No', 'Equipment Type', 'Category'],
+    [1, 'Excavator', 'Measurable'],
+    [2, 'Generator', 'Measurable'],
+    [3, 'Safety Helmet', 'Non-Measurable'],
+  ])
+  ws['!cols'] = [{ wch: 8 }, { wch: 30 }, { wch: 22 }]
+  ;['A4', 'B4', 'C4'].forEach(ref => {
+    if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0D8E8' } } }
+  })
+  XLSX.utils.book_append_sheet(wb, ws, 'Template')
+  XLSX.writeFile(wb, 'EquipmentTypes_Template.xlsx')
+}
+
+async function parseUploadFile(file) {
+  const XLSX = await import('xlsx')
+  const data = await file.arrayBuffer()
+  const wb   = XLSX.read(data)
+  const ws   = wb.Sheets[wb.SheetNames[0]]
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+
+  // Find header row by locating "equipment type"
+  let headerRow = -1
+  for (let i = 0; i < rows.length; i++) {
+    const lower = rows[i].map(c => String(c).trim().toLowerCase())
+    if (lower.includes('equipment type')) { headerRow = i; break }
+  }
+  if (headerRow === -1)
+    return { error: 'Could not find a header row with an "Equipment Type" column.' }
+
+  const headers  = rows[headerRow].map(c => String(c).trim().toLowerCase())
+  const nameCol  = headers.findIndex(h => h === 'equipment type')
+  const catCol   = headers.findIndex(h => h === 'category')
+
+  const items = []
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const row  = rows[i]
+    const name = String(row[nameCol] ?? '').trim()
+    if (!name) continue
+    const catRaw       = catCol >= 0 ? String(row[catCol] ?? '').trim() : ''
+    const asset_category = CATEGORIES.includes(catRaw) ? catRaw : null
+    items.push({ name, asset_category })
+  }
+  if (items.length === 0)
+    return { error: 'No equipment type rows found in the file.' }
+  return { items }
 }
 
 /* ── Component ────────────────────────────────────────────────────────────── */
@@ -77,11 +170,13 @@ export default function EquipmentTypes() {
   const [saving,     setSaving]     = useState(false)
   const [addError,   setAddError]   = useState('')
 
-  // Bulk add
-  const [showBulk,   setShowBulk]  = useState(false)
-  const [bulkText,   setBulkText]  = useState('')
-  const [bulkSaving, setBulkSaving] = useState(false)
-  const [bulkResult, setBulkResult] = useState(null)
+  // Bulk upload
+  const [showBulk,      setShowBulk]      = useState(false)
+  const [bulkFile,      setBulkFile]      = useState(null)
+  const [bulkPreview,   setBulkPreview]   = useState(null)   // { items } | { error }
+  const [bulkSaving,    setBulkSaving]    = useState(false)
+  const [bulkResult,    setBulkResult]    = useState(null)
+  const fileInputRef = useRef()
 
   // Selection (shared for delete + download)
   const [selected,   setSelected]   = useState(new Set())
@@ -118,16 +213,29 @@ export default function EquipmentTypes() {
     } finally { setSaving(false) }
   }
 
-  const handleBulkAdd = async () => {
-    const names = bulkText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean)
-    if (!names.length) return
+  /* ── Bulk upload ─────────────────────────────────────────────────────────── */
+  const resetBulk = () => {
+    setBulkFile(null); setBulkPreview(null); setBulkResult(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
+  const handleFileChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBulkFile(file); setBulkResult(null)
+    const result = await parseUploadFile(file)
+    setBulkPreview(result)
+  }
+
+  const handleBulkUpload = async () => {
+    if (!bulkPreview?.items?.length) return
     setBulkSaving(true); setBulkResult(null)
     try {
-      const res = await bulkCreateEquipmentTypes(names)
+      const res = await bulkCreateEquipmentTypes(bulkPreview.items)
       setBulkResult(res.data)
-      if (res.data.created > 0) { load(); setBulkText('') }
+      if (res.data.created > 0) { load(); resetBulk() }
     } catch (err) {
-      setBulkResult({ error: err.response?.data?.error || 'Failed' })
+      setBulkResult({ error: err.response?.data?.error || 'Upload failed' })
     } finally { setBulkSaving(false) }
   }
 
@@ -156,7 +264,7 @@ export default function EquipmentTypes() {
   const selectedCount = [...selected].filter(id => filtered.find(t => t.id === id)).length
   const selectedRows  = () => selectedCount > 0
     ? types.filter(t => selected.has(t.id))
-    : types // "all" when nothing selected
+    : types
 
   /* ── Delete ──────────────────────────────────────────────────────────────── */
   const doDelete = async (id, force = false) => {
@@ -198,9 +306,11 @@ export default function EquipmentTypes() {
           <h1 className="text-xl font-bold text-gray-900">Equipment Types</h1>
           <p className="text-sm text-gray-500 mt-0.5">{types.length} type{types.length !== 1 ? 's' : ''} defined</p>
         </div>
-        <button onClick={() => { setShowBulk(v => !v); setBulkResult(null) }}
-          className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors">
-          <List size={14} />{showBulk ? 'Single Add' : 'Bulk Add'}
+        <button
+          onClick={() => { setShowBulk(v => !v); resetBulk() }}
+          className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+        >
+          <List size={14} />{showBulk ? 'Single Add' : 'Bulk Upload'}
         </button>
       </div>
 
@@ -228,26 +338,88 @@ export default function EquipmentTypes() {
         </form>
       )}
 
-      {/* ── Bulk add ── */}
+      {/* ── Bulk upload ── */}
       {showBulk && (
-        <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
-          <p className="text-sm font-medium text-gray-700">Bulk Add Equipment Types</p>
-          <p className="text-xs text-gray-500">One type per line, or separate with commas.</p>
-          <textarea value={bulkText} onChange={e => setBulkText(e.target.value)}
-            rows={5} placeholder={"Excavator\nGenset\nBackhoe Loader\nTipper, Motor Grader"}
-            className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          />
-          <div className="flex items-center gap-3">
-            <button onClick={handleBulkAdd} disabled={bulkSaving || !bulkText.trim()}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-60 transition-colors">
-              <Plus size={15} />{bulkSaving ? 'Adding…' : 'Add All'}
-            </button>
-            {bulkText.trim() && (
-              <span className="text-xs text-gray-400">
-                {bulkText.split(/[\n,]+/).map(s => s.trim()).filter(Boolean).length} type(s) to add
-              </span>
-            )}
+        <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-4">
+          <p className="text-sm font-semibold text-gray-700">Bulk Upload Equipment Types</p>
+
+          {/* Step 1 — download template */}
+          <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+            <span className="w-5 h-5 flex-shrink-0 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold mt-0.5">1</span>
+            <div className="flex-1 space-y-2">
+              <p className="text-xs font-medium text-gray-700">Download the template, fill in your data, then re-upload.</p>
+              <p className="text-xs text-gray-500">Columns: <strong>Sl No</strong>, <strong>Equipment Type</strong> (required), <strong>Category</strong> — must be <em>Measurable</em> or <em>Non-Measurable</em>.</p>
+              <button onClick={downloadTemplate}
+                className="flex items-center gap-2 px-3 py-1.5 border border-blue-400 text-blue-700 bg-white hover:bg-blue-50 text-xs font-medium rounded-lg transition-colors">
+                <Download size={13} />Download Template (.xlsx)
+              </button>
+            </div>
           </div>
+
+          {/* Step 2 — upload file */}
+          <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+            <span className="w-5 h-5 flex-shrink-0 rounded-full bg-gray-500 text-white text-xs flex items-center justify-center font-bold mt-0.5">2</span>
+            <div className="flex-1 space-y-2">
+              <p className="text-xs font-medium text-gray-700">Upload the filled template</p>
+              <label className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 text-xs font-medium rounded-lg transition-colors cursor-pointer w-fit">
+                <Upload size={13} />
+                {bulkFile ? bulkFile.name : 'Choose .xlsx file…'}
+                <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileChange} />
+              </label>
+
+              {/* Parse preview */}
+              {bulkPreview?.error && (
+                <p className="text-xs text-red-600">{bulkPreview.error}</p>
+              )}
+              {bulkPreview?.items && (
+                <div className="space-y-2">
+                  <p className="text-xs text-green-700 font-medium">{bulkPreview.items.length} row{bulkPreview.items.length !== 1 ? 's' : ''} ready to upload</p>
+                  {/* Mini preview table — first 5 rows */}
+                  <div className="overflow-x-auto rounded border border-gray-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-100 text-gray-600">
+                        <tr>
+                          <th className="px-2 py-1 text-left font-medium w-8">#</th>
+                          <th className="px-2 py-1 text-left font-medium">Equipment Type</th>
+                          <th className="px-2 py-1 text-left font-medium">Category</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {bulkPreview.items.slice(0, 5).map((item, i) => (
+                          <tr key={i} className="bg-white">
+                            <td className="px-2 py-1 text-gray-400">{i + 1}</td>
+                            <td className="px-2 py-1 text-gray-800">{item.name}</td>
+                            <td className="px-2 py-1">
+                              {item.asset_category
+                                ? <span className={`px-1.5 py-0.5 rounded-full font-medium ${
+                                    item.asset_category === 'Measurable'
+                                      ? 'bg-emerald-100 text-emerald-700'
+                                      : 'bg-purple-100 text-purple-700'
+                                  }`}>{item.asset_category}</span>
+                                : <span className="text-gray-400">—</span>
+                              }
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {bulkPreview.items.length > 5 && (
+                    <p className="text-xs text-gray-400">…and {bulkPreview.items.length - 5} more</p>
+                  )}
+                  <div className="flex items-center gap-3 pt-1">
+                    <button onClick={handleBulkUpload} disabled={bulkSaving}
+                      className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-60 transition-colors">
+                      <Upload size={14} />{bulkSaving ? 'Uploading…' : `Upload ${bulkPreview.items.length} Type${bulkPreview.items.length !== 1 ? 's' : ''}`}
+                    </button>
+                    <button onClick={resetBulk} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Clear</button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Result */}
           {bulkResult && (
             <div className={`rounded-lg p-3 text-xs space-y-1 ${bulkResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-800'}`}>
               {bulkResult.error
@@ -287,7 +459,6 @@ export default function EquipmentTypes() {
             </label>
 
             <div className="flex items-center gap-2">
-              {/* Download buttons — selected or all */}
               <span className="text-xs text-gray-400 mr-1">
                 {selectedCount > 0 ? `Download ${selectedCount} selected:` : 'Download all:'}
               </span>
@@ -300,7 +471,6 @@ export default function EquipmentTypes() {
                 <FileText size={13} />PDF
               </button>
 
-              {/* Delete selected */}
               {selectedCount > 0 && (
                 <button onClick={handleDeleteSelected} disabled={deleting}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors ml-1">
@@ -327,7 +497,6 @@ export default function EquipmentTypes() {
                 className="w-4 h-4 accent-blue-600 flex-shrink-0" />
 
               {editId === t.id ? (
-                /* Edit mode */
                 <div className="flex-1 flex items-center gap-2 min-w-0 flex-wrap">
                   <input ref={editRef} value={editVal} onChange={e => setEditVal(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') saveEdit(t.id); if (e.key === 'Escape') cancelEdit() }}
@@ -349,7 +518,6 @@ export default function EquipmentTypes() {
                   </button>
                 </div>
               ) : (
-                /* Display mode */
                 <div className="flex-1 flex items-center gap-3 min-w-0">
                   <span className="text-xs text-gray-400 w-6 text-right flex-shrink-0">{idx + 1}.</span>
                   <span className="text-sm text-gray-800 flex-1 truncate">{t.name}</span>
@@ -363,8 +531,20 @@ export default function EquipmentTypes() {
                     </span>
                   )}
                   {parseInt(t.usage_count) > 0 && (
-                    <span className="text-xs bg-blue-100 text-blue-700 font-medium px-2 py-0.5 rounded-full flex-shrink-0">
-                      {t.usage_count} machine{parseInt(t.usage_count) !== 1 ? 's' : ''}
+                    <span className="flex items-center gap-1 flex-shrink-0">
+                      {parseInt(t.own_count) > 0 && (
+                        <span className="text-xs bg-blue-100 text-blue-700 font-medium px-1.5 py-0.5 rounded-full">
+                          {t.own_count}O
+                        </span>
+                      )}
+                      {parseInt(t.hire_count) > 0 && (
+                        <span className="text-xs bg-amber-100 text-amber-700 font-medium px-1.5 py-0.5 rounded-full">
+                          {t.hire_count}H
+                        </span>
+                      )}
+                      <span className="text-xs bg-gray-200 text-gray-600 font-medium px-1.5 py-0.5 rounded-full">
+                        {t.usage_count}
+                      </span>
                     </span>
                   )}
                   <div className="flex items-center gap-1 flex-shrink-0">
