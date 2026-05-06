@@ -55,9 +55,11 @@ export const deleteEntry         = (id)          => client.delete(`/entries/${id
 export const getUtilization   = (params)      => client.get('/reports/utilization', { params })
 export const getSummary       = (params)      => client.get('/reports/summary', { params })
 
-export const getEquipmentTypes   = ()         => client.get('/equipment-types')
-export const createEquipmentType = (data)     => client.post('/equipment-types', data)
-export const deleteEquipmentType = (id)       => client.delete(`/equipment-types/${id}`)
+export const getEquipmentTypes        = ()          => client.get('/equipment-types')
+export const createEquipmentType      = (data)       => client.post('/equipment-types', data)
+export const bulkCreateEquipmentTypes = (names)      => client.post('/equipment-types/bulk', { names })
+export const updateEquipmentType      = (id, data)   => client.put(`/equipment-types/${id}`, data)
+export const deleteEquipmentType      = (id, force)  => client.delete(`/equipment-types/${id}${force ? '?force=true' : ''}`)
 
 export const getUsers         = ()            => client.get('/users')
 export const createUser       = (data)        => client.post('/users', data)

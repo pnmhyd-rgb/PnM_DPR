@@ -1,9 +1,11 @@
 const router = require('express').Router();
-const { getAll, create, remove } = require('../controllers/equipmentTypesController');
+const { getAll, create, bulkCreate, update, remove } = require('../controllers/equipmentTypesController');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 router.get('/',       requireAuth,              getAll);
 router.post('/',      requireAuth, requireAdmin, create);
+router.post('/bulk',  requireAuth, requireAdmin, bulkCreate);
+router.put('/:id',    requireAuth, requireAdmin, update);
 router.delete('/:id', requireAuth, requireAdmin, remove);
 
 module.exports = router;
