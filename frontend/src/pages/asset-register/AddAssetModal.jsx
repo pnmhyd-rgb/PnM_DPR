@@ -431,6 +431,18 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 </button>
               </div>
 
+              {/* Valid equipment types reference */}
+              {eqTypes.length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
+                  <p className="text-xs font-semibold text-amber-800 mb-1.5">Valid Equipment Types (use exact spelling in CSV):</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {eqTypes.map(t => (
+                      <span key={t.id} className="text-xs bg-white border border-amber-300 text-amber-800 px-2 py-0.5 rounded-full">{t.name}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+
               {/* Step 3 — Upload */}
               <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2">
                 <p className="text-sm font-semibold text-gray-700">Step 3 — Upload Filled CSV</p>

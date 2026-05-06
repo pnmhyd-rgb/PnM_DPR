@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X, Download, Loader2, FileSpreadsheet, FileText, Sheet } from 'lucide-react'
-import { getMachines, getProjects } from '../../lib/api'
+import { getMachines, getProjects, getEquipmentTypes } from '../../lib/api'
 
 const CATEGORIES = [
   { key: 'own_measurable',     label: 'Own — Measurable Assets',     match: m => m.ownership === 'Own' && !!m.reading1_basis },
@@ -124,13 +124,18 @@ async function downloadPDF(rows, filename, projName, catLabels) {
 
 export default function AssetRegisterDownloadModal({ onClose, defaultProject = '' }) {
   const [projects,    setProjects]    = useState([])
-  const [projectId,   setProjectId]   = useState(defaultProject)
-  const [categories,  setCategories]  = useState({ own_measurable: true, own_non_measurable: true, hire: true })
-  const [format,      setFormat]      = useState('excel')
-  const [downloading, setDownloading] = useState(false)
-  const [error,       setError]       = useState('')
+  const [projectId,    setProjectId]   = useState(defaultProject)
+  const [categories,   setCategories]  = useState({ own_measurable: true, own_non_measurable: true, hire: true })
+  const [eqTypeFilter, setEqTypeFilter] = useState('')   // '' = all types
+  const [eqTypes,      setEqTypes]     = useState([])
+  const [format,       setFormat]      = useState('excel')
+  const [downloading,  setDownloading] = useState(false)
+  const [error,        setError]       = useState('')
 
-  useEffect(() => { getProjects().then(r => setProjects(r.data.data)).catch(() => {}) }, [])
+  useEffect(() => {
+    getProjects().then(r => setProjects(r.data.data)).catch(() => {})
+    getEquipmentTypes().then(r => setEqTypes(r.data.data)).catch(() => {})
+  }, [])
 
   const toggleCat     = key => setCategories(prev => ({ ...prev, [key]: !prev[key] }))
   const selectedCount = Object.values(categories).filter(Boolean).length
@@ -142,19 +147,28 @@ export default function AssetRegisterDownloadModal({ onClose, defaultProject = '
       const proj     = projects.find(p => String(p.id) === String(projectId))
       const res      = await getMachines(proj ? { project_code: proj.code } : {})
       const matchers = CATEGORIES.filter(c => categories[c.key]).map(c => c.match)
-      const filtered = res.data.data.filter(m => matchers.some(fn => fn(m)))
+      let   filtered = res.data.data.filter(m => matchers.some(fn => fn(m)))
+      if (eqTypeFilter) filtered = filtered.filter(m => m.eq_type === eqTypeFilter)
 
       if (filtered.length === 0) { setError('No assets found for the selected filters.'); setDownloading(false); return }
 
       const projName  = proj ? `${proj.name}${proj.code ? ` (${proj.code})` : ''}` : 'All Projects'
-      const catLabels = selectedCount === 3 ? 'All Categories' : CATEGORIES.filter(c => categories[c.key]).map(c => c.label).join(', ')
+      const eqLabel   = eqTypeFilter ? eqTypeFilter : 'All Equipment Types'
+      const catLabels = `${selectedCount === 3 ? 'All Categories' : CATEGORIES.filter(c => categories[c.key]).map(c => c.label).join(', ')} | ${eqLabel}`
+
+      // Build filename with eq type slug
+      const eqSlug   = eqTypeFilter ? `_${eqTypeFilter.replace(/\s+/g, '-')}` : ''
+      const ext      = format === 'excel' ? 'xlsx' : format === 'pdf' ? 'pdf' : 'csv'
+      const catLabel = selectedCount === 3 ? 'All' : CATEGORIES.filter(c => categories[c.key]).map(c => c.key).join('+')
+      const projLabel = proj ? proj.code : 'AllProjects'
+      const filename  = `AssetRegister_${projLabel}_${catLabel}${eqSlug}_${new Date().toISOString().slice(0,10)}.${ext}`
 
       if (format === 'csv') {
-        downloadCSV(filtered, buildFilename(proj, selectedCount, categories, 'csv'))
+        downloadCSV(filtered, filename)
       } else if (format === 'excel') {
-        await downloadExcel(filtered, buildFilename(proj, selectedCount, categories, 'xlsx'), projName, catLabels)
+        await downloadExcel(filtered, filename, projName, catLabels)
       } else {
-        await downloadPDF(filtered, buildFilename(proj, selectedCount, categories, 'pdf'), projName, catLabels)
+        await downloadPDF(filtered, filename, projName, catLabels)
       }
 
       onClose()
@@ -209,6 +223,16 @@ export default function AssetRegisterDownloadModal({ onClose, defaultProject = '
               <button onClick={() => setCategories({ own_measurable: false, own_non_measurable: false, hire: false })}
                 className="text-xs text-gray-400 hover:underline">Clear</button>
             </div>
+          </div>
+
+          {/* Equipment Type */}
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Equipment Type</label>
+            <select value={eqTypeFilter} onChange={e => setEqTypeFilter(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">All Equipment Types</option>
+              {eqTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+            </select>
           </div>
 
           {/* Format */}

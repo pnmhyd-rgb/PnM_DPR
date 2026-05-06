@@ -51,6 +51,12 @@ const create = async (req, res) => {
       return res.status(400).json({ error: 'date_of_purchase is required for own assets' });
     }
 
+    // Validate equipment type against pre-defined list
+    const etCheck = await db.query('SELECT id FROM equipment_types WHERE LOWER(name) = LOWER($1)', [eq_type.trim()]);
+    if (etCheck.rows.length === 0) {
+      return res.status(400).json({ error: `Equipment type "${eq_type}" is not recognised. Please use a type defined in Admin › Equipment Types.` });
+    }
+
     const result = await db.query(
       `INSERT INTO machines
         (project_id, slno, eq_type, manufacturer, model, capacity, uom,
@@ -100,12 +106,22 @@ const bulkCreate = async (req, res) => {
       return res.status(400).json({ error: 'rows array is required' });
     }
 
+    // Load valid equipment types once for validation
+    const etRes     = await db.query('SELECT LOWER(name) AS name FROM equipment_types');
+    const validTypes = new Set(etRes.rows.map(r => r.name));
+
     const results = [];
     const errors  = [];
 
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       try {
+        // Validate equipment type
+        if (!row.eq_type?.trim()) throw new Error('eq_type is required');
+        if (!validTypes.has(row.eq_type.trim().toLowerCase())) {
+          throw new Error(`Equipment type "${row.eq_type}" is not recognised. Use a type from Admin › Equipment Types.`);
+        }
+
         // Resolve project_code (or project name) to project_id
         let project_id = row.project_id;
         if (!project_id && row.project_code) {
