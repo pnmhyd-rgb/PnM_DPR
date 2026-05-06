@@ -18,6 +18,7 @@ const migrations = [
   '012_projects_address.sql',
   '013_user_profile_fields.sql',
   '014_user_last_login.sql',
+  '015_equipment_type_fields.sql',
 ];
 
 async function runMigrations() {
