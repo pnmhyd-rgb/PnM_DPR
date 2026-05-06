@@ -288,43 +288,15 @@ export default function Layout({ children }) {
 
   const sidebar = (
     <div className="flex flex-col h-full bg-blue-900">
-      {/* ── Sidebar Header: RVR Logo + 50 Years ── */}
-      <div className="border-b border-blue-700/50">
-        {/* RVR logo on white background — matching original logo colours */}
-        <div className="bg-white px-3 py-3 flex items-center gap-2.5">
-          <img
-            src="/rvr-logo.png"
-            alt="RVR Projects"
-            className="h-10 w-auto flex-shrink-0 object-contain"
-          />
-        </div>
-        {/* Module label + 50 Years badge */}
-        <div className="px-3 py-2.5 space-y-2">
-          <div>
-            <p className="text-white font-semibold text-xs leading-snug tracking-wide">
-              Plants &amp; Machinery
-            </p>
-            <p className="text-blue-300 text-[10px] leading-snug uppercase tracking-widest">
-              DPR Module
-            </p>
-          </div>
-          {/* 50 Years anniversary badge */}
-          <div className="flex items-center gap-0 overflow-hidden rounded-lg border border-yellow-500/40">
-            <img
-              src="/rvr-50years.png"
-              alt="50 Years"
-              className="h-10 w-auto object-contain bg-white flex-shrink-0"
-            />
-            <div className="flex-1 px-2 bg-blue-800/40">
-              <p className="text-yellow-300 text-[9px] font-semibold leading-snug">
-                Rooted in Trust,
-              </p>
-              <p className="text-yellow-300/80 text-[9px] leading-snug">
-                Rising with Purpose.
-              </p>
-            </div>
-          </div>
-        </div>
+      {/* ── Sidebar Header ── */}
+      <div className="border-b border-blue-700/50 px-4 py-4">
+        <p className="text-white font-bold text-sm leading-snug tracking-wide">RVR Projects Pvt Ltd</p>
+        <p className="text-white font-semibold text-xs leading-snug tracking-wide mt-0.5">
+          Plants &amp; Machinery
+        </p>
+        <p className="text-blue-300 text-[10px] leading-snug uppercase tracking-widest">
+          DPR Module
+        </p>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
@@ -472,12 +444,9 @@ export default function Layout({ children }) {
           <button onClick={() => setMobileOpen(v => !v)} className="md:hidden text-gray-600 p-1">
             {mobileOpen ? <X size={22} /> : <Menu size={22} />}
           </button>
-          <span className="md:hidden text-sm font-bold text-gray-800">Plants &amp; Machinery</span>
-          {/* Module title — desktop only */}
-          <span className="hidden md:flex flex-col leading-tight">
-            <span className="text-xs font-semibold text-gray-700 tracking-wide">Plants &amp; Machinery</span>
-            <span className="text-[10px] text-gray-400 uppercase tracking-widest">DPR Module</span>
-          </span>
+          <span className="md:hidden text-sm font-bold text-gray-800">P&amp;M DPR</span>
+          {/* Spacer for desktop */}
+          <span className="hidden md:block" />
 
           {/* User avatar button */}
           <div className="relative">

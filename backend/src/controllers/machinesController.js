@@ -106,10 +106,13 @@ const bulkCreate = async (req, res) => {
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       try {
-        // Resolve project_code to project_id
+        // Resolve project_code (or project name) to project_id
         let project_id = row.project_id;
         if (!project_id && row.project_code) {
-          const pRes = await db.query('SELECT id FROM projects WHERE code = $1', [row.project_code]);
+          const pRes = await db.query(
+            'SELECT id FROM projects WHERE code = $1 OR LOWER(name) = LOWER($1)',
+            [row.project_code.toString().trim()]
+          );
           if (pRes.rows.length === 0) throw new Error(`Project "${row.project_code}" not found`);
           project_id = pRes.rows[0].id;
         }

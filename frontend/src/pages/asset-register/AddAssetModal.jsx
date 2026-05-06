@@ -29,8 +29,10 @@ const CSV_EXAMPLE = [
   'Single Shift','Hours','8','12','10'
 ]
 
-function downloadTemplate() {
-  const lines = [CSV_HEADERS.join(','), CSV_EXAMPLE.join(',')]
+function downloadTemplate(projectCode = 'PRJ01') {
+  const example = [...CSV_EXAMPLE]
+  example[0] = projectCode  // replace example project_code with actual selected project code
+  const lines = [CSV_HEADERS.join(','), example.join(',')]
   const blob  = new Blob([lines.join('\n')], { type: 'text/csv' })
   const url   = URL.createObjectURL(blob)
   const a     = document.createElement('a'); a.href = url
@@ -103,6 +105,7 @@ export default function AddAssetModal({ onClose, onSaved }) {
   const [bulkRows, setBulkRows]   = useState([])
   const [bulkResult, setBulkResult] = useState(null)
   const [bulking, setBulking]     = useState(false)
+  const [bulkProjectId, setBulkProjectId] = useState('')
 
   useEffect(() => {
     getProjects().then(r => setProjects(r.data.data)).catch(() => {})
@@ -170,9 +173,11 @@ export default function AddAssetModal({ onClose, onSaved }) {
 
   const handleBulkUpload = async () => {
     if (!bulkRows.length) return
+    if (!bulkProjectId) { setBulkResult({ error: 'Please select a project before uploading' }); return }
     setBulking(true); setBulkResult(null)
     try {
-      const res = await bulkCreateMachines(bulkRows)
+      const rows = bulkRows.map(r => ({ ...r, project_id: parseInt(bulkProjectId), project_code: undefined }))
+      const res = await bulkCreateMachines(rows)
       setBulkResult(res.data)
       if (res.data.created > 0) onSaved?.()
     } catch (err) {
@@ -395,18 +400,40 @@ export default function AddAssetModal({ onClose, onSaved }) {
           {/* ── BULK UPLOAD ── */}
           {tab === 'bulk' && (
             <div className="p-5 space-y-5">
-              {/* Step 1 */}
+              {/* Step 1 — Select Project */}
+              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 space-y-2">
+                <p className="text-sm font-semibold text-yellow-800">Step 1 — Select Project</p>
+                <p className="text-xs text-yellow-700">Choose the project these assets belong to. No need to fill project in the CSV.</p>
+                <select
+                  value={bulkProjectId}
+                  onChange={e => setBulkProjectId(e.target.value)}
+                  className="border border-yellow-300 rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
+                >
+                  <option value="">— Select a project —</option>
+                  {projects.map(p => (
+                    <option key={p.id} value={p.id}>{p.name} {p.code ? `(${p.code})` : ''}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Step 2 — Download Template */}
               <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
-                <p className="text-sm font-semibold text-blue-800">Step 1 — Download Template</p>
-                <p className="text-xs text-blue-700">Download the CSV template, fill in your asset data in Excel/Sheets, then save as CSV.</p>
-                <button onClick={downloadTemplate} className="flex items-center gap-2 px-3 py-2 bg-blue-700 text-white text-xs rounded-lg hover:bg-blue-800 transition-colors">
+                <p className="text-sm font-semibold text-blue-800">Step 2 — Download Template</p>
+                <p className="text-xs text-blue-700">Download the CSV template, fill in asset data (no project column needed), then save as CSV.</p>
+                <button
+                  onClick={() => {
+                    const proj = projects.find(p => String(p.id) === String(bulkProjectId))
+                    downloadTemplate(proj?.code || 'PRJ01')
+                  }}
+                  className="flex items-center gap-2 px-3 py-2 bg-blue-700 text-white text-xs rounded-lg hover:bg-blue-800 transition-colors"
+                >
                   <Download size={13} />Download Template (CSV)
                 </button>
               </div>
 
-              {/* Step 2 */}
+              {/* Step 3 — Upload */}
               <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2">
-                <p className="text-sm font-semibold text-gray-700">Step 2 — Upload Filled CSV</p>
+                <p className="text-sm font-semibold text-gray-700">Step 3 — Upload Filled CSV</p>
                 <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFileChange} />
                 <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 px-3 py-2 border border-gray-300 bg-white text-gray-700 text-xs rounded-lg hover:bg-gray-50 transition-colors">
                   <Upload size={13} />Choose CSV File
@@ -419,12 +446,14 @@ export default function AddAssetModal({ onClose, onSaved }) {
               {/* Preview */}
               {bulkRows.length > 0 && (
                 <div className="border border-gray-200 rounded-xl overflow-hidden">
-                  <p className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-500 border-b border-gray-200">Preview ({bulkRows.length} rows)</p>
+                  <p className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-500 border-b border-gray-200">
+                    Preview ({bulkRows.length} rows) — Project: <span className="text-blue-700">{projects.find(p => String(p.id) === String(bulkProjectId))?.name || '(none selected)'}</span>
+                  </p>
                   <div className="overflow-x-auto max-h-48">
                     <table className="w-full text-xs">
                       <thead>
                         <tr className="bg-gray-50">
-                          {['#','Project','Type','Manufacturer','Model','SL No','Ownership','Shift'].map(h => (
+                          {['#','Type','Manufacturer','Model','SL No','Ownership','Shift'].map(h => (
                             <th key={h} className="px-3 py-1.5 text-left font-medium text-gray-500 whitespace-nowrap">{h}</th>
                           ))}
                         </tr>
@@ -433,7 +462,6 @@ export default function AddAssetModal({ onClose, onSaved }) {
                         {bulkRows.map((r, i) => (
                           <tr key={i} className="hover:bg-gray-50">
                             <td className="px-3 py-1.5 text-gray-400">{i + 1}</td>
-                            <td className="px-3 py-1.5">{r.project_code}</td>
                             <td className="px-3 py-1.5">{r.eq_type}</td>
                             <td className="px-3 py-1.5">{r.manufacturer}</td>
                             <td className="px-3 py-1.5">{r.model}</td>
