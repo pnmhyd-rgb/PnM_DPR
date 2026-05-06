@@ -5,7 +5,7 @@ import {
   LayoutDashboard, ClipboardList, BarChart2, FileText,
   Settings, LogOut, Menu, X, ChevronDown, ChevronRight,
   Fuel, Wrench, Users, Package, AlertTriangle, BookOpen,
-  User, Camera, RefreshCw, KeyRound, Shield, Info
+  User, Camera, RefreshCw, KeyRound, Shield, Info, Layers
 } from 'lucide-react'
 
 const NAV = [
@@ -17,11 +17,14 @@ const NAV = [
   { label: 'Service',     href: '/service',     icon: Wrench },
 ]
 
-const ADMIN_NAV = [
+const ADMIN_GENERAL_NAV = [
+  { label: 'Users',   href: '/admin/users' },
+  { label: 'Entries', href: '/admin/entries' },
+]
+
+const ADMIN_ASSET_NAV = [
   { label: 'Projects',        href: '/admin/projects' },
   { label: 'Machines',        href: '/admin/machines' },
-  { label: 'Entries',         href: '/admin/entries' },
-  { label: 'Users',           href: '/admin/users' },
   { label: 'Equipment Types', href: '/admin/equipment-types' },
 ]
 
@@ -269,6 +272,7 @@ export default function Layout({ children }) {
   const { user, isAdmin } = useAuth()
   const [mobileOpen, setMobileOpen]           = useState(false)
   const [adminOpen, setAdminOpen]             = useState(false)
+  const [assetSettingsOpen, setAssetSettingsOpen] = useState(false)
   const [hrOpen, setHrOpen]                   = useState(false)
   const [inventoryOpen, setInventoryOpen]     = useState(false)
   const [reportsOpen, setReportsOpen]         = useState(false)
@@ -409,13 +413,35 @@ export default function Layout({ children }) {
               <span className="flex items-center gap-3"><Settings size={17} />Admin</span>
               {adminOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
             </button>
+
             {adminOpen && (
               <div className="ml-7 mt-1 space-y-0.5">
-                {ADMIN_NAV.map(({ label, href }) => (
+                {/* General admin links */}
+                {ADMIN_GENERAL_NAV.map(({ label, href }) => (
                   <NavLink key={href} to={href} className={subLinkCls} onClick={() => setMobileOpen(false)}>
                     {label}
                   </NavLink>
                 ))}
+
+                {/* Asset Settings sub-group */}
+                <div className="pt-0.5">
+                  <button
+                    onClick={() => setAssetSettingsOpen(v => !v)}
+                    className="w-full flex items-center justify-between px-3 py-1.5 rounded text-sm text-blue-200 hover:bg-blue-700/50 transition-colors"
+                  >
+                    <span className="flex items-center gap-2"><Layers size={13} />Asset Settings</span>
+                    {assetSettingsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                  </button>
+                  {assetSettingsOpen && (
+                    <div className="ml-4 mt-0.5 space-y-0.5">
+                      {ADMIN_ASSET_NAV.map(({ label, href }) => (
+                        <NavLink key={href} to={href} className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                          {label}
+                        </NavLink>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
