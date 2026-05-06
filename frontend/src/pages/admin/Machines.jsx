@@ -2,10 +2,13 @@ import { useState, useEffect } from 'react'
 import { getProjects, getMachines, createMachine, updateMachine, deleteMachine, getEquipmentTypes } from '../../lib/api'
 import { Plus, Edit2, Trash2, X } from 'lucide-react'
 
+const SHIFT_OPTIONS = ['Single Shift', 'Dual Shift']
+
 const blank = {
   project_id: '', slno: '', eq_type: '', capacity: '', reg_no: '',
   ownership: 'Own', vendor: '', rate: '', reading1_basis: 'Hours',
-  reading2_basis: '', dual_reading: false, fuel_min: '', fuel_max: '', planned_hours: '10'
+  reading2_basis: '', dual_reading: false, fuel_min: '', fuel_max: '',
+  planned_hours: '10', shift_type: ''
 }
 
 function Modal({ title, onClose, children }) {
@@ -56,7 +59,8 @@ export default function Machines() {
       ownership: m.ownership, vendor: m.vendor || '', rate: m.rate || '',
       reading1_basis: m.reading1_basis, reading2_basis: m.reading2_basis || '',
       dual_reading: m.dual_reading, fuel_min: m.fuel_min || '', fuel_max: m.fuel_max || '',
-      planned_hours: String(m.planned_hours || 10)
+      planned_hours: String(m.planned_hours || 10),
+      shift_type: m.shift_type || 'Single Shift'
     })
     setError(''); setModal({ edit: m })
   }
@@ -76,7 +80,8 @@ export default function Machines() {
         vendor:        form.vendor || null,
         reg_no:        form.reg_no || null,
         reading2_basis:form.reading2_basis || null,
-        planned_hours: parseFloat(form.planned_hours) || 10
+        planned_hours: parseFloat(form.planned_hours) || 10,
+        shift_type:    form.shift_type
       }
       modal === 'add' ? await createMachine(payload) : await updateMachine(modal.edit.id, payload)
       setModal(null); load()
@@ -114,14 +119,14 @@ export default function Machines() {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                {['Project','SL#','Type','Reg#','Own/Hire','Basis','Fuel Min','Fuel Max','Planned Hrs',''].map(h => (
+                {['Project','SL#','Type','Reg#','Own/Hire','Shift','Basis','Fuel Min','Fuel Max','Planned Hrs',''].map(h => (
                   <th key={h} className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {machines.length === 0 && (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-gray-400">No machines found</td></tr>
+                <tr><td colSpan={11} className="px-4 py-10 text-center text-gray-400">No machines found</td></tr>
               )}
               {machines.map(m => (
                 <tr key={m.id} className="hover:bg-gray-50 transition-colors">
@@ -130,6 +135,11 @@ export default function Machines() {
                   <td className="px-3 py-2">{m.eq_type}</td>
                   <td className="px-3 py-2">{m.reg_no || '—'}</td>
                   <td className="px-3 py-2"><span className={`text-xs font-medium ${m.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>{m.ownership}</span></td>
+                  <td className="px-3 py-2">
+                    <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                      m.shift_type === 'Dual Shift' ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'
+                    }`}>{m.shift_type || 'Single Shift'}</span>
+                  </td>
                   <td className="px-3 py-2">{m.reading1_basis}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{m.fuel_min ?? '—'}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{m.fuel_max ?? '—'}</td>
@@ -189,6 +199,15 @@ export default function Machines() {
                   <option>Own</option><option>Hire</option>
                 </select>
               </div>
+            </div>
+
+            <div>
+              <label className={lbl}>Shift Type <span className="text-red-500">*</span></label>
+              <select value={form.shift_type} onChange={set('shift_type')} className={inp} required>
+                <option value="">— select shift —</option>
+                {SHIFT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+              <p className="text-xs text-gray-400 mt-1">Single Shift: operator selects Day or Night each entry. Dual Shift: both Day and Night readings captured together.</p>
             </div>
 
             {form.ownership === 'Hire' && (

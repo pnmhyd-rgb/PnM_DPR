@@ -24,8 +24,11 @@ const login = async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // Record login timestamp
+    await db.query('UPDATE users SET last_login_at = NOW() WHERE id = $1', [user.id]);
+
     const token = jwt.sign(
-      { id: user.id, role: user.role, project_codes: user.project_codes },
+      { id: user.id, role: user.role, project_codes: user.project_codes, can_add_assets: user.can_add_assets || false },
       process.env.JWT_SECRET,
       { expiresIn: process.env.JWT_EXPIRES_IN || '8h' }
     );
@@ -33,11 +36,15 @@ const login = async (req, res) => {
     res.json({
       token,
       user: {
-        id: user.id,
-        name: user.name,
-        username: user.username,
-        role: user.role,
-        project_codes: user.project_codes
+        id:             user.id,
+        name:           user.name,
+        username:       user.username,
+        mobile:         user.mobile,
+        email:          user.email,
+        designation:    user.designation,
+        role:           user.role,
+        project_codes:  user.project_codes,
+        can_add_assets: user.can_add_assets || false
       }
     });
   } catch (err) {
@@ -49,7 +56,7 @@ const login = async (req, res) => {
 const getMe = async (req, res) => {
   try {
     const result = await db.query(
-      'SELECT id, name, username, role, project_codes, created_at FROM users WHERE id = $1',
+      'SELECT id, name, username, mobile, email, designation, role, project_codes, can_add_assets, created_at FROM users WHERE id = $1',
       [req.user.id]
     );
     if (result.rows.length === 0) {
@@ -62,4 +69,25 @@ const getMe = async (req, res) => {
   }
 };
 
-module.exports = { login, getMe };
+const updateMe = async (req, res) => {
+  try {
+    const { name, password } = req.body;
+    const hash = password ? await bcrypt.hash(password, 12) : null;
+
+    const result = await db.query(
+      `UPDATE users SET
+        name          = COALESCE($1, name),
+        password_hash = COALESCE($2, password_hash),
+        updated_at    = NOW()
+       WHERE id = $3
+       RETURNING id, name, username, mobile, email, designation, role, project_codes, can_add_assets`,
+      [name?.trim() || null, hash, req.user.id]
+    );
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('Update profile error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+module.exports = { login, getMe, updateMe };

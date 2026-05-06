@@ -80,4 +80,54 @@ const summary = async (req, res) => {
   }
 };
 
-module.exports = { utilization, summary };
+const breakdownSummary = async (req, res) => {
+  try {
+    const { project_code, from, to } = req.query;
+    if (!from || !to) {
+      return res.status(400).json({ error: 'from and to date parameters are required' });
+    }
+
+    let query = `
+      SELECT
+        e.slno, e.eq_type, e.capacity, e.reg_no, e.ownership,
+        p.code AS project_code,
+        COUNT(e.id)                                           AS total_entries,
+        COUNT(CASE WHEN e.breakdown > 0 THEN 1 END)          AS breakdown_days,
+        ROUND(SUM(e.breakdown)::numeric, 2)                   AS total_breakdown_hrs,
+        ROUND(SUM(e.working_hours)::numeric, 2)               AS total_working_hrs,
+        CASE WHEN SUM(e.working_hours) + SUM(e.breakdown) > 0
+          THEN ROUND(
+            (SUM(e.breakdown)::numeric / (SUM(e.working_hours) + SUM(e.breakdown))::numeric) * 100, 1
+          )
+          ELSE 0
+        END AS breakdown_pct,
+        MIN(CASE WHEN e.breakdown > 0 THEN e.entry_date END) AS first_breakdown,
+        MAX(CASE WHEN e.breakdown > 0 THEN e.entry_date END) AS last_breakdown
+      FROM dpr_entries e
+      JOIN projects p ON e.project_id = p.id
+      WHERE e.entry_date BETWEEN $1 AND $2
+    `;
+    const params = [from, to];
+
+    if (project_code) {
+      params.push(project_code);
+      query += ` AND p.code = $${params.length}`;
+    }
+    if (req.user.role !== 'admin' && req.user.project_codes.length > 0) {
+      params.push(req.user.project_codes);
+      query += ` AND p.code = ANY($${params.length})`;
+    }
+
+    query += ` GROUP BY e.slno, e.eq_type, e.capacity, e.reg_no, e.ownership, p.code
+               HAVING SUM(e.breakdown) > 0
+               ORDER BY total_breakdown_hrs DESC`;
+
+    const result = await db.query(query, params);
+    res.json({ data: result.rows });
+  } catch (err) {
+    console.error('Breakdown summary error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+module.exports = { utilization, summary, breakdownSummary };

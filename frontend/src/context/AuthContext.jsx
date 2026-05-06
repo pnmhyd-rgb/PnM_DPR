@@ -1,5 +1,5 @@
 import { createContext, useContext, useState } from 'react'
-import { login as apiLogin } from '../lib/api'
+import { login as apiLogin, updateMe as apiUpdateMe } from '../lib/api'
 
 const AuthContext = createContext(null)
 
@@ -23,12 +23,21 @@ export function AuthProvider({ children }) {
     setUser(null)
   }
 
+  const updateProfile = async (data) => {
+    const res = await apiUpdateMe(data)
+    const updated = { ...user, ...res.data.data }
+    localStorage.setItem('user', JSON.stringify(updated))
+    setUser(updated)
+    return updated
+  }
+
   return (
     <AuthContext.Provider value={{
       user,
       isAdmin: user?.role === 'admin',
       login,
-      logout
+      logout,
+      updateProfile
     }}>
       {children}
     </AuthContext.Provider>
