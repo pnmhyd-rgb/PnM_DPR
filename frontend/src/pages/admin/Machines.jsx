@@ -1,9 +1,96 @@
-import { useState, useEffect, useMemo } from 'react'
-import { getProjects, getMachines, createMachine, updateMachine, deleteMachine, getEquipmentTypes } from '../../lib/api'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { getProjects, getMachines, createMachine, bulkCreateMachines, updateMachine, deleteMachine, getEquipmentTypes } from '../../lib/api'
 import {
   Plus, Edit2, Trash2, X, Search, ChevronUp, ChevronDown as ChevDown,
-  RotateCcw, Eye, EyeOff, Filter
+  RotateCcw, Eye, EyeOff, Filter, Upload, Download
 } from 'lucide-react'
+
+/* ── Bulk upload helpers ──────────────────────────────────────────────────── */
+async function downloadMachineTemplate(projects) {
+  const XLSX = await import('xlsx')
+  const wb = XLSX.utils.book_new()
+  const projList = projects.map(p => p.code).join(', ') || 'PROJECT_CODE'
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['Machine Registry Bulk Upload Template'],
+    [`Project Codes available: ${projList}`],
+    ['Ownership: Own or Hire  |  Shift Type: Single Shift or Dual Shift  |  Reading Basis: Hours or KM'],
+    [],
+    ['Sl No', 'Project Code', 'Machine SL#', 'Equipment Type', 'Ownership', 'Shift Type',
+     'Capacity', 'Reg No', 'Vendor', 'Reading Basis', 'Fuel Min (L/hr)', 'Fuel Max (L/hr)', 'Planned Hrs/Day'],
+    [1, projects[0]?.code || 'PRJ001', 'E6-EX-02', 'Excavator',       'Own',  'Single Shift', '20T',    'KA01AB1234', '',        'Hours', 5, 8, 10],
+    [2, projects[0]?.code || 'PRJ001', 'E6-DG-01', 'Diesel Generator', 'Hire', 'Single Shift', '125KVA', '',           'AcmeCo',  'Hours', 3, 6, 10],
+  ])
+  ws['!cols'] = [
+    { wch: 6 }, { wch: 14 }, { wch: 14 }, { wch: 28 }, { wch: 10 }, { wch: 14 },
+    { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
+  ]
+  const headerR = 4
+  for (let ci = 0; ci < 13; ci++) {
+    const ref = XLSX.utils.encode_cell({ r: headerR, c: ci })
+    if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0D8E8' } } }
+  }
+  XLSX.utils.book_append_sheet(wb, ws, 'Template')
+  XLSX.writeFile(wb, 'MachineRegistry_Template.xlsx')
+}
+
+async function parseMachineFile(file) {
+  const XLSX = await import('xlsx')
+  const data = await file.arrayBuffer()
+  const wb   = XLSX.read(data)
+  const ws   = wb.Sheets[wb.SheetNames[0]]
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+
+  // Find header row
+  let headerRow = -1
+  for (let i = 0; i < rows.length; i++) {
+    const lower = rows[i].map(c => String(c).trim().toLowerCase())
+    if (lower.includes('machine sl#') || lower.includes('project code')) { headerRow = i; break }
+  }
+  if (headerRow === -1)
+    return { error: 'Could not find the header row. Ensure your file has "Project Code" and "Machine SL#" columns.' }
+
+  const headers = rows[headerRow].map(c => String(c).trim().toLowerCase())
+  const col = k => headers.findIndex(h => h.startsWith(k))
+
+  const projCol    = col('project code')
+  const slnoCol    = col('machine sl')
+  const typeCol    = col('equipment type')
+  const ownCol     = col('ownership')
+  const shiftCol   = col('shift type')
+  const capCol     = col('capacity')
+  const regCol     = col('reg no')
+  const vendorCol  = col('vendor')
+  const basisCol   = col('reading basis')
+  const fuelMinCol = col('fuel min')
+  const fuelMaxCol = col('fuel max')
+  const planCol    = col('planned')
+
+  if (projCol === -1 || slnoCol === -1 || typeCol === -1)
+    return { error: 'Missing required columns: "Project Code", "Machine SL#", "Equipment Type".' }
+
+  const items = []
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const r = rows[i]
+    const slno = String(r[slnoCol] ?? '').trim()
+    if (!slno) continue
+    items.push({
+      project_code:   String(r[projCol]   ?? '').trim(),
+      slno,
+      eq_type:        String(r[typeCol]   ?? '').trim(),
+      ownership:      String(r[ownCol]    ?? 'Own').trim() || 'Own',
+      shift_type:     String(r[shiftCol]  ?? 'Single Shift').trim() || 'Single Shift',
+      capacity:       String(r[capCol]    ?? '').trim() || null,
+      reg_no:         String(r[regCol]    ?? '').trim() || null,
+      vendor:         vendorCol  >= 0 ? (String(r[vendorCol]  ?? '').trim() || null) : null,
+      reading1_basis: basisCol   >= 0 ? (String(r[basisCol]   ?? 'Hours').trim() || 'Hours') : 'Hours',
+      fuel_min:       fuelMinCol >= 0 ? (parseFloat(r[fuelMinCol]) || null) : null,
+      fuel_max:       fuelMaxCol >= 0 ? (parseFloat(r[fuelMaxCol]) || null) : null,
+      planned_hours:  planCol    >= 0 ? (parseFloat(r[planCol])    || 10)   : 10,
+    })
+  }
+  if (items.length === 0) return { error: 'No machine rows found in the file.' }
+  return { items }
+}
 
 const SHIFT_OPTIONS = ['Single Shift', 'Dual Shift']
 
@@ -54,6 +141,14 @@ export default function Machines() {
   // Multi-select
   const [selected,      setSelected]      = useState(new Set())
   const [bulkDeleting,  setBulkDeleting]  = useState(false)
+
+  // Bulk upload
+  const [showBulkModal, setShowBulkModal] = useState(false)
+  const [bulkFile,      setBulkFile]      = useState(null)
+  const [bulkPreview,   setBulkPreview]   = useState(null)
+  const [bulkSaving,    setBulkSaving]    = useState(false)
+  const [bulkResult,    setBulkResult]    = useState(null)
+  const fileInputRef = useRef()
 
   // Modal
   const [modal,         setModal]         = useState(null)
@@ -120,6 +215,32 @@ export default function Machines() {
     else setSelected(prev => { const n = new Set(prev); displayed.forEach(m => n.add(m.id)); return n })
   }
   const selectedCount = [...selected].filter(id => displayed.find(m => m.id === id)).length
+
+  // ── Bulk upload ────────────────────────────────────────────────────────────
+  const resetBulk = () => {
+    setBulkFile(null); setBulkPreview(null); setBulkResult(null)
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+  const closeBulkModal = () => { setShowBulkModal(false); resetBulk() }
+
+  const handleBulkFileChange = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBulkFile(file); setBulkResult(null)
+    setBulkPreview(await parseMachineFile(file))
+  }
+
+  const handleBulkUpload = async () => {
+    if (!bulkPreview?.items?.length) return
+    setBulkSaving(true); setBulkResult(null)
+    try {
+      const res = await bulkCreateMachines(bulkPreview.items)
+      setBulkResult(res.data)
+      if (res.data.created > 0) { load(); resetBulk() }
+    } catch (err) {
+      setBulkResult({ error: err.response?.data?.error || 'Upload failed' })
+    } finally { setBulkSaving(false) }
+  }
 
   // ── Bulk deactivate ────────────────────────────────────────────────────────
   const handleBulkDeactivate = async () => {
@@ -205,9 +326,15 @@ export default function Machines() {
             {displayed.length !== machines.length ? ` · ${displayed.length} shown` : ''}
           </p>
         </div>
-        <button onClick={openAdd} className="flex items-center gap-2 px-3 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 transition-colors">
-          <Plus size={15} />Add Machine
-        </button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowBulkModal(true)}
+            className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors">
+            <Upload size={14} />Bulk Upload
+          </button>
+          <button onClick={openAdd} className="flex items-center gap-2 px-3 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 transition-colors">
+            <Plus size={15} />Add Machine
+          </button>
+        </div>
       </div>
 
       {/* ── Filters ── */}
@@ -354,6 +481,108 @@ export default function Machines() {
           </div>
         )}
       </div>
+
+      {/* ── Bulk Upload modal ── */}
+      {showBulkModal && (
+        <Modal title="Bulk Upload Machines" onClose={closeBulkModal}>
+          <div className="space-y-4">
+
+            {/* Step 1 — download template */}
+            <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+              <span className="w-5 h-5 flex-shrink-0 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold mt-0.5">1</span>
+              <div className="flex-1 space-y-2">
+                <p className="text-xs font-medium text-gray-700">Download the template, fill in your machine data, then re-upload.</p>
+                <p className="text-xs text-gray-500">
+                  Required columns: <strong>Project Code</strong>, <strong>Machine SL#</strong>, <strong>Equipment Type</strong>.
+                  Ownership: <em>Own</em> or <em>Hire</em>. Shift: <em>Single Shift</em> or <em>Dual Shift</em>.
+                </p>
+                <button onClick={() => downloadMachineTemplate(projects)}
+                  className="flex items-center gap-2 px-3 py-1.5 border border-blue-400 text-blue-700 bg-white hover:bg-blue-50 text-xs font-medium rounded-lg transition-colors">
+                  <Download size={13} />Download Template (.xlsx)
+                </button>
+              </div>
+            </div>
+
+            {/* Step 2 — upload file */}
+            <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+              <span className="w-5 h-5 flex-shrink-0 rounded-full bg-gray-500 text-white text-xs flex items-center justify-center font-bold mt-0.5">2</span>
+              <div className="flex-1 space-y-2">
+                <p className="text-xs font-medium text-gray-700">Upload the filled template</p>
+                <label className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 text-xs font-medium rounded-lg transition-colors cursor-pointer w-fit">
+                  <Upload size={13} />
+                  {bulkFile ? bulkFile.name : 'Choose .xlsx file…'}
+                  <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleBulkFileChange} />
+                </label>
+
+                {bulkPreview?.error && (
+                  <p className="text-xs text-red-600">{bulkPreview.error}</p>
+                )}
+
+                {bulkPreview?.items && (
+                  <div className="space-y-2">
+                    <p className="text-xs text-green-700 font-medium">{bulkPreview.items.length} row{bulkPreview.items.length !== 1 ? 's' : ''} ready to upload</p>
+                    <div className="overflow-x-auto rounded border border-gray-200">
+                      <table className="w-full text-xs">
+                        <thead className="bg-gray-100 text-gray-600">
+                          <tr>
+                            <th className="px-2 py-1 text-left font-medium">#</th>
+                            <th className="px-2 py-1 text-left font-medium">Project</th>
+                            <th className="px-2 py-1 text-left font-medium">SL#</th>
+                            <th className="px-2 py-1 text-left font-medium">Equipment Type</th>
+                            <th className="px-2 py-1 text-left font-medium">Own/Hire</th>
+                            <th className="px-2 py-1 text-left font-medium">Shift</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {bulkPreview.items.slice(0, 6).map((item, i) => (
+                            <tr key={i} className="bg-white">
+                              <td className="px-2 py-1 text-gray-400">{i + 1}</td>
+                              <td className="px-2 py-1 font-medium text-blue-700">{item.project_code}</td>
+                              <td className="px-2 py-1 font-semibold">{item.slno}</td>
+                              <td className="px-2 py-1">{item.eq_type}</td>
+                              <td className="px-2 py-1">
+                                <span className={`font-medium ${item.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>
+                                  {item.ownership}
+                                </span>
+                              </td>
+                              <td className="px-2 py-1 text-gray-600">{item.shift_type}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {bulkPreview.items.length > 6 && (
+                      <p className="text-xs text-gray-400">…and {bulkPreview.items.length - 6} more</p>
+                    )}
+                    <div className="flex items-center gap-3 pt-1">
+                      <button onClick={handleBulkUpload} disabled={bulkSaving}
+                        className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-60 transition-colors">
+                        <Upload size={14} />{bulkSaving ? 'Uploading…' : `Upload ${bulkPreview.items.length} Machine${bulkPreview.items.length !== 1 ? 's' : ''}`}
+                      </button>
+                      <button onClick={resetBulk} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Clear</button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Result */}
+            {bulkResult && (
+              <div className={`rounded-lg p-3 text-xs space-y-1 ${bulkResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-800'}`}>
+                {bulkResult.error
+                  ? <p>{bulkResult.error}</p>
+                  : <>
+                      <p className="font-semibold">{bulkResult.created} added{bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}</p>
+                      {bulkResult.errors?.map((e, i) => (
+                        <p key={i} className="text-amber-700">Row {e.row} ({e.slno || '—'}): {e.error}</p>
+                      ))}
+                    </>
+                }
+              </div>
+            )}
+          </div>
+        </Modal>
+      )}
 
       {/* ── Add / Edit modal ── */}
       {modal && (
