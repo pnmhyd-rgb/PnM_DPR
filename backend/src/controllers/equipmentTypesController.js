@@ -3,11 +3,11 @@ const db = require('../config/db');
 const getAll = async (req, res) => {
   try {
     const result = await db.query(`
-      SELECT et.id, et.name,
+      SELECT et.id, et.name, et.asset_category,
              COUNT(m.id) FILTER (WHERE m.active = true) AS usage_count
       FROM equipment_types et
       LEFT JOIN machines m ON LOWER(m.eq_type) = LOWER(et.name)
-      GROUP BY et.id, et.name
+      GROUP BY et.id, et.name, et.asset_category
       ORDER BY et.name
     `);
     res.json({ data: result.rows });
@@ -17,13 +17,17 @@ const getAll = async (req, res) => {
   }
 };
 
+const VALID_CATS = ['Measurable', 'Non-Measurable'];
+
 const create = async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, asset_category } = req.body;
     if (!name) return res.status(400).json({ error: 'name is required' });
+    if (asset_category && !VALID_CATS.includes(asset_category))
+      return res.status(400).json({ error: 'asset_category must be Measurable or Non-Measurable' });
     const result = await db.query(
-      'INSERT INTO equipment_types (name) VALUES ($1) RETURNING *',
-      [name.trim()]
+      'INSERT INTO equipment_types (name, asset_category) VALUES ($1, $2) RETURNING *',
+      [name.trim(), asset_category || null]
     );
     res.status(201).json({ data: result.rows[0] });
   } catch (err) {
@@ -59,15 +63,17 @@ const bulkCreate = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
-    const { name } = req.body;
+    const { name, asset_category } = req.body;
     if (!name?.trim()) return res.status(400).json({ error: 'name is required' });
+    if (asset_category && !VALID_CATS.includes(asset_category))
+      return res.status(400).json({ error: 'asset_category must be Measurable or Non-Measurable' });
 
     const old = await db.query('SELECT name FROM equipment_types WHERE id = $1', [id]);
     if (old.rows.length === 0) return res.status(404).json({ error: 'Equipment type not found' });
 
     const result = await db.query(
-      'UPDATE equipment_types SET name = $1 WHERE id = $2 RETURNING *',
-      [name.trim(), id]
+      'UPDATE equipment_types SET name = $1, asset_category = $2 WHERE id = $3 RETURNING *',
+      [name.trim(), asset_category || null, id]
     );
     await db.query(
       'UPDATE machines SET eq_type = $1 WHERE LOWER(eq_type) = LOWER($2)',

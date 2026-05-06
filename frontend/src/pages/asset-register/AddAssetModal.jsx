@@ -114,10 +114,20 @@ export default function AddAssetModal({ onClose, onSaved }) {
     getVendors().then(r => setVendors(r.data.data)).catch(() => {})
   }, [])
 
-  const set = k => e => setForm(f => ({
-    ...f,
-    [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value
-  }))
+  const set = k => e => {
+    const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value
+    setForm(f => {
+      const next = { ...f, [k]: val }
+      // auto-fill asset_type from equipment type's asset_category
+      if (k === 'eq_type') {
+        const et = eqTypes.find(t => t.name === val)
+        if (et?.asset_category) {
+          next.asset_type = et.asset_category === 'Measurable' ? 'Measurable Asset' : 'Non-Measurable Asset'
+        }
+      }
+      return next
+    })
+  }
 
   const handleAddUom = async () => {
     if (!newUom.trim()) return
@@ -306,7 +316,12 @@ export default function AddAssetModal({ onClose, onSaved }) {
 
               {form.ownership === 'Own' && (
                 <div>
-                  <label className={lbl}>Asset Classification *</label>
+                  <label className={lbl}>
+                    Asset Classification *
+                    {form.eq_type && eqTypes.find(t => t.name === form.eq_type)?.asset_category && (
+                      <span className="ml-2 text-xs font-normal text-emerald-600">(auto-filled from equipment type)</span>
+                    )}
+                  </label>
                   <select value={form.asset_type} onChange={set('asset_type')} className={inp}>
                     {ASSET_TYPE.map(a => <option key={a}>{a}</option>)}
                   </select>
@@ -437,7 +452,14 @@ export default function AddAssetModal({ onClose, onSaved }) {
                   <p className="text-xs font-semibold text-amber-800 mb-1.5">Valid Equipment Types (use exact spelling in CSV):</p>
                   <div className="flex flex-wrap gap-1.5">
                     {eqTypes.map(t => (
-                      <span key={t.id} className="text-xs bg-white border border-amber-300 text-amber-800 px-2 py-0.5 rounded-full">{t.name}</span>
+                      <span key={t.id} className="text-xs bg-white border border-amber-300 text-amber-800 px-2 py-0.5 rounded-full flex items-center gap-1">
+                        {t.name}
+                        {t.asset_category && (
+                          <span className={`text-[10px] font-semibold px-1 rounded ${t.asset_category === 'Measurable' ? 'text-emerald-700' : 'text-purple-700'}`}>
+                            {t.asset_category === 'Measurable' ? 'M' : 'NM'}
+                          </span>
+                        )}
+                      </span>
                     ))}
                   </div>
                 </div>

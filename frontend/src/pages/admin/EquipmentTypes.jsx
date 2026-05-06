@@ -8,10 +8,13 @@ import {
   AlertTriangle, FileSpreadsheet, FileText, Download
 } from 'lucide-react'
 
+const CATEGORIES = ['Measurable', 'Non-Measurable']
+
 /* ── Export helpers ───────────────────────────────────────────────────────── */
 const COLS = [
   { header: 'Sl No',          val: (t, i) => i + 1 },
   { header: 'Equipment Type', val: t => t.name },
+  { header: 'Category',       val: t => t.asset_category || '—' },
   { header: 'Machines in Use',val: t => parseInt(t.usage_count) || 0 },
 ]
 
@@ -25,7 +28,7 @@ async function exportExcel(rows) {
     COLS.map(c => c.header),
     ...rows.map((t, i) => COLS.map(c => c.val(t, i))),
   ])
-  ws['!cols'] = [{ wch: 8 }, { wch: 30 }, { wch: 16 }]
+  ws['!cols'] = [{ wch: 8 }, { wch: 30 }, { wch: 18 }, { wch: 16 }]
   // Bold header row (row index 3)
   COLS.forEach((_, ci) => {
     const ref = XLSX.utils.encode_cell({ r: 3, c: ci })
@@ -70,6 +73,7 @@ export default function EquipmentTypes() {
 
   // Single add
   const [name,       setName]       = useState('')
+  const [category,   setCategory]   = useState('')
   const [saving,     setSaving]     = useState(false)
   const [addError,   setAddError]   = useState('')
 
@@ -87,6 +91,7 @@ export default function EquipmentTypes() {
   // Inline edit
   const [editId,     setEditId]     = useState(null)
   const [editVal,    setEditVal]    = useState('')
+  const [editCat,    setEditCat]    = useState('')
   const [editSaving, setEditSaving] = useState(false)
   const [editError,  setEditError]  = useState('')
   const editRef = useRef()
@@ -106,8 +111,8 @@ export default function EquipmentTypes() {
     if (!name.trim()) return
     setSaving(true); setAddError('')
     try {
-      await createEquipmentType({ name: name.trim() })
-      setName(''); load()
+      await createEquipmentType({ name: name.trim(), asset_category: category || null })
+      setName(''); setCategory(''); load()
     } catch (err) {
       setAddError(err.response?.data?.error || 'Failed to add')
     } finally { setSaving(false) }
@@ -127,13 +132,13 @@ export default function EquipmentTypes() {
   }
 
   /* ── Inline edit ─────────────────────────────────────────────────────────── */
-  const startEdit   = t => { setEditId(t.id); setEditVal(t.name); setEditError('') }
-  const cancelEdit  = ()  => { setEditId(null); setEditVal(''); setEditError('') }
+  const startEdit   = t => { setEditId(t.id); setEditVal(t.name); setEditCat(t.asset_category || ''); setEditError('') }
+  const cancelEdit  = ()  => { setEditId(null); setEditVal(''); setEditCat(''); setEditError('') }
   const saveEdit    = async id => {
     if (!editVal.trim()) return
     setEditSaving(true); setEditError('')
     try {
-      await updateEquipmentType(id, { name: editVal.trim() })
+      await updateEquipmentType(id, { name: editVal.trim(), asset_category: editCat || null })
       cancelEdit(); load()
     } catch (err) {
       setEditError(err.response?.data?.error || 'Failed to save')
@@ -201,19 +206,25 @@ export default function EquipmentTypes() {
 
       {/* ── Single add ── */}
       {!showBulk && (
-        <form onSubmit={handleAdd} className="bg-white rounded-xl border border-gray-200 p-4">
+        <form onSubmit={handleAdd} className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
           <div className="flex gap-3">
             <input type="text" value={name} onChange={e => setName(e.target.value)}
               placeholder="e.g. Excavator, Genset, Backhoe Loader…"
               className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               required
             />
+            <select value={category} onChange={e => setCategory(e.target.value)}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white flex-shrink-0">
+              <option value="">— Category —</option>
+              {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
             <button type="submit" disabled={saving}
               className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-60 transition-colors flex-shrink-0">
               <Plus size={15} />{saving ? 'Adding…' : 'Add'}
             </button>
           </div>
-          {addError && <p className="text-xs text-red-600 mt-2">{addError}</p>}
+          <p className="text-xs text-gray-400">Category (Measurable / Non-Measurable) will auto-fill in the asset register when this type is selected.</p>
+          {addError && <p className="text-xs text-red-600">{addError}</p>}
         </form>
       )}
 
@@ -317,11 +328,16 @@ export default function EquipmentTypes() {
 
               {editId === t.id ? (
                 /* Edit mode */
-                <div className="flex-1 flex items-center gap-2 min-w-0">
+                <div className="flex-1 flex items-center gap-2 min-w-0 flex-wrap">
                   <input ref={editRef} value={editVal} onChange={e => setEditVal(e.target.value)}
                     onKeyDown={e => { if (e.key === 'Enter') saveEdit(t.id); if (e.key === 'Escape') cancelEdit() }}
                     className="flex-1 border border-blue-400 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-0"
                   />
+                  <select value={editCat} onChange={e => setEditCat(e.target.value)}
+                    className="border border-blue-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white flex-shrink-0">
+                    <option value="">— Category —</option>
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
                   {editError && <span className="text-xs text-red-600 flex-shrink-0">{editError}</span>}
                   <button onClick={() => saveEdit(t.id)} disabled={editSaving}
                     className="p-1.5 text-green-600 hover:bg-green-50 rounded transition-colors flex-shrink-0" title="Save (Enter)">
@@ -337,6 +353,15 @@ export default function EquipmentTypes() {
                 <div className="flex-1 flex items-center gap-3 min-w-0">
                   <span className="text-xs text-gray-400 w-6 text-right flex-shrink-0">{idx + 1}.</span>
                   <span className="text-sm text-gray-800 flex-1 truncate">{t.name}</span>
+                  {t.asset_category && (
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${
+                      t.asset_category === 'Measurable'
+                        ? 'bg-emerald-100 text-emerald-700'
+                        : 'bg-purple-100 text-purple-700'
+                    }`}>
+                      {t.asset_category === 'Measurable' ? 'M' : 'NM'}
+                    </span>
+                  )}
                   {parseInt(t.usage_count) > 0 && (
                     <span className="text-xs bg-blue-100 text-blue-700 font-medium px-2 py-0.5 rounded-full flex-shrink-0">
                       {t.usage_count} machine{parseInt(t.usage_count) !== 1 ? 's' : ''}
