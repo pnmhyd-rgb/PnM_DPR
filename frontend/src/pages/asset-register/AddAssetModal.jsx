@@ -13,67 +13,149 @@ const SHIFTS     = ['Single Shift', 'Dual Shift']
 const READINGS   = ['Hours', 'KM']
 const OWN_NAME   = 'RVR Projects Pvt Ltd'
 
-const CSV_HEADERS = [
-  'project_code','eq_type','manufacturer','model','capacity','uom',
-  'ownership','asset_type','vendor_name',
-  'fuel_type','slno','chassis_no','reg_no',
-  'date_of_purchase','po_number','price',
-  'shift_type','reading1_basis','fuel_min','fuel_max','planned_hours'
+/* ── Unified Excel template (same format as Machine Registry bulk upload) ─── */
+const TEMPLATE_HEADERS = [
+  'Sl No', 'Project Code', 'Machine SL#', 'Equipment Type', 'Category',
+  'Ownership', 'Manufacturer', 'Model', 'Capacity', 'UOM',
+  'Reg No', 'Chassis No', 'Fuel Type', 'Shift Type', 'Reading Basis',
+  'Fuel Min (L/hr)', 'Fuel Max (L/hr)', 'Planned Hrs/Day',
+  'Date of Purchase (YYYY-MM-DD)', 'PO Number', 'Purchase Price (₹)', 'Vendor',
 ]
 
-const CSV_EXAMPLE = [
-  'PRJ01','Excavator','Komatsu','PC200','20T','Tons',
-  'Own','Measurable Asset','',
-  'Diesel','E-EX-01','CHS123456','AP09AB1234',
-  '2024-01-15','PO-001','5000000',
-  'Single Shift','Hours','8','12','10'
-]
+async function downloadAssetTemplate(projects, eqTypes) {
+  const XLSX = await import('xlsx')
+  const wb   = XLSX.utils.book_new()
+  const projList = projects.map(p => p.code).join(', ') || 'PROJECT_CODE'
 
-function downloadTemplate(projectCode = 'PRJ01') {
-  const example = [...CSV_EXAMPLE]
-  example[0] = projectCode  // replace example project_code with actual selected project code
-  const lines = [CSV_HEADERS.join(','), example.join(',')]
-  const blob  = new Blob([lines.join('\n')], { type: 'text/csv' })
-  const url   = URL.createObjectURL(blob)
-  const a     = document.createElement('a'); a.href = url
-  a.download  = 'asset_bulk_template.csv'; a.click()
-  URL.revokeObjectURL(url)
-}
+  const ws = XLSX.utils.aoa_to_sheet([
+    ['Asset Register Bulk Upload Template'],
+    [`Project Codes available: ${projList}`],
+    ['Ownership: Own or Hire  |  Shift: Single Shift or Dual Shift  |  Reading Basis: Hours or KM  |  Fuel Type: Diesel / Petrol / EV / N/A'],
+    ['Category auto-fills from Equipment Type. Date of Purchase required for Own. Vendor required for Hire.'],
+    [],
+    TEMPLATE_HEADERS,
+    [1, projects[0]?.code || 'PRJ001', 'E6-EX-02', 'Excavator', 'Measurable',
+     'Own', 'Komatsu', 'PC200', '20T', 'Tons', 'KA01AB1234', 'CH12345', 'Diesel',
+     'Single Shift', 'Hours', 5, 8, 10, '2024-01-15', 'PO-001', 5000000, ''],
+    [2, projects[0]?.code || 'PRJ001', 'E6-DG-01', 'Diesel Generator', 'Measurable',
+     'Hire', 'Kirloskar', 'KG2-5AS', '125', 'KVA', '', '', 'Diesel',
+     'Single Shift', 'Hours', 3, 6, 10, '', '', '', 'AcmeCo'],
+  ])
 
-function parseCSV(text) {
-  const lines = text.trim().split(/\r?\n/).filter(Boolean)
-  if (lines.length < 2) return []
-  const headers = lines[0].split(',').map(h => h.trim())
-  return lines.slice(1).map(line => {
-    const vals = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''))
-    const obj  = {}
-    headers.forEach((h, i) => { obj[h] = vals[i] || '' })
-    return {
-      project_code:    obj.project_code,
-      eq_type:         obj.eq_type,
-      manufacturer:    obj.manufacturer,
-      model:           obj.model,
-      capacity:        obj.capacity,
-      uom:             obj.uom,
-      ownership:       obj.ownership || 'Own',
-      asset_type:      obj.asset_type,
-      vendor:          obj.vendor_name,
-      fuel_type:       obj.fuel_type,
-      slno:            obj.slno,
-      chassis_no:      obj.chassis_no,
-      reg_no:          obj.reg_no,
-      date_of_purchase: obj.date_of_purchase || null,
-      po_number:       obj.po_number,
-      price:           obj.price,
-      shift_type:      obj.shift_type || 'Single Shift',
-      reading1_basis:  obj.reading1_basis || 'Hours',
-      fuel_min:        obj.fuel_min,
-      fuel_max:        obj.fuel_max,
-      planned_hours:   obj.planned_hours || '10',
-    }
+  ws['!cols'] = [
+    {wch:6},{wch:14},{wch:14},{wch:28},{wch:16},
+    {wch:10},{wch:14},{wch:14},{wch:10},{wch:8},
+    {wch:14},{wch:14},{wch:10},{wch:14},{wch:14},
+    {wch:14},{wch:14},{wch:14},{wch:26},{wch:14},{wch:18},{wch:16},
+  ]
+  const headerR = 5
+  TEMPLATE_HEADERS.forEach((_, ci) => {
+    const ref = XLSX.utils.encode_cell({ r: headerR, c: ci })
+    if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0D8E8' } } }
   })
+  XLSX.utils.book_append_sheet(wb, ws, 'Asset Register')
+
+  // Equipment Types reference sheet
+  if (eqTypes.length > 0) {
+    const etWs = XLSX.utils.aoa_to_sheet([
+      ['Equipment Types Reference — use exact spelling in the "Equipment Type" column'],
+      [],
+      ['No', 'Equipment Type Name', 'Category'],
+      ...eqTypes.map((t, i) => [i + 1, t.name, t.asset_category || '—']),
+    ])
+    etWs['!cols'] = [{ wch: 6 }, { wch: 36 }, { wch: 18 }]
+    ;['A3', 'B3', 'C3'].forEach(ref => {
+      if (etWs[ref]) etWs[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0D8E8' } } }
+    })
+    XLSX.utils.book_append_sheet(wb, etWs, 'Equipment Types Ref')
+  }
+
+  XLSX.writeFile(wb, `AssetRegister_Template_${new Date().toISOString().slice(0, 10)}.xlsx`)
 }
 
+async function parseAssetFile(file) {
+  const XLSX = await import('xlsx')
+  const data = await file.arrayBuffer()
+  const wb   = XLSX.read(data)
+  const ws   = wb.Sheets[wb.SheetNames[0]]
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+
+  let headerRow = -1
+  for (let i = 0; i < rows.length; i++) {
+    const lower = rows[i].map(c => String(c).trim().toLowerCase())
+    if (lower.includes('machine sl#') || lower.includes('project code')) { headerRow = i; break }
+  }
+  if (headerRow === -1)
+    return { error: 'Cannot find the header row. Ensure columns "Project Code" and "Machine SL#" are present.' }
+
+  const headers    = rows[headerRow].map(c => String(c).trim().toLowerCase())
+  const col = k => headers.findIndex(h => h.startsWith(k))
+
+  const projCol     = col('project code')
+  const slnoCol     = col('machine sl')
+  const typeCol     = col('equipment type')
+  const catCol      = col('category')
+  const ownCol      = col('ownership')
+  const mfrCol      = col('manufacturer')
+  const modelCol    = col('model')
+  const capCol      = col('capacity')
+  const uomCol      = col('uom')
+  const regCol      = col('reg no')
+  const chassisCol  = col('chassis')
+  const fuelTypeCol = col('fuel type')
+  const shiftCol    = col('shift type')
+  const basisCol    = col('reading basis')
+  const fuelMinCol  = col('fuel min')
+  const fuelMaxCol  = col('fuel max')
+  const planCol     = col('planned')
+  const dobCol      = col('date of purchase')
+  const poCol       = col('po number')
+  const priceCol    = col('purchase price')
+  const vendorCol   = col('vendor')
+
+  if (projCol === -1 || slnoCol === -1 || typeCol === -1)
+    return { error: 'Missing required columns: "Project Code", "Machine SL#", "Equipment Type".' }
+
+  const items = []
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const r    = rows[i]
+    const slno = String(r[slnoCol] ?? '').trim()
+    if (!slno) continue
+
+    const catRaw   = catCol >= 0 ? String(r[catCol] ?? '').trim() : ''
+    const asset_type =
+      catRaw === 'Measurable'     ? 'Measurable Asset'     :
+      catRaw === 'Non-Measurable' ? 'Non-Measurable Asset' : null
+
+    items.push({
+      project_code:     String(r[projCol]     ?? '').trim(),
+      slno,
+      eq_type:          String(r[typeCol]     ?? '').trim(),
+      asset_type,
+      ownership:        String(r[ownCol]      ?? 'Own').trim()          || 'Own',
+      manufacturer:     mfrCol     >= 0 ? (String(r[mfrCol]     ?? '').trim() || null) : null,
+      model:            modelCol   >= 0 ? (String(r[modelCol]   ?? '').trim() || null) : null,
+      capacity:         capCol     >= 0 ? (String(r[capCol]     ?? '').trim() || null) : null,
+      uom:              uomCol     >= 0 ? (String(r[uomCol]     ?? '').trim() || null) : null,
+      reg_no:           regCol     >= 0 ? (String(r[regCol]     ?? '').trim() || null) : null,
+      chassis_no:       chassisCol >= 0 ? (String(r[chassisCol] ?? '').trim() || null) : null,
+      fuel_type:        fuelTypeCol>= 0 ? (String(r[fuelTypeCol]?? '').trim() || null) : null,
+      shift_type:       String(r[shiftCol]    ?? 'Single Shift').trim() || 'Single Shift',
+      reading1_basis:   basisCol   >= 0 ? (String(r[basisCol]   ?? 'Hours').trim() || 'Hours') : 'Hours',
+      fuel_min:         fuelMinCol >= 0 ? (parseFloat(r[fuelMinCol]) || null) : null,
+      fuel_max:         fuelMaxCol >= 0 ? (parseFloat(r[fuelMaxCol]) || null) : null,
+      planned_hours:    planCol    >= 0 ? (parseFloat(r[planCol])    || 10)   : 10,
+      date_of_purchase: dobCol     >= 0 ? (String(r[dobCol]  ?? '').trim() || null) : null,
+      po_number:        poCol      >= 0 ? (String(r[poCol]   ?? '').trim() || null) : null,
+      price:            priceCol   >= 0 ? (parseFloat(r[priceCol]) || null)  : null,
+      vendor:           vendorCol  >= 0 ? (String(r[vendorCol] ?? '').trim() || null) : null,
+    })
+  }
+  if (items.length === 0) return { error: 'No asset rows found in the file.' }
+  return { items }
+}
+
+/* ── Blank form ───────────────────────────────────────────────────────────── */
 const blank = {
   project_id: '', eq_type: '', manufacturer: '', model: '',
   capacity: '', uom: '', ownership: 'Own', asset_type: 'Measurable Asset',
@@ -86,7 +168,7 @@ const blank = {
 
 export default function AddAssetModal({ onClose, onSaved }) {
   const { isAdmin } = useAuth()
-  const [tab, setTab]             = useState('single')   // 'single' | 'bulk'
+  const [tab, setTab]             = useState('single')
   const [form, setForm]           = useState(blank)
   const [saving, setSaving]       = useState(false)
   const [error, setError]         = useState('')
@@ -100,12 +182,12 @@ export default function AddAssetModal({ onClose, onSaved }) {
   const [newUom, setNewUom]       = useState('')
   const [addingUom, setAddingUom] = useState(false)
 
-  // Bulk
+  // Bulk upload
   const fileRef                   = useRef()
-  const [bulkRows, setBulkRows]   = useState([])
-  const [bulkResult, setBulkResult] = useState(null)
-  const [bulking, setBulking]     = useState(false)
-  const [bulkProjectId, setBulkProjectId] = useState('')
+  const [bulkFile,    setBulkFile]    = useState(null)
+  const [bulkPreview, setBulkPreview] = useState(null)
+  const [bulkSaving,  setBulkSaving]  = useState(false)
+  const [bulkResult,  setBulkResult]  = useState(null)
 
   useEffect(() => {
     getProjects().then(r => setProjects(r.data.data)).catch(() => {})
@@ -118,7 +200,6 @@ export default function AddAssetModal({ onClose, onSaved }) {
     const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value
     setForm(f => {
       const next = { ...f, [k]: val }
-      // auto-fill asset_type from equipment type's asset_category
       if (k === 'eq_type') {
         const et = eqTypes.find(t => t.name === val)
         if (et?.asset_category) {
@@ -168,31 +249,29 @@ export default function AddAssetModal({ onClose, onSaved }) {
     } finally { setSaving(false) }
   }
 
-  const handleFileChange = (e) => {
+  const resetBulk = () => {
+    setBulkFile(null); setBulkPreview(null); setBulkResult(null)
+    if (fileRef.current) fileRef.current.value = ''
+  }
+
+  const handleBulkFileChange = async (e) => {
     const file = e.target.files[0]
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = ev => {
-      const rows = parseCSV(ev.target.result)
-      setBulkRows(rows)
-      setBulkResult(null)
-    }
-    reader.readAsText(file)
+    setBulkFile(file); setBulkResult(null)
+    setBulkPreview(await parseAssetFile(file))
     e.target.value = ''
   }
 
   const handleBulkUpload = async () => {
-    if (!bulkRows.length) return
-    if (!bulkProjectId) { setBulkResult({ error: 'Please select a project before uploading' }); return }
-    setBulking(true); setBulkResult(null)
+    if (!bulkPreview?.items?.length) return
+    setBulkSaving(true); setBulkResult(null)
     try {
-      const rows = bulkRows.map(r => ({ ...r, project_id: parseInt(bulkProjectId), project_code: undefined }))
-      const res = await bulkCreateMachines(rows)
+      const res = await bulkCreateMachines(bulkPreview.items)
       setBulkResult(res.data)
-      if (res.data.created > 0) onSaved?.()
+      if (res.data.created > 0) { onSaved?.(); resetBulk() }
     } catch (err) {
       setBulkResult({ error: err.response?.data?.error || 'Upload failed' })
-    } finally { setBulking(false) }
+    } finally { setBulkSaving(false) }
   }
 
   const inp  = 'border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full bg-white'
@@ -212,7 +291,7 @@ export default function AddAssetModal({ onClose, onSaved }) {
         <div className="flex border-b border-gray-200 px-5 flex-shrink-0">
           {[['single', 'Single Asset'], ['bulk', 'Bulk Upload']].map(([k, label]) => (
             <button
-              key={k} onClick={() => setTab(k)}
+              key={k} onClick={() => { setTab(k); resetBulk() }}
               className={`py-2.5 px-4 text-sm font-medium border-b-2 transition-colors ${
                 tab === k ? 'border-blue-600 text-blue-700' : 'border-transparent text-gray-500 hover:text-gray-700'
               }`}
@@ -226,7 +305,6 @@ export default function AddAssetModal({ onClose, onSaved }) {
           {/* ── SINGLE ASSET FORM ── */}
           {tab === 'single' && (
             <div className="p-5 space-y-4">
-              {/* Project & Equipment Type */}
               <p className={sec}>Basic Information</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -258,7 +336,6 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 </div>
               </div>
 
-              {/* Capacity + UOM */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={lbl}>Capacity</label>
@@ -286,7 +363,6 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 </div>
               </div>
 
-              {/* Ownership */}
               <p className={sec}>Ownership</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -328,7 +404,6 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 </div>
               )}
 
-              {/* Identity */}
               <p className={sec}>Identification</p>
               <div className="grid grid-cols-3 gap-3">
                 <div>
@@ -345,7 +420,6 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 </div>
               </div>
 
-              {/* Fuel */}
               <div>
                 <label className={lbl}>Fuel Type</label>
                 <select value={form.fuel_type} onChange={set('fuel_type')} className={inp + ' max-w-xs'}>
@@ -353,7 +427,6 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 </select>
               </div>
 
-              {/* Own-only: purchase details */}
               {form.ownership === 'Own' && (
                 <>
                   <p className={sec}>Purchase Details</p>
@@ -374,7 +447,6 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 </>
               )}
 
-              {/* Operational */}
               <p className={sec}>Operational Settings</p>
               <div className="grid grid-cols-2 gap-3">
                 <div>
@@ -414,48 +486,19 @@ export default function AddAssetModal({ onClose, onSaved }) {
 
           {/* ── BULK UPLOAD ── */}
           {tab === 'bulk' && (
-            <div className="p-5 space-y-5">
-              {/* Step 1 — Select Project */}
-              <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 space-y-2">
-                <p className="text-sm font-semibold text-yellow-800">Step 1 — Select Project</p>
-                <p className="text-xs text-yellow-700">Choose the project these assets belong to. No need to fill project in the CSV.</p>
-                <select
-                  value={bulkProjectId}
-                  onChange={e => setBulkProjectId(e.target.value)}
-                  className="border border-yellow-300 rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-yellow-400"
-                >
-                  <option value="">— Select a project —</option>
-                  {projects.map(p => (
-                    <option key={p.id} value={p.id}>{p.name} {p.code ? `(${p.code})` : ''}</option>
-                  ))}
-                </select>
-              </div>
-
-              {/* Step 2 — Download Template */}
-              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-2">
-                <p className="text-sm font-semibold text-blue-800">Step 2 — Download Template</p>
-                <p className="text-xs text-blue-700">Download the CSV template, fill in asset data (no project column needed), then save as CSV.</p>
-                <button
-                  onClick={() => {
-                    const proj = projects.find(p => String(p.id) === String(bulkProjectId))
-                    downloadTemplate(proj?.code || 'PRJ01')
-                  }}
-                  className="flex items-center gap-2 px-3 py-2 bg-blue-700 text-white text-xs rounded-lg hover:bg-blue-800 transition-colors"
-                >
-                  <Download size={13} />Download Template (CSV)
-                </button>
-              </div>
-
-              {/* Valid equipment types reference */}
+            <div className="p-5 space-y-4">
+              {/* Equipment types quick reference */}
               {eqTypes.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
-                  <p className="text-xs font-semibold text-amber-800 mb-1.5">Valid Equipment Types (use exact spelling in CSV):</p>
+                  <p className="text-xs font-semibold text-amber-800 mb-1.5">
+                    Equipment Types (M = Measurable, NM = Non-Measurable) — also listed in the template's second sheet:
+                  </p>
                   <div className="flex flex-wrap gap-1.5">
                     {eqTypes.map(t => (
                       <span key={t.id} className="text-xs bg-white border border-amber-300 text-amber-800 px-2 py-0.5 rounded-full flex items-center gap-1">
                         {t.name}
                         {t.asset_category && (
-                          <span className={`text-[10px] font-semibold px-1 rounded ${t.asset_category === 'Measurable' ? 'text-emerald-700' : 'text-purple-700'}`}>
+                          <span className={`text-[10px] font-semibold ${t.asset_category === 'Measurable' ? 'text-emerald-700' : 'text-purple-700'}`}>
                             {t.asset_category === 'Measurable' ? 'M' : 'NM'}
                           </span>
                         )}
@@ -465,50 +508,91 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 </div>
               )}
 
-              {/* Step 3 — Upload */}
-              <div className="bg-gray-50 border border-gray-200 rounded-xl p-4 space-y-2">
-                <p className="text-sm font-semibold text-gray-700">Step 3 — Upload Filled CSV</p>
-                <input ref={fileRef} type="file" accept=".csv,text/csv" className="hidden" onChange={handleFileChange} />
-                <button onClick={() => fileRef.current?.click()} className="flex items-center gap-2 px-3 py-2 border border-gray-300 bg-white text-gray-700 text-xs rounded-lg hover:bg-gray-50 transition-colors">
-                  <Upload size={13} />Choose CSV File
-                </button>
-                {bulkRows.length > 0 && (
-                  <p className="text-xs text-green-700 font-medium">{bulkRows.length} row{bulkRows.length !== 1 ? 's' : ''} loaded — ready to upload</p>
-                )}
+              {/* Step 1 — Download template */}
+              <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
+                <span className="w-5 h-5 flex-shrink-0 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold mt-0.5">1</span>
+                <div className="flex-1 space-y-2">
+                  <p className="text-xs font-medium text-gray-700">Download the template, fill in your asset data, then re-upload.</p>
+                  <p className="text-xs text-gray-500">
+                    Required: <strong>Project Code</strong>, <strong>Machine SL#</strong>, <strong>Equipment Type</strong>, <strong>Ownership</strong>, <strong>Shift Type</strong>.
+                    The template includes an <em>Equipment Types Ref</em> sheet listing all valid types with their categories.
+                  </p>
+                  <button onClick={() => downloadAssetTemplate(projects, eqTypes)}
+                    className="flex items-center gap-2 px-3 py-1.5 border border-blue-400 text-blue-700 bg-white hover:bg-blue-50 text-xs font-medium rounded-lg transition-colors">
+                    <Download size={13} />Download Template (.xlsx)
+                  </button>
+                </div>
               </div>
 
-              {/* Preview */}
-              {bulkRows.length > 0 && (
-                <div className="border border-gray-200 rounded-xl overflow-hidden">
-                  <p className="px-4 py-2 bg-gray-50 text-xs font-semibold text-gray-500 border-b border-gray-200">
-                    Preview ({bulkRows.length} rows) — Project: <span className="text-blue-700">{projects.find(p => String(p.id) === String(bulkProjectId))?.name || '(none selected)'}</span>
-                  </p>
-                  <div className="overflow-x-auto max-h-48">
-                    <table className="w-full text-xs">
-                      <thead>
-                        <tr className="bg-gray-50">
-                          {['#','Type','Manufacturer','Model','SL No','Ownership','Shift'].map(h => (
-                            <th key={h} className="px-3 py-1.5 text-left font-medium text-gray-500 whitespace-nowrap">{h}</th>
-                          ))}
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {bulkRows.map((r, i) => (
-                          <tr key={i} className="hover:bg-gray-50">
-                            <td className="px-3 py-1.5 text-gray-400">{i + 1}</td>
-                            <td className="px-3 py-1.5">{r.eq_type}</td>
-                            <td className="px-3 py-1.5">{r.manufacturer}</td>
-                            <td className="px-3 py-1.5">{r.model}</td>
-                            <td className="px-3 py-1.5 font-semibold">{r.slno}</td>
-                            <td className="px-3 py-1.5">{r.ownership}</td>
-                            <td className="px-3 py-1.5">{r.shift_type}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+              {/* Step 2 — Upload file */}
+              <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                <span className="w-5 h-5 flex-shrink-0 rounded-full bg-gray-500 text-white text-xs flex items-center justify-center font-bold mt-0.5">2</span>
+                <div className="flex-1 space-y-2">
+                  <p className="text-xs font-medium text-gray-700">Upload the filled template</p>
+                  <label className="flex items-center gap-2 px-3 py-1.5 border border-gray-300 text-gray-700 bg-white hover:bg-gray-50 text-xs font-medium rounded-lg transition-colors cursor-pointer w-fit">
+                    <Upload size={13} />
+                    {bulkFile ? bulkFile.name : 'Choose .xlsx file…'}
+                    <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleBulkFileChange} />
+                  </label>
+
+                  {bulkPreview?.error && (
+                    <p className="text-xs text-red-600">{bulkPreview.error}</p>
+                  )}
+
+                  {bulkPreview?.items && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-green-700 font-medium">
+                        {bulkPreview.items.length} row{bulkPreview.items.length !== 1 ? 's' : ''} ready to upload
+                      </p>
+                      <div className="overflow-x-auto rounded border border-gray-200 max-h-44">
+                        <table className="w-full text-xs">
+                          <thead className="bg-gray-100 text-gray-600 sticky top-0">
+                            <tr>
+                              {['#','Project','SL#','Equipment Type','Category','Own/Hire','Shift'].map(h => (
+                                <th key={h} className="px-2 py-1 text-left font-medium whitespace-nowrap">{h}</th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-100">
+                            {bulkPreview.items.map((item, i) => (
+                              <tr key={i} className="bg-white">
+                                <td className="px-2 py-1 text-gray-400">{i + 1}</td>
+                                <td className="px-2 py-1 font-medium text-blue-700">{item.project_code}</td>
+                                <td className="px-2 py-1 font-semibold">{item.slno}</td>
+                                <td className="px-2 py-1">{item.eq_type}</td>
+                                <td className="px-2 py-1">
+                                  {item.asset_type ? (
+                                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-medium ${
+                                      item.asset_type === 'Measurable Asset'
+                                        ? 'bg-emerald-100 text-emerald-700'
+                                        : 'bg-purple-100 text-purple-700'
+                                    }`}>
+                                      {item.asset_type === 'Measurable Asset' ? 'M' : 'NM'}
+                                    </span>
+                                  ) : <span className="text-gray-400">—</span>}
+                                </td>
+                                <td className="px-2 py-1">
+                                  <span className={`font-medium ${item.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>
+                                    {item.ownership}
+                                  </span>
+                                </td>
+                                <td className="px-2 py-1 text-gray-600">{item.shift_type}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="flex items-center gap-3 pt-1">
+                        <button onClick={handleBulkUpload} disabled={bulkSaving}
+                          className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-60 transition-colors">
+                          <Upload size={14} />{bulkSaving ? 'Uploading…' : `Upload ${bulkPreview.items.length} Asset${bulkPreview.items.length !== 1 ? 's' : ''}`}
+                        </button>
+                        <button onClick={resetBulk} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Clear</button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
 
               {/* Result */}
               {bulkResult && (
@@ -518,12 +602,12 @@ export default function AddAssetModal({ onClose, onSaved }) {
                   ) : (
                     <>
                       <p className="text-sm font-semibold text-green-800 flex items-center gap-2">
-                        <CheckCircle size={15} />Upload complete — {bulkResult.created} created, {bulkResult.failed} failed
+                        <CheckCircle size={15} />Upload complete — {bulkResult.created} created{bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}
                       </p>
                       {bulkResult.errors?.length > 0 && (
                         <ul className="text-xs text-red-700 space-y-0.5">
                           {bulkResult.errors.map((e, i) => (
-                            <li key={i}>Row {e.row} ({e.slno}): {e.error}</li>
+                            <li key={i}>Row {e.row} ({e.slno || '—'}): {e.error}</li>
                           ))}
                         </ul>
                       )}
@@ -539,18 +623,14 @@ export default function AddAssetModal({ onClose, onSaved }) {
         <div className="px-5 py-4 border-t border-gray-200 flex gap-3 flex-shrink-0">
           {tab === 'single' ? (
             <>
-              <button onClick={handleSingle} disabled={saving} className="flex-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors">
+              <button onClick={handleSingle} disabled={saving}
+                className="flex-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors">
                 {saving ? 'Saving…' : 'Save Asset'}
               </button>
               <button onClick={onClose} className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">Cancel</button>
             </>
           ) : (
-            <>
-              <button onClick={handleBulkUpload} disabled={bulking || bulkRows.length === 0} className="flex-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
-                <Upload size={15} />{bulking ? 'Uploading…' : `Upload ${bulkRows.length > 0 ? `${bulkRows.length} Assets` : ''}`}
-              </button>
-              <button onClick={onClose} className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">Close</button>
-            </>
+            <button onClick={onClose} className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">Close</button>
           )}
         </div>
       </div>
