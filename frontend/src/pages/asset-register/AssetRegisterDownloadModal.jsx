@@ -75,7 +75,7 @@ async function downloadExcel(rows, filename, projName, catLabels) {
   COLS.forEach((_, ci) => {
     const cellRef = XLSX.utils.encode_cell({ r: headerRowIdx, c: ci })
     if (!ws[cellRef]) return
-    ws[cellRef].s = { font: { bold: true }, fill: { fgColor: { rgb: '1E3A5F' } }, font: { bold: true, color: { rgb: 'FFFFFF' } } }
+    ws[cellRef].s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1E3A5F' } } }
   })
 
   XLSX.utils.book_append_sheet(wb, ws, 'Asset Register')
@@ -102,7 +102,7 @@ async function downloadPDF(rows, filename, projName, catLabels) {
     head: [COLS.map(c => c.header)],
     body: rows.map((m, i) => COLS.map(c => String(c.val(m, i)))),
     styles: { fontSize: 6.5, cellPadding: 1.5, overflow: 'linebreak' },
-    headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold', fontSize: 7 },
+    headStyles: { fillColor: [248, 248, 248], textColor: 0, fontStyle: 'bold', fontSize: 7 },
     alternateRowStyles: { fillColor: [245, 247, 250] },
     columnStyles: { 0: { cellWidth: 8 } },
     margin: { top: 22, left: 8, right: 8 },

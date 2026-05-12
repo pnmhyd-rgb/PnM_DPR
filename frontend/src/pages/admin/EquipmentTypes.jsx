@@ -80,7 +80,7 @@ async function exportPDF(rows) {
       ['', 'GRAND TOTAL', '', String(totalOwn), String(totalHire), String(totalAll)],
     ],
     styles: { fontSize: 9, cellPadding: 2 },
-    headStyles: { fillColor: [220, 220, 220], textColor: 0, fontStyle: 'bold' },
+    headStyles: { fillColor: [248, 248, 248], textColor: 0, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 249, 250] },
     columnStyles: {
       0: { cellWidth: 14 },
@@ -299,7 +299,7 @@ export default function EquipmentTypes() {
   }
 
   return (
-    <div className="max-w-xl space-y-4">
+    <div className="space-y-4">
       {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
@@ -448,15 +448,9 @@ export default function EquipmentTypes() {
 
           {/* Toolbar */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
-            <label className="flex items-center gap-2 cursor-pointer select-none">
-              <input type="checkbox" checked={allChecked}
-                ref={el => { if (el) el.indeterminate = someChecked }}
-                onChange={toggleAll} className="w-4 h-4 accent-blue-600"
-              />
-              <span className="text-xs font-medium text-gray-600">
-                {selectedCount > 0 ? `${selectedCount} selected` : `Select all${search ? ' visible' : ''}`}
-              </span>
-            </label>
+            <span className="text-xs font-medium text-gray-500">
+              {selectedCount > 0 ? `${selectedCount} selected` : `${filtered.length} type${filtered.length !== 1 ? 's' : ''}${search ? ' found' : ''}`}
+            </span>
 
             <div className="flex items-center gap-2">
               <span className="text-xs text-gray-400 mr-1">
@@ -481,93 +475,140 @@ export default function EquipmentTypes() {
           </div>
         </div>
 
-        {/* Rows */}
-        <div className="divide-y divide-gray-100 max-h-[520px] overflow-y-auto">
-          {filtered.length === 0 && (
-            <p className="px-4 py-8 text-center text-sm text-gray-400">
-              {search ? 'No types match your search' : 'No equipment types yet'}
-            </p>
-          )}
-
-          {filtered.map((t, idx) => (
-            <div key={t.id}
-              className={`flex items-center gap-3 px-4 py-2.5 transition-colors ${selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}
-            >
-              <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleOne(t.id)}
-                className="w-4 h-4 accent-blue-600 flex-shrink-0" />
-
-              {editId === t.id ? (
-                <div className="flex-1 flex items-center gap-2 min-w-0 flex-wrap">
-                  <input ref={editRef} value={editVal} onChange={e => setEditVal(e.target.value)}
-                    onKeyDown={e => { if (e.key === 'Enter') saveEdit(t.id); if (e.key === 'Escape') cancelEdit() }}
-                    className="flex-1 border border-blue-400 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 min-w-0"
+        {/* Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-50 border-b border-gray-200">
+                <th className="px-4 py-2.5 w-8">
+                  <input type="checkbox" checked={allChecked}
+                    ref={el => { if (el) el.indeterminate = someChecked }}
+                    onChange={toggleAll} className="w-4 h-4 accent-blue-600"
                   />
-                  <select value={editCat} onChange={e => setEditCat(e.target.value)}
-                    className="border border-blue-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white flex-shrink-0">
-                    <option value="">— Category —</option>
-                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                  {editError && <span className="text-xs text-red-600 flex-shrink-0">{editError}</span>}
-                  <button onClick={() => saveEdit(t.id)} disabled={editSaving}
-                    className="p-1.5 text-green-600 hover:bg-green-50 rounded transition-colors flex-shrink-0" title="Save (Enter)">
-                    <Check size={15} />
-                  </button>
-                  <button onClick={cancelEdit}
-                    className="p-1.5 text-gray-400 hover:bg-gray-100 rounded transition-colors flex-shrink-0" title="Cancel (Esc)">
-                    <X size={15} />
-                  </button>
-                </div>
-              ) : (
-                <div className="flex-1 flex items-center gap-3 min-w-0">
-                  <span className="text-xs text-gray-400 w-6 text-right flex-shrink-0">{idx + 1}.</span>
-                  <span className="text-sm text-gray-800 flex-1 truncate">{t.name}</span>
-                  {t.asset_category && (
-                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${
-                      t.asset_category === 'Measurable'
-                        ? 'bg-emerald-100 text-emerald-700'
-                        : 'bg-purple-100 text-purple-700'
-                    }`}>
-                      {t.asset_category === 'Measurable' ? 'M' : 'NM'}
-                    </span>
-                  )}
-                  {parseInt(t.usage_count) > 0 && (
-                    <span className="flex items-center gap-1 flex-shrink-0">
-                      {parseInt(t.own_count) > 0 && (
-                        <span className="text-xs bg-blue-100 text-blue-700 font-medium px-1.5 py-0.5 rounded-full">
-                          {t.own_count}O
-                        </span>
-                      )}
-                      {parseInt(t.hire_count) > 0 && (
-                        <span className="text-xs bg-amber-100 text-amber-700 font-medium px-1.5 py-0.5 rounded-full">
-                          {t.hire_count}H
-                        </span>
-                      )}
-                      <span className="text-xs bg-gray-200 text-gray-600 font-medium px-1.5 py-0.5 rounded-full">
-                        {t.usage_count}
-                      </span>
-                    </span>
-                  )}
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button onClick={() => startEdit(t)}
-                      className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit">
-                      <Pencil size={13} />
-                    </button>
-                    <button onClick={() => doDelete(t.id)}
-                      className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete">
-                      <Trash2 size={13} />
-                    </button>
-                  </div>
-                </div>
+                </th>
+                <th className="px-4 py-2.5 text-left font-semibold text-gray-500 w-10">#</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Equipment Type</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-gray-500 w-44">Category</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-500 w-28">Own (Working)</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-500 w-28">Hire (Working)</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-500 w-28">Total Machines</th>
+                <th className="px-4 py-2.5 w-20"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {filtered.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">
+                    {search ? 'No types match your search' : 'No equipment types yet'}
+                  </td>
+                </tr>
               )}
-            </div>
-          ))}
-        </div>
 
-        {filtered.length > 0 && (
-          <div className="px-4 py-2 border-t border-gray-100 text-xs text-gray-400 text-right">
-            {filtered.length} of {types.length} type{types.length !== 1 ? 's' : ''}
-          </div>
-        )}
+              {filtered.map((t, idx) => (
+                <tr key={t.id} className={`transition-colors ${selected.has(t.id) ? 'bg-blue-50' : 'hover:bg-gray-50'}`}>
+                  <td className="px-4 py-2.5">
+                    <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggleOne(t.id)}
+                      className="w-4 h-4 accent-blue-600" />
+                  </td>
+                  <td className="px-4 py-2.5 text-gray-400 text-right pr-2">{idx + 1}.</td>
+
+                  {editId === t.id ? (
+                    <>
+                      <td className="px-4 py-2">
+                        <input ref={editRef} value={editVal} onChange={e => setEditVal(e.target.value)}
+                          onKeyDown={e => { if (e.key === 'Enter') saveEdit(t.id); if (e.key === 'Escape') cancelEdit() }}
+                          className="w-full border border-blue-400 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        {editError && <p className="text-xs text-red-600 mt-1">{editError}</p>}
+                      </td>
+                      <td className="px-4 py-2">
+                        <select value={editCat} onChange={e => setEditCat(e.target.value)}
+                          className="w-full border border-blue-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                          <option value="">— Category —</option>
+                          {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </td>
+                      <td colSpan={3} />
+                      <td className="px-4 py-2">
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => saveEdit(t.id)} disabled={editSaving}
+                            className="p-1.5 text-green-600 hover:bg-green-50 rounded transition-colors" title="Save (Enter)">
+                            <Check size={15} />
+                          </button>
+                          <button onClick={cancelEdit}
+                            className="p-1.5 text-gray-400 hover:bg-gray-100 rounded transition-colors" title="Cancel (Esc)">
+                            <X size={15} />
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  ) : (
+                    <>
+                      <td className="px-4 py-2.5 text-sm text-gray-800 font-medium">{t.name}</td>
+                      <td className="px-4 py-2.5">
+                        {t.asset_category ? (
+                          <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
+                            t.asset_category === 'Measurable'
+                              ? 'bg-emerald-100 text-emerald-700'
+                              : 'bg-purple-100 text-purple-700'
+                          }`}>
+                            {t.asset_category}
+                          </span>
+                        ) : <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {parseInt(t.own_count) > 0
+                          ? <span className="text-xs bg-blue-100 text-blue-700 font-medium px-2 py-0.5 rounded-full">{t.own_count}</span>
+                          : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {parseInt(t.hire_count) > 0
+                          ? <span className="text-xs bg-amber-100 text-amber-700 font-medium px-2 py-0.5 rounded-full">{t.hire_count}</span>
+                          : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-center">
+                        {parseInt(t.usage_count) > 0
+                          ? <span className="text-xs bg-gray-200 text-gray-700 font-medium px-2 py-0.5 rounded-full">{t.usage_count}</span>
+                          : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        <div className="flex items-center gap-1">
+                          <button onClick={() => startEdit(t)}
+                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors" title="Edit">
+                            <Pencil size={13} />
+                          </button>
+                          <button onClick={() => doDelete(t.id)}
+                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors" title="Delete">
+                            <Trash2 size={13} />
+                          </button>
+                        </div>
+                      </td>
+                    </>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+            {filtered.length > 0 && (
+              <tfoot>
+                <tr className="border-t border-gray-200 bg-gray-50">
+                  <td colSpan={4} className="px-4 py-2 text-xs text-gray-400">
+                    {filtered.length} of {types.length} type{types.length !== 1 ? 's' : ''}
+                  </td>
+                  <td className="px-4 py-2 text-center text-xs font-semibold text-gray-600">
+                    {types.reduce((s, t) => s + (parseInt(t.own_count) || 0), 0)}
+                  </td>
+                  <td className="px-4 py-2 text-center text-xs font-semibold text-gray-600">
+                    {types.reduce((s, t) => s + (parseInt(t.hire_count) || 0), 0)}
+                  </td>
+                  <td className="px-4 py-2 text-center text-xs font-semibold text-gray-600">
+                    {types.reduce((s, t) => s + (parseInt(t.usage_count) || 0), 0)}
+                  </td>
+                  <td />
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
       </div>
 
       {/* ── Force-delete dialog ── */}

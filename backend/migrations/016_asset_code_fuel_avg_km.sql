@@ -1,0 +1,2 @@
+ALTER TABLE machines
+  ADD COLUMN IF NOT EXISTS asset_code VARCHAR(50);

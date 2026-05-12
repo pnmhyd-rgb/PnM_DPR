@@ -19,6 +19,14 @@ const migrations = [
   '013_user_profile_fields.sql',
   '014_user_last_login.sql',
   '015_equipment_type_fields.sql',
+  '016_asset_code_fuel_avg_km.sql',
+  '017_rename_fuel_avg_to_min_max_km.sql',
+  '018_add_rate_monthly.sql',
+  '019_machine_status_fields.sql',
+  '020_machine_transfer_date.sql',
+  '021_hire_work_orders.sql',
+  '022_hire_wo_vendor_offer.sql',
+  '023_gst_verification_fields.sql',
 ];
 
 async function runMigrations() {

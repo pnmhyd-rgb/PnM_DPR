@@ -5,11 +5,15 @@ import {
   LayoutDashboard, ClipboardList, BarChart2, FileText,
   Settings, LogOut, Menu, X, ChevronDown, ChevronRight,
   Fuel, Wrench, Users, Package, AlertTriangle, BookOpen,
-  User, Camera, RefreshCw, KeyRound, Shield, Info, Layers
+  User, Camera, RefreshCw, KeyRound, Shield, Info, Layers, Home, Download,
+  FileSignature, Sparkles,
 } from 'lucide-react'
+import DPRDownloadModal from '../pages/DPRDownloadModal'
+import KalaPanel from '../pages/KalaPanel'
+
 
 const NAV = [
-  { label: 'Entry',       href: '/entry',       icon: ClipboardList },
+  { label: 'Log Entry',   href: '/entry',       icon: ClipboardList },
   { label: 'Dashboard',   href: '/dashboard',   icon: LayoutDashboard },
   { label: 'Utilization', href: '/utilization', icon: BarChart2 },
   { label: 'Summary',     href: '/summary',     icon: FileText },
@@ -60,8 +64,8 @@ function Avatar({ user, size = 32, className = '' }) {
   }
   return (
     <div
-      style={{ width: size, height: size, fontSize: size * 0.38 }}
-      className={`rounded-full bg-blue-600 text-white flex items-center justify-center font-semibold flex-shrink-0 select-none ${className}`}
+      style={{ width: size, height: size, fontSize: size * 0.38, background: '#2563eb' }}
+      className={`rounded-full text-white flex items-center justify-center font-semibold flex-shrink-0 select-none ${className}`}
     >
       {initials(user?.name) || <User size={size * 0.5} />}
     </div>
@@ -194,10 +198,79 @@ function ProfileModal({ onClose }) {
   )
 }
 
-function UserMenu({ onClose }) {
+function RolesModal({ user, onClose }) {
+  const isAdmin = user?.role === 'admin'
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+            <Shield size={16} className="text-blue-600" /> Role &amp; Permissions
+          </h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-4">
+          <div className="flex items-center gap-3">
+            <span className={`px-3 py-1 rounded-full text-sm font-semibold ${isAdmin ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+              {user?.role}
+            </span>
+            <span className="text-sm text-gray-500">{isAdmin ? 'Administrator' : 'Operator'}</span>
+          </div>
+          <ul className="space-y-2 text-sm">
+            {isAdmin ? (
+              <>
+                <li className="flex items-center gap-2 text-gray-700"><span className="text-green-500 font-bold">✓</span> Full system access</li>
+                <li className="flex items-center gap-2 text-gray-700"><span className="text-green-500 font-bold">✓</span> Manage users &amp; projects</li>
+                <li className="flex items-center gap-2 text-gray-700"><span className="text-green-500 font-bold">✓</span> Asset &amp; machine settings</li>
+                <li className="flex items-center gap-2 text-gray-700"><span className="text-green-500 font-bold">✓</span> View all reports</li>
+                <li className="flex items-center gap-2 text-gray-700"><span className="text-green-500 font-bold">✓</span> Data entry &amp; approvals</li>
+              </>
+            ) : (
+              <>
+                <li className="flex items-center gap-2 text-gray-700"><span className="text-green-500 font-bold">✓</span> Daily data entry</li>
+                <li className="flex items-center gap-2 text-gray-700"><span className="text-green-500 font-bold">✓</span> View dashboard &amp; reports</li>
+                <li className="flex items-center gap-2 text-gray-400"><span className="text-red-400 font-bold">✗</span> Admin settings (restricted)</li>
+                <li className="flex items-center gap-2 text-gray-400"><span className="text-red-400 font-bold">✗</span> User management (restricted)</li>
+              </>
+            )}
+          </ul>
+          <button onClick={onClose} className="w-full border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg py-2 text-sm transition-colors">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function AboutModal({ onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <h2 className="font-semibold text-gray-900 flex items-center gap-2">
+            <Info size={16} className="text-blue-600" /> About
+          </h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>
+        </div>
+        <div className="p-5 space-y-2 text-sm">
+          <p className="font-semibold text-gray-900 text-base">RVR DPR &amp; Utilization System</p>
+          <p className="text-gray-500">Plants &amp; Machinery Module</p>
+          <p className="text-gray-500">RVR Projects Pvt Ltd</p>
+          <div className="pt-3">
+            <button onClick={onClose} className="w-full border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg py-2 text-sm transition-colors">
+              Close
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function UserMenu({ onClose, onOpenProfile, onOpenRoles, onOpenAbout }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
-  const [showProfile, setShowProfile] = useState(false)
   const menuRef = useRef()
 
   useEffect(() => {
@@ -208,46 +281,41 @@ function UserMenu({ onClose }) {
 
   const handleSignOut = () => { onClose(); logout(); navigate('/login') }
   const handleRefresh = () => { onClose(); window.location.reload() }
-  const handleProfile = () => { setShowProfile(true) }
 
   return (
-    <>
-      <div
-        ref={menuRef}
-        className="absolute right-3 top-14 z-50 w-64 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
-      >
-        {/* User header */}
-        <div className="px-4 py-3.5 bg-gradient-to-br from-blue-50 to-blue-100/60 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <Avatar user={user} size={40} />
-            <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900 truncate">{user?.name}</p>
-              <p className="text-xs text-gray-500">@{user?.username}</p>
-              <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${user?.role === 'admin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
-                {user?.role}
-              </span>
-            </div>
+    <div
+      ref={menuRef}
+      className="absolute right-3 top-14 z-50 w-64 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
+    >
+      {/* User header */}
+      <div className="px-4 py-3.5 bg-gradient-to-br from-blue-50 to-blue-100/60 border-b border-gray-200">
+        <div className="flex items-center gap-3">
+          <Avatar user={user} size={40} />
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 truncate">{user?.name}</p>
+            <p className="text-xs text-gray-500">@{user?.username}</p>
+            <span className={`inline-block mt-0.5 px-1.5 py-0.5 rounded text-xs font-medium ${user?.role === 'admin' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'}`}>
+              {user?.role}
+            </span>
           </div>
-        </div>
-
-        {/* Menu items */}
-        <div className="py-1">
-          <MenuItem icon={User} label="Profile Settings" onClick={handleProfile} />
-          <MenuItem icon={RefreshCw} label="Refresh" onClick={handleRefresh} />
-          <MenuItem icon={Shield} label="Role & Permissions" sub={user?.role === 'admin' ? 'Administrator — full access' : 'Operator — limited access'} onClick={onClose} />
-        </div>
-
-        <div className="border-t border-gray-100 py-1">
-          <MenuItem icon={Info} label="About" sub="RVR DPR & Utilization System" onClick={onClose} />
-        </div>
-
-        <div className="border-t border-gray-100 py-1">
-          <MenuItem icon={LogOut} label="Sign Out" onClick={handleSignOut} danger />
         </div>
       </div>
 
-      {showProfile && <ProfileModal onClose={() => { setShowProfile(false); onClose() }} />}
-    </>
+      {/* Menu items */}
+      <div className="py-1">
+        <MenuItem icon={User} label="Profile Settings" onClick={() => { onClose(); onOpenProfile() }} />
+        <MenuItem icon={RefreshCw} label="Refresh" onClick={handleRefresh} />
+        <MenuItem icon={Shield} label="Role & Permissions" sub={user?.role === 'admin' ? 'Administrator — full access' : 'Operator — limited access'} onClick={() => { onClose(); onOpenRoles() }} />
+      </div>
+
+      <div className="border-t border-gray-100 py-1">
+        <MenuItem icon={Info} label="About" sub="RVR DPR & Utilization System" onClick={() => { onClose(); onOpenAbout() }} />
+      </div>
+
+      <div className="border-t border-gray-100 py-1">
+        <MenuItem icon={LogOut} label="Sign Out" onClick={handleSignOut} danger />
+      </div>
+    </div>
   )
 }
 
@@ -276,9 +344,26 @@ export default function Layout({ children }) {
   const [hrOpen, setHrOpen]                   = useState(false)
   const [inventoryOpen, setInventoryOpen]     = useState(false)
   const [reportsOpen, setReportsOpen]         = useState(false)
+  const [hireOpen, setHireOpen]               = useState(false)
   const [assetRegisterOpen, setAssetRegisterOpen] = useState(false)
   const [ownAssetOpen, setOwnAssetOpen]           = useState(false)
   const [userMenuOpen, setUserMenuOpen]           = useState(false)
+  const [showProfile, setShowProfile]             = useState(false)
+  const [showRoles, setShowRoles]                 = useState(false)
+  const [showAbout, setShowAbout]                 = useState(false)
+  const [showDPRModal, setShowDPRModal]           = useState(false)
+  const [kalaOpen, setKalaOpen]                   = useState(false)
+  const [clock, setClock]                         = useState(new Date())
+
+  useEffect(() => {
+    const id = setInterval(() => setClock(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+
+  const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+  const clockDate = `${DAYS[clock.getDay()]}, ${clock.getDate()} ${MONTHS[clock.getMonth()]} ${clock.getFullYear()}`
+  const clockTime = clock.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase()
 
   const linkCls = ({ isActive }) =>
     `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -292,18 +377,12 @@ export default function Layout({ children }) {
 
   const sidebar = (
     <div className="flex flex-col h-full bg-blue-900">
-      {/* ── Sidebar Header ── */}
-      <div className="border-b border-blue-700/50 px-4 py-4">
-        <p className="text-white font-bold text-sm leading-snug tracking-wide">RVR Projects Pvt Ltd</p>
-        <p className="text-white font-semibold text-xs leading-snug tracking-wide mt-0.5">
-          Plants &amp; Machinery
-        </p>
-        <p className="text-blue-300 text-[10px] leading-snug uppercase tracking-widest">
-          DPR Module
-        </p>
-      </div>
-
       <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-0.5">
+        {/* My Dashboard */}
+        <NavLink to="/my-dashboard" className={linkCls} onClick={() => setMobileOpen(false)}>
+          <Home size={17} />My Dashboard
+        </NavLink>
+
         {/* Asset Register */}
         <div>
           <button
@@ -347,6 +426,27 @@ export default function Layout({ children }) {
           </NavLink>
         ))}
 
+        {/* Hire */}
+        <div className="pt-2">
+          <button
+            onClick={() => setHireOpen(v => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-700/50 transition-colors"
+          >
+            <span className="flex items-center gap-3"><FileSignature size={17} />Hire</span>
+            {hireOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </button>
+          {hireOpen && (
+            <div className="ml-7 mt-1 space-y-0.5">
+              <NavLink to="/hire/work-orders" className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                Work Orders
+              </NavLink>
+              <NavLink to="/hire/vendors" className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                Vendors
+              </NavLink>
+            </div>
+          )}
+        </div>
+
         <div className="pt-2">
           <button
             onClick={() => setHrOpen(v => !v)}
@@ -381,6 +481,13 @@ export default function Layout({ children }) {
                   {label}
                 </NavLink>
               ))}
+              <button
+                onClick={() => { setShowDPRModal(true); setMobileOpen(false) }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 rounded text-sm text-blue-200 hover:bg-blue-700/50 transition-colors text-left"
+              >
+                <Download size={13} />
+                Download DPR
+              </button>
             </div>
           )}
         </div>
@@ -451,47 +558,155 @@ export default function Layout({ children }) {
   )
 
   return (
-    <div className="flex h-screen overflow-hidden">
-      {/* Desktop sidebar */}
-      <aside className="hidden md:flex w-56 flex-shrink-0 flex-col">{sidebar}</aside>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
 
-      {/* Mobile overlay */}
-      {mobileOpen && (
-        <div className="md:hidden fixed inset-0 z-40 flex">
-          <div className="w-56 flex-shrink-0">{sidebar}</div>
-          <div className="flex-1 bg-black/50" onClick={() => setMobileOpen(false)} />
-        </div>
-      )}
-
-      <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Top bar */}
-        <header className="h-12 bg-white border-b border-gray-200 flex items-center justify-between px-4 flex-shrink-0 relative">
-          {/* Mobile hamburger */}
-          <button onClick={() => setMobileOpen(v => !v)} className="md:hidden text-gray-600 p-1">
-            {mobileOpen ? <X size={22} /> : <Menu size={22} />}
+      {/* ── Full-width white top header ── */}
+      <header style={{
+        flexShrink: 0,
+        height: 72,
+        width: '100%',
+        background: '#ffffff',
+        borderBottom: '1px solid #e5e7eb',
+        boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0 24px',
+      }}>
+        {/* LEFT: mobile hamburger + RVR logo */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button
+            onClick={() => setMobileOpen(v => !v)}
+            className="md:hidden"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, lineHeight: 0, color: '#6b7280' }}
+          >
+            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
-          <span className="md:hidden text-sm font-bold text-gray-800">P&amp;M DPR</span>
-          {/* Spacer for desktop */}
-          <span className="hidden md:block" />
+          <img
+            src="/rvr-logo.png"
+            alt="RVR"
+            style={{ width: 148, height: 'auto', display: 'block' }}
+          />
+        </div>
 
-          {/* User avatar button */}
-          <div className="relative">
+        {/* CENTER: live date & time */}
+        <div className="hidden md:flex flex-col items-center leading-tight select-none">
+          <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, letterSpacing: '0.02em' }}>
+            {clockDate}
+          </span>
+          <span style={{ fontSize: 17, color: '#111827', fontWeight: 700, fontVariantNumeric: 'tabular-nums', letterSpacing: '0.03em' }}>
+            {clockTime}
+          </span>
+        </div>
+
+        {/* RIGHT: Kala button + username + avatar */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+
+          {/* Kala AI toggle */}
+          <button
+            onClick={() => setKalaOpen(v => !v)}
+            className="hidden md:flex items-center gap-2"
+            style={{
+              padding: '7px 13px',
+              borderRadius: 10,
+              border: kalaOpen ? '1.5px solid #1d4ed8' : '1.5px solid #bfdbfe',
+              background: kalaOpen
+                ? 'linear-gradient(135deg, #1e3a8a, #1d4ed8)'
+                : 'linear-gradient(135deg, #eff6ff, #dbeafe)',
+              color: kalaOpen ? '#ffffff' : '#1d4ed8',
+              cursor: 'pointer',
+              fontSize: 13,
+              fontWeight: 700,
+              letterSpacing: '0.01em',
+              boxShadow: kalaOpen ? '0 2px 10px rgba(29,78,216,0.35)' : 'none',
+              transition: 'all 0.15s',
+              whiteSpace: 'nowrap',
+            }}
+            title="Open Kala AI Assistant"
+          >
+            <Sparkles size={14} />
+            Kala AI
+          </button>
+          <span
+            className="hidden md:block"
+            style={{ fontSize: 16, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}
+          >
+            {user?.name}
+          </span>
+          <div style={{ position: 'relative' }}>
             <button
               onClick={() => setUserMenuOpen(v => !v)}
-              className="flex items-center gap-2 rounded-full p-0.5 hover:ring-2 hover:ring-blue-300 transition-all"
+              style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
               title={user?.name}
             >
-              <Avatar user={user} size={34} />
+              <Avatar user={user} size={44} />
             </button>
-
-            {userMenuOpen && <UserMenu onClose={() => setUserMenuOpen(false)} />}
+            {userMenuOpen && (
+                <UserMenu
+                  onClose={() => setUserMenuOpen(false)}
+                  onOpenProfile={() => setShowProfile(true)}
+                  onOpenRoles={() => setShowRoles(true)}
+                  onOpenAbout={() => setShowAbout(true)}
+                />
+              )}
           </div>
-        </header>
+        </div>
+      </header>
 
+      {/* ── Below header: blue sidebar + main content ── */}
+      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+
+        {/* Desktop sidebar — starts below header */}
+        <aside className="hidden md:flex w-56 flex-shrink-0 flex-col">{sidebar}</aside>
+
+        {/* Mobile overlay — starts below 72px header */}
+        {mobileOpen && (
+          <div className="md:hidden fixed inset-x-0 bottom-0 z-40 flex" style={{ top: 72 }}>
+            <div className="w-56 flex-shrink-0">{sidebar}</div>
+            <div className="flex-1 bg-black/50" onClick={() => setMobileOpen(false)} />
+          </div>
+        )}
+
+        {/* Main content */}
         <main className="flex-1 overflow-y-auto p-4 md:p-6">
           {children}
         </main>
+
+        {/* ── Kala AI side panel ── */}
+        {kalaOpen && (
+          <div
+            className="hidden md:flex flex-col flex-shrink-0"
+            style={{
+              width: 380,
+              borderLeft: '1px solid #e5e7eb',
+              boxShadow: '-4px 0 20px rgba(0,0,0,0.06)',
+              animation: 'slideInRight 0.2s ease',
+            }}
+          >
+            <KalaPanel onClose={() => setKalaOpen(false)} />
+          </div>
+        )}
+
       </div>
+
+      {/* Kala slide-in animation */}
+      <style>{`
+        @keyframes slideInRight {
+          from { transform: translateX(20px); opacity: 0; }
+          to   { transform: translateX(0);    opacity: 1; }
+        }
+        @keyframes pulse {
+          0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.4); }
+          50%       { box-shadow: 0 0 0 6px rgba(239,68,68,0); }
+        }
+      `}</style>
+
+      {/* ── Layout-level modals (outside UserMenu so they survive dropdown close) ── */}
+      {showProfile  && <ProfileModal onClose={() => setShowProfile(false)} />}
+      {showRoles    && <RolesModal user={user} onClose={() => setShowRoles(false)} />}
+      {showAbout    && <AboutModal onClose={() => setShowAbout(false)} />}
+      {showDPRModal && <DPRDownloadModal onClose={() => setShowDPRModal(false)} />}
+
     </div>
   )
 }

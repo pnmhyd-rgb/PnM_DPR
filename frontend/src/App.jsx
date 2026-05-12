@@ -21,6 +21,8 @@ import EquipmentTypes from './pages/admin/EquipmentTypes'
 import OwnMeasurable from './pages/asset-register/OwnMeasurable'
 import OwnNonMeasurable from './pages/asset-register/OwnNonMeasurable'
 import HireAssets from './pages/asset-register/HireAssets'
+import MyDashboard from './pages/MyDashboard'
+import HireWorkOrders from './pages/hire/HireWorkOrders'
 
 function ProtectedLayout() {
   const { user } = useAuth()
@@ -30,7 +32,7 @@ function ProtectedLayout() {
 
 function AdminGuard() {
   const { isAdmin } = useAuth()
-  if (!isAdmin) return <Navigate to="/dashboard" replace />
+  if (!isAdmin) return <Navigate to="/my-dashboard" replace />
   return <Outlet />
 }
 
@@ -41,12 +43,15 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/" element={<ProtectedLayout />}>
-            <Route index element={<Navigate to="/dashboard" replace />} />
+            <Route index element={<Navigate to="/my-dashboard" replace />} />
+            <Route path="my-dashboard" element={<MyDashboard />} />
             <Route path="entry"       element={<Entry />} />
             <Route path="dashboard"   element={<Dashboard />} />
             <Route path="utilization" element={<Utilization />} />
             <Route path="summary"     element={<Summary />} />
             <Route path="fuel"        element={<FuelEntries />} />
+            <Route path="hire/work-orders" element={<HireWorkOrders defaultTab="wo" />} />
+            <Route path="hire/vendors"     element={<HireWorkOrders defaultTab="vendors" />} />
             <Route path="service"     element={<ServiceEntries />} />
             <Route path="hr/operators"           element={<Operators />} />
             <Route path="hr/attendance"          element={<Attendance />} />

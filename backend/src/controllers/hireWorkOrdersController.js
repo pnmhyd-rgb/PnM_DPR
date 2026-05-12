@@ -1,0 +1,480 @@
+const db = require('../config/db');
+
+// ── VENDORS ─────────────────────────────────────────────────────────────────
+
+const getVendors = async (req, res) => {
+  try {
+    const result = await db.query(
+      'SELECT * FROM hire_vendors WHERE active = TRUE ORDER BY name'
+    );
+    res.json({ data: result.rows });
+  } catch (err) {
+    console.error('getVendors:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const createVendor = async (req, res) => {
+  try {
+    const {
+      name, contact_person, phone, email, address, gst_no, pan_no,
+      bank_name, bank_account, bank_ifsc,
+      // GST-verified enrichment fields
+      legal_name, trade_name, state, district, pincode,
+      gst_status, business_type, gst_reg_date,
+      gst_verified, gst_verified_at, gst_api_response,
+    } = req.body;
+
+    if (!name?.trim()) return res.status(400).json({ error: 'Vendor name is required' });
+
+    // Server-side duplicate GSTIN guard
+    if (gst_no?.trim()) {
+      const dup = await db.query(
+        `SELECT id, name FROM hire_vendors WHERE UPPER(gst_no) = UPPER($1) AND active = TRUE LIMIT 1`,
+        [gst_no.trim()]
+      );
+      if (dup.rows.length) {
+        return res.status(409).json({ error: `GST number already registered under "${dup.rows[0].name}"` });
+      }
+    }
+
+    const result = await db.query(
+      `INSERT INTO hire_vendors
+         (name, contact_person, phone, email, address, gst_no, pan_no,
+          bank_name, bank_account, bank_ifsc,
+          legal_name, trade_name, state, district, pincode,
+          gst_status, business_type, gst_reg_date,
+          gst_verified, gst_verified_at, gst_api_response)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+       RETURNING *`,
+      [
+        name.trim(), contact_person||null, phone||null, email||null, address||null,
+        gst_no||null, pan_no||null, bank_name||null, bank_account||null, bank_ifsc||null,
+        legal_name||null, trade_name||null, state||null, district||null, pincode||null,
+        gst_status||null, business_type||null, gst_reg_date||null,
+        gst_verified||false, gst_verified_at||null,
+        gst_api_response ? JSON.stringify(gst_api_response) : null,
+      ]
+    );
+    res.status(201).json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('createVendor:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const updateVendor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name, contact_person, phone, email, address, gst_no, pan_no,
+      bank_name, bank_account, bank_ifsc,
+      legal_name, trade_name, state, district, pincode,
+      gst_status, business_type, gst_reg_date,
+      gst_verified, gst_verified_at, gst_api_response,
+    } = req.body;
+
+    if (!name?.trim()) return res.status(400).json({ error: 'Vendor name is required' });
+
+    // Server-side duplicate GSTIN guard (exclude self)
+    if (gst_no?.trim()) {
+      const dup = await db.query(
+        `SELECT id, name FROM hire_vendors WHERE UPPER(gst_no) = UPPER($1) AND active = TRUE AND id != $2 LIMIT 1`,
+        [gst_no.trim(), id]
+      );
+      if (dup.rows.length) {
+        return res.status(409).json({ error: `GST number already registered under "${dup.rows[0].name}"` });
+      }
+    }
+
+    const result = await db.query(
+      `UPDATE hire_vendors SET
+         name=$1, contact_person=$2, phone=$3, email=$4, address=$5,
+         gst_no=$6, pan_no=$7, bank_name=$8, bank_account=$9, bank_ifsc=$10,
+         legal_name=$11, trade_name=$12, state=$13, district=$14, pincode=$15,
+         gst_status=$16, business_type=$17, gst_reg_date=$18,
+         gst_verified=$19, gst_verified_at=$20, gst_api_response=$21,
+         updated_at=NOW()
+       WHERE id=$22 RETURNING *`,
+      [
+        name.trim(), contact_person||null, phone||null, email||null, address||null,
+        gst_no||null, pan_no||null, bank_name||null, bank_account||null, bank_ifsc||null,
+        legal_name||null, trade_name||null, state||null, district||null, pincode||null,
+        gst_status||null, business_type||null, gst_reg_date||null,
+        gst_verified||false, gst_verified_at||null,
+        gst_api_response ? JSON.stringify(gst_api_response) : null,
+        id,
+      ]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Vendor not found' });
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('updateVendor:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const deleteVendor = async (req, res) => {
+  try {
+    const { id } = req.params;
+    await db.query('UPDATE hire_vendors SET active=FALSE,updated_at=NOW() WHERE id=$1', [id]);
+    res.json({ message: 'Vendor deactivated' });
+  } catch (err) {
+    console.error('deleteVendor:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+// ── WO NUMBER GENERATOR ─────────────────────────────────────────────────────
+
+async function generateWoNumber(woDate) {
+  const year = new Date(woDate).getFullYear();
+  const countRes = await db.query(
+    `SELECT COUNT(*) FROM hire_work_orders
+     WHERE EXTRACT(YEAR FROM wo_date) = $1`, [year]
+  );
+  const seq = parseInt(countRes.rows[0].count) + 1;
+  return `HWO/${year}/${String(seq).padStart(4, '0')}`;
+}
+
+// ── WORK ORDERS ─────────────────────────────────────────────────────────────
+
+const BASE_SELECT = `
+  SELECT w.*,
+    v.name            AS vendor_name,
+    v.contact_person  AS vendor_contact,
+    v.phone           AS vendor_phone,
+    v.gst_no          AS vendor_gst,
+    p.code            AS project_code,
+    p.name            AS project_name,
+    uc.name           AS created_by_name,
+    us.name           AS submitted_by_name,
+    ul1.name          AS l1_approved_by_name,
+    ua.name           AS approved_by_name,
+    ur.name           AS rejected_by_name
+  FROM hire_work_orders w
+  LEFT JOIN hire_vendors v  ON w.vendor_id   = v.id
+  LEFT JOIN projects     p  ON w.project_id  = p.id
+  LEFT JOIN users        uc ON w.created_by       = uc.id
+  LEFT JOIN users        us ON w.submitted_by     = us.id
+  LEFT JOIN users        ul1 ON w.l1_approved_by  = ul1.id
+  LEFT JOIN users        ua ON w.approved_by      = ua.id
+  LEFT JOIN users        ur ON w.rejected_by      = ur.id
+`;
+
+const getWorkOrders = async (req, res) => {
+  try {
+    const { project_id, vendor_id, status } = req.query;
+    let query = BASE_SELECT + ' WHERE 1=1';
+    const params = [];
+
+    if (project_id) { params.push(project_id); query += ` AND w.project_id=$${params.length}`; }
+    if (vendor_id)  { params.push(vendor_id);  query += ` AND w.vendor_id=$${params.length}`; }
+    if (status)     { params.push(status);     query += ` AND w.status=$${params.length}`; }
+
+    if (req.user.role !== 'admin' && req.user.project_codes?.length) {
+      params.push(req.user.project_codes);
+      query += ` AND p.code = ANY($${params.length})`;
+    }
+
+    query += ' ORDER BY w.created_at DESC';
+    const result = await db.query(query, params);
+    res.json({ data: result.rows });
+  } catch (err) {
+    console.error('getWorkOrders:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const getWorkOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const [woRes, itemsRes] = await Promise.all([
+      db.query(BASE_SELECT + ' WHERE w.id=$1', [id]),
+      db.query(
+        `SELECT i.*, m.slno, m.reg_no, m.eq_type
+         FROM hire_wo_items i LEFT JOIN machines m ON i.machine_id = m.id
+         WHERE i.wo_id=$1 ORDER BY i.id`, [id]
+      ),
+    ]);
+    if (!woRes.rows.length) return res.status(404).json({ error: 'Work order not found' });
+    res.json({ data: { ...woRes.rows[0], items: itemsRes.rows } });
+  } catch (err) {
+    console.error('getWorkOrder:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const createWorkOrder = async (req, res) => {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const {
+      wo_date, indent_number, vendor_offer_no, vendor_id, project_id,
+      start_date, end_date, tenure_months, terms_conditions, items = []
+    } = req.body;
+
+    if (!wo_date || !vendor_id || !project_id) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'WO date, vendor and project are required' });
+    }
+
+    const wo_number = await generateWoNumber(wo_date);
+
+    const totalValue = items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+
+    const woRes = await client.query(
+      `INSERT INTO hire_work_orders
+         (wo_number,wo_date,indent_number,vendor_offer_no,vendor_id,project_id,start_date,end_date,
+          tenure_months,total_value,terms_conditions,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [wo_number, wo_date, indent_number||null, vendor_offer_no||null, vendor_id, project_id,
+       start_date||null, end_date||null, tenure_months||null,
+       totalValue, terms_conditions||null, req.user.id]
+    );
+    const wo = woRes.rows[0];
+
+    for (const item of items) {
+      await client.query(
+        `INSERT INTO hire_wo_items
+           (wo_id,machine_id,equipment_desc,quantity,unit,rate,rate_type,amount)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [wo.id, item.machine_id||null, item.equipment_desc,
+         item.quantity||1, item.unit||'No.', item.rate||0,
+         item.rate_type||'per_month', item.amount||0]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.status(201).json({ data: wo });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('createWorkOrder:', err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+};
+
+const updateWorkOrder = async (req, res) => {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+
+    const existing = await client.query('SELECT status FROM hire_work_orders WHERE id=$1', [id]);
+    if (!existing.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Not found' }); }
+    if (!['draft', 'rejected'].includes(existing.rows[0].status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only draft or rejected WOs can be edited' });
+    }
+
+    const {
+      wo_date, indent_number, vendor_offer_no, vendor_id, project_id,
+      start_date, end_date, tenure_months, terms_conditions, items = []
+    } = req.body;
+
+    const totalValue = items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+
+    await client.query(
+      `UPDATE hire_work_orders SET
+         wo_date=$1,indent_number=$2,vendor_offer_no=$3,vendor_id=$4,project_id=$5,
+         start_date=$6,end_date=$7,tenure_months=$8,
+         total_value=$9,terms_conditions=$10,status='draft',updated_at=NOW()
+       WHERE id=$11`,
+      [wo_date, indent_number||null, vendor_offer_no||null, vendor_id, project_id,
+       start_date||null, end_date||null, tenure_months||null,
+       totalValue, terms_conditions||null, id]
+    );
+
+    await client.query('DELETE FROM hire_wo_items WHERE wo_id=$1', [id]);
+    for (const item of items) {
+      await client.query(
+        `INSERT INTO hire_wo_items
+           (wo_id,machine_id,equipment_desc,quantity,unit,rate,rate_type,amount)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [id, item.machine_id||null, item.equipment_desc,
+         item.quantity||1, item.unit||'No.', item.rate||0,
+         item.rate_type||'per_month', item.amount||0]
+      );
+    }
+
+    await client.query('COMMIT');
+    res.json({ message: 'Work order updated' });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('updateWorkOrder:', err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+};
+
+const deleteWorkOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = await db.query('SELECT status FROM hire_work_orders WHERE id=$1', [id]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (!['draft', 'rejected'].includes(existing.rows[0].status)) {
+      return res.status(400).json({ error: 'Only draft or rejected WOs can be deleted' });
+    }
+    await db.query('DELETE FROM hire_work_orders WHERE id=$1', [id]);
+    res.json({ message: 'Work order deleted' });
+  } catch (err) {
+    console.error('deleteWorkOrder:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const submitWorkOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const existing = await db.query('SELECT status FROM hire_work_orders WHERE id=$1', [id]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (!['draft', 'rejected'].includes(existing.rows[0].status)) {
+      return res.status(400).json({ error: 'WO cannot be submitted in its current status' });
+    }
+    await db.query(
+      `UPDATE hire_work_orders SET status='submitted', submitted_by=$1, submitted_at=NOW(), updated_at=NOW() WHERE id=$2`,
+      [req.user.id, id]
+    );
+    res.json({ message: 'Submitted for approval' });
+  } catch (err) {
+    console.error('submitWorkOrder:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const approveL1 = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { remarks } = req.body;
+    const existing = await db.query('SELECT status FROM hire_work_orders WHERE id=$1', [id]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (existing.rows[0].status !== 'submitted') {
+      return res.status(400).json({ error: 'WO must be in submitted status for L1 approval' });
+    }
+    await db.query(
+      `UPDATE hire_work_orders SET
+         status='l1_approved', l1_approved_by=$1, l1_remarks=$2, l1_approved_at=NOW(), updated_at=NOW()
+       WHERE id=$3`,
+      [req.user.id, remarks||null, id]
+    );
+    res.json({ message: 'L1 approved' });
+  } catch (err) {
+    console.error('approveL1:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const approveFinal = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { remarks } = req.body;
+    const existing = await db.query('SELECT status FROM hire_work_orders WHERE id=$1', [id]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (existing.rows[0].status !== 'l1_approved') {
+      return res.status(400).json({ error: 'WO must be L1 approved before final approval' });
+    }
+    await db.query(
+      `UPDATE hire_work_orders SET
+         status='approved', approved_by=$1, approved_remarks=$2, approved_at=NOW(), updated_at=NOW()
+       WHERE id=$3`,
+      [req.user.id, remarks||null, id]
+    );
+    res.json({ message: 'Work order approved' });
+  } catch (err) {
+    console.error('approveFinal:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const rejectWorkOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { remarks } = req.body;
+    if (!remarks?.trim()) return res.status(400).json({ error: 'Rejection remarks are required' });
+    const existing = await db.query('SELECT status FROM hire_work_orders WHERE id=$1', [id]);
+    if (!existing.rows.length) return res.status(404).json({ error: 'Not found' });
+    if (!['submitted', 'l1_approved'].includes(existing.rows[0].status)) {
+      return res.status(400).json({ error: 'WO cannot be rejected in its current status' });
+    }
+    await db.query(
+      `UPDATE hire_work_orders SET
+         status='rejected', rejected_by=$1, rejected_remarks=$2, rejected_at=NOW(), updated_at=NOW()
+       WHERE id=$3`,
+      [req.user.id, remarks.trim(), id]
+    );
+    res.json({ message: 'Work order rejected' });
+  } catch (err) {
+    console.error('rejectWorkOrder:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const renewWorkOrder = async (req, res) => {
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { start_date, end_date, tenure_months, terms_conditions, items } = req.body;
+
+    const parentRes = await client.query('SELECT * FROM hire_work_orders WHERE id=$1', [id]);
+    if (!parentRes.rows.length) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'Parent WO not found' }); }
+    const parent = parentRes.rows[0];
+    if (parent.status !== 'approved') {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Only approved WOs can be renewed' });
+    }
+
+    const wo_date = new Date().toISOString().slice(0, 10);
+    const wo_number = await generateWoNumber(wo_date);
+    const renewalItems = items || (
+      await client.query('SELECT * FROM hire_wo_items WHERE wo_id=$1', [id])
+    ).rows;
+    const totalValue = renewalItems.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
+
+    const woRes = await client.query(
+      `INSERT INTO hire_work_orders
+         (wo_number,wo_date,indent_number,vendor_id,project_id,
+          start_date,end_date,tenure_months,total_value,terms_conditions,
+          parent_wo_id,renewal_count,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [wo_number, wo_date, parent.indent_number, parent.vendor_id, parent.project_id,
+       start_date||null, end_date||null, tenure_months||parent.tenure_months,
+       totalValue, terms_conditions||parent.terms_conditions,
+       id, parent.renewal_count + 1, req.user.id]
+    );
+    const newWo = woRes.rows[0];
+
+    for (const item of renewalItems) {
+      await client.query(
+        `INSERT INTO hire_wo_items
+           (wo_id,machine_id,equipment_desc,quantity,unit,rate,rate_type,amount)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+        [newWo.id, item.machine_id||null, item.equipment_desc,
+         item.quantity||1, item.unit||'No.', item.rate||0,
+         item.rate_type||'per_month', item.amount||0]
+      );
+    }
+
+    await client.query(
+      `UPDATE hire_work_orders SET status='renewed', updated_at=NOW() WHERE id=$1`, [id]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json({ data: newWo });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('renewWorkOrder:', err);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+};
+
+module.exports = {
+  getVendors, createVendor, updateVendor, deleteVendor,
+  getWorkOrders, getWorkOrder, createWorkOrder, updateWorkOrder, deleteWorkOrder,
+  submitWorkOrder, approveL1, approveFinal, rejectWorkOrder, renewWorkOrder,
+};

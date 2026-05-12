@@ -176,12 +176,15 @@ export default function Projects() {
                 <input
                   type="text" value={form.code}
                   onChange={e => setForm(f => ({ ...f, code: e.target.value.toUpperCase() }))}
-                  className={inp + (modal !== 'add' ? ' bg-gray-50 text-gray-400' : '')}
+                  className={inp}
                   placeholder="e.g. RHP2"
-                  readOnly={modal !== 'add'}
                   maxLength={10}
                 />
-                {modal !== 'add' && <p className="text-xs text-gray-400 mt-1">Site code cannot be changed after creation.</p>}
+                {modal !== 'add' && form.code !== modal.edit?.code && (
+                  <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 px-2 py-1.5 rounded-lg mt-1">
+                    Changing the site code will update all user access lists. Existing machine and DPR data links will update automatically.
+                  </p>
+                )}
               </div>
 
               {/* Users to link */}

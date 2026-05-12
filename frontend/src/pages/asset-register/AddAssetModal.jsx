@@ -5,6 +5,7 @@ import {
   createMachine, bulkCreateMachines, createUomType
 } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
+import { downloadAssetTemplate, parseAssetFile } from '../../lib/assetBulkTemplate'
 
 const OWNERSHIP  = ['Own', 'Hire']
 const ASSET_TYPE = ['Measurable Asset', 'Non-Measurable Asset']
@@ -13,157 +14,16 @@ const SHIFTS     = ['Single Shift', 'Dual Shift']
 const READINGS   = ['Hours', 'KM']
 const OWN_NAME   = 'RVR Projects Pvt Ltd'
 
-/* ── Unified Excel template (same format as Machine Registry bulk upload) ─── */
-const TEMPLATE_HEADERS = [
-  'Sl No', 'Project Code', 'Machine SL#', 'Equipment Type', 'Category',
-  'Ownership', 'Manufacturer', 'Model', 'Capacity', 'UOM',
-  'Reg No', 'Chassis No', 'Fuel Type', 'Shift Type', 'Reading Basis',
-  'Fuel Min (L/hr)', 'Fuel Max (L/hr)', 'Planned Hrs/Day',
-  'Date of Purchase (YYYY-MM-DD)', 'PO Number', 'Purchase Price (₹)', 'Vendor',
-]
-
-async function downloadAssetTemplate(projects, eqTypes) {
-  const XLSX = await import('xlsx')
-  const wb   = XLSX.utils.book_new()
-  const projList = projects.map(p => p.code).join(', ') || 'PROJECT_CODE'
-
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['Asset Register Bulk Upload Template'],
-    [`Project Codes available: ${projList}`],
-    ['Ownership: Own or Hire  |  Shift: Single Shift or Dual Shift  |  Reading Basis: Hours or KM  |  Fuel Type: Diesel / Petrol / EV / N/A'],
-    ['Category auto-fills from Equipment Type. Date of Purchase required for Own. Vendor required for Hire.'],
-    [],
-    TEMPLATE_HEADERS,
-    [1, projects[0]?.code || 'PRJ001', 'E6-EX-02', 'Excavator', 'Measurable',
-     'Own', 'Komatsu', 'PC200', '20T', 'Tons', 'KA01AB1234', 'CH12345', 'Diesel',
-     'Single Shift', 'Hours', 5, 8, 10, '2024-01-15', 'PO-001', 5000000, ''],
-    [2, projects[0]?.code || 'PRJ001', 'E6-DG-01', 'Diesel Generator', 'Measurable',
-     'Hire', 'Kirloskar', 'KG2-5AS', '125', 'KVA', '', '', 'Diesel',
-     'Single Shift', 'Hours', 3, 6, 10, '', '', '', 'AcmeCo'],
-  ])
-
-  ws['!cols'] = [
-    {wch:6},{wch:14},{wch:14},{wch:28},{wch:16},
-    {wch:10},{wch:14},{wch:14},{wch:10},{wch:8},
-    {wch:14},{wch:14},{wch:10},{wch:14},{wch:14},
-    {wch:14},{wch:14},{wch:14},{wch:26},{wch:14},{wch:18},{wch:16},
-  ]
-  const headerR = 5
-  TEMPLATE_HEADERS.forEach((_, ci) => {
-    const ref = XLSX.utils.encode_cell({ r: headerR, c: ci })
-    if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0D8E8' } } }
-  })
-  XLSX.utils.book_append_sheet(wb, ws, 'Asset Register')
-
-  // Equipment Types reference sheet
-  if (eqTypes.length > 0) {
-    const etWs = XLSX.utils.aoa_to_sheet([
-      ['Equipment Types Reference — use exact spelling in the "Equipment Type" column'],
-      [],
-      ['No', 'Equipment Type Name', 'Category'],
-      ...eqTypes.map((t, i) => [i + 1, t.name, t.asset_category || '—']),
-    ])
-    etWs['!cols'] = [{ wch: 6 }, { wch: 36 }, { wch: 18 }]
-    ;['A3', 'B3', 'C3'].forEach(ref => {
-      if (etWs[ref]) etWs[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0D8E8' } } }
-    })
-    XLSX.utils.book_append_sheet(wb, etWs, 'Equipment Types Ref')
-  }
-
-  XLSX.writeFile(wb, `AssetRegister_Template_${new Date().toISOString().slice(0, 10)}.xlsx`)
-}
-
-async function parseAssetFile(file) {
-  const XLSX = await import('xlsx')
-  const data = await file.arrayBuffer()
-  const wb   = XLSX.read(data)
-  const ws   = wb.Sheets[wb.SheetNames[0]]
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
-
-  let headerRow = -1
-  for (let i = 0; i < rows.length; i++) {
-    const lower = rows[i].map(c => String(c).trim().toLowerCase())
-    if (lower.includes('machine sl#') || lower.includes('project code')) { headerRow = i; break }
-  }
-  if (headerRow === -1)
-    return { error: 'Cannot find the header row. Ensure columns "Project Code" and "Machine SL#" are present.' }
-
-  const headers    = rows[headerRow].map(c => String(c).trim().toLowerCase())
-  const col = k => headers.findIndex(h => h.startsWith(k))
-
-  const projCol     = col('project code')
-  const slnoCol     = col('machine sl')
-  const typeCol     = col('equipment type')
-  const catCol      = col('category')
-  const ownCol      = col('ownership')
-  const mfrCol      = col('manufacturer')
-  const modelCol    = col('model')
-  const capCol      = col('capacity')
-  const uomCol      = col('uom')
-  const regCol      = col('reg no')
-  const chassisCol  = col('chassis')
-  const fuelTypeCol = col('fuel type')
-  const shiftCol    = col('shift type')
-  const basisCol    = col('reading basis')
-  const fuelMinCol  = col('fuel min')
-  const fuelMaxCol  = col('fuel max')
-  const planCol     = col('planned')
-  const dobCol      = col('date of purchase')
-  const poCol       = col('po number')
-  const priceCol    = col('purchase price')
-  const vendorCol   = col('vendor')
-
-  if (projCol === -1 || slnoCol === -1 || typeCol === -1)
-    return { error: 'Missing required columns: "Project Code", "Machine SL#", "Equipment Type".' }
-
-  const items = []
-  for (let i = headerRow + 1; i < rows.length; i++) {
-    const r    = rows[i]
-    const slno = String(r[slnoCol] ?? '').trim()
-    if (!slno) continue
-
-    const catRaw   = catCol >= 0 ? String(r[catCol] ?? '').trim() : ''
-    const asset_type =
-      catRaw === 'Measurable'     ? 'Measurable Asset'     :
-      catRaw === 'Non-Measurable' ? 'Non-Measurable Asset' : null
-
-    items.push({
-      project_code:     String(r[projCol]     ?? '').trim(),
-      slno,
-      eq_type:          String(r[typeCol]     ?? '').trim(),
-      asset_type,
-      ownership:        String(r[ownCol]      ?? 'Own').trim()          || 'Own',
-      manufacturer:     mfrCol     >= 0 ? (String(r[mfrCol]     ?? '').trim() || null) : null,
-      model:            modelCol   >= 0 ? (String(r[modelCol]   ?? '').trim() || null) : null,
-      capacity:         capCol     >= 0 ? (String(r[capCol]     ?? '').trim() || null) : null,
-      uom:              uomCol     >= 0 ? (String(r[uomCol]     ?? '').trim() || null) : null,
-      reg_no:           regCol     >= 0 ? (String(r[regCol]     ?? '').trim() || null) : null,
-      chassis_no:       chassisCol >= 0 ? (String(r[chassisCol] ?? '').trim() || null) : null,
-      fuel_type:        fuelTypeCol>= 0 ? (String(r[fuelTypeCol]?? '').trim() || null) : null,
-      shift_type:       String(r[shiftCol]    ?? 'Single Shift').trim() || 'Single Shift',
-      reading1_basis:   basisCol   >= 0 ? (String(r[basisCol]   ?? 'Hours').trim() || 'Hours') : 'Hours',
-      fuel_min:         fuelMinCol >= 0 ? (parseFloat(r[fuelMinCol]) || null) : null,
-      fuel_max:         fuelMaxCol >= 0 ? (parseFloat(r[fuelMaxCol]) || null) : null,
-      planned_hours:    planCol    >= 0 ? (parseFloat(r[planCol])    || 10)   : 10,
-      date_of_purchase: dobCol     >= 0 ? (String(r[dobCol]  ?? '').trim() || null) : null,
-      po_number:        poCol      >= 0 ? (String(r[poCol]   ?? '').trim() || null) : null,
-      price:            priceCol   >= 0 ? (parseFloat(r[priceCol]) || null)  : null,
-      vendor:           vendorCol  >= 0 ? (String(r[vendorCol] ?? '').trim() || null) : null,
-    })
-  }
-  if (items.length === 0) return { error: 'No asset rows found in the file.' }
-  return { items }
-}
-
 /* ── Blank form ───────────────────────────────────────────────────────────── */
 const blank = {
   project_id: '', eq_type: '', manufacturer: '', model: '',
   capacity: '', uom: '', ownership: 'Own', asset_type: 'Measurable Asset',
-  vendor: '', fuel_type: 'Diesel', slno: '', chassis_no: '', reg_no: '',
+  vendor: '', rate: '', rate_monthly: '', fuel_type: 'Diesel',
+  asset_code: '', slno: '', chassis_no: '', reg_no: '',
   date_of_purchase: '', po_number: '', price: '',
   shift_type: 'Single Shift', reading1_basis: 'Hours',
   reading2_basis: '', dual_reading: false,
-  fuel_min: '', fuel_max: '', planned_hours: '10',
+  fuel_min: '', fuel_max: '', fuel_min_km: '', fuel_max_km: '', planned_hours: '10',
 }
 
 export default function AddAssetModal({ onClose, onSaved }) {
@@ -237,9 +97,14 @@ export default function AddAssetModal({ onClose, onSaved }) {
       await createMachine({
         ...form,
         project_id:    parseInt(form.project_id),
+        asset_code:    form.asset_code || null,
         price:         form.price || null,
+        rate:          form.rate || null,
+        rate_monthly:  form.rate_monthly || null,
         fuel_min:      form.fuel_min || null,
         fuel_max:      form.fuel_max || null,
+        fuel_min_km:   form.fuel_min_km || null,
+        fuel_max_km:   form.fuel_max_km || null,
         planned_hours: parseFloat(form.planned_hours) || 10,
       })
       onSaved?.()
@@ -389,6 +254,18 @@ export default function AddAssetModal({ onClose, onSaved }) {
                   </div>
                 )}
               </div>
+              {form.ownership === 'Hire' && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={lbl}>Hire Charges/Day (₹)</label>
+                    <input type="number" step="0.01" value={form.rate} onChange={set('rate')} className={inp} placeholder="e.g. 15000" />
+                  </div>
+                  <div>
+                    <label className={lbl}>Hire Charges/Month (₹)</label>
+                    <input type="number" step="0.01" value={form.rate_monthly} onChange={set('rate_monthly')} className={inp} placeholder="e.g. 350000" />
+                  </div>
+                </div>
+              )}
 
               {form.ownership === 'Own' && (
                 <div>
@@ -405,18 +282,24 @@ export default function AddAssetModal({ onClose, onSaved }) {
               )}
 
               <p className={sec}>Identification</p>
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={lbl}>Asset Code</label>
+                  <input type="text" value={form.asset_code} onChange={set('asset_code')} className={inp} placeholder="e.g. AST-001" />
+                </div>
                 <div>
                   <label className={lbl}>Machine SL No *</label>
                   <input type="text" value={form.slno} onChange={set('slno')} className={inp} placeholder="e.g. E-EX-01" />
                 </div>
-                <div>
-                  <label className={lbl}>Chassis No</label>
-                  <input type="text" value={form.chassis_no} onChange={set('chassis_no')} className={inp} />
-                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={lbl}>Registration No</label>
                   <input type="text" value={form.reg_no} onChange={set('reg_no')} className={inp} />
+                </div>
+                <div>
+                  <label className={lbl}>Chassis No</label>
+                  <input type="text" value={form.chassis_no} onChange={set('chassis_no')} className={inp} />
                 </div>
               </div>
 
@@ -474,10 +357,17 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 )}
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
-                <div><label className={lbl}>Fuel Min (L/hr)</label><input type="number" step="0.1" value={form.fuel_min} onChange={set('fuel_min')} className={inp} /></div>
-                <div><label className={lbl}>Fuel Max (L/hr)</label><input type="number" step="0.1" value={form.fuel_max} onChange={set('fuel_max')} className={inp} /></div>
-                <div><label className={lbl}>Planned Hrs/Day</label><input type="number" step="0.5" value={form.planned_hours} onChange={set('planned_hours')} className={inp} /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className={lbl}>Fuel Min (L/hr)</label><input type="number" step="0.1" value={form.fuel_min} onChange={set('fuel_min')} className={inp} placeholder="Hours-basis" /></div>
+                <div><label className={lbl}>Fuel Max (L/hr)</label><input type="number" step="0.1" value={form.fuel_max} onChange={set('fuel_max')} className={inp} placeholder="Hours-basis" /></div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className={lbl}>Fuel Min (kms/ltr)</label><input type="number" step="0.1" value={form.fuel_min_km} onChange={set('fuel_min_km')} className={inp} placeholder="KM-basis" /></div>
+                <div><label className={lbl}>Fuel Max (kms/ltr)</label><input type="number" step="0.1" value={form.fuel_max_km} onChange={set('fuel_max_km')} className={inp} placeholder="KM-basis" /></div>
+              </div>
+              <div>
+                <label className={lbl}>Planned Hrs/Day</label>
+                <input type="number" step="0.5" value={form.planned_hours} onChange={set('planned_hours')} className={inp + ' max-w-xs'} />
               </div>
 
               {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
@@ -515,7 +405,8 @@ export default function AddAssetModal({ onClose, onSaved }) {
                   <p className="text-xs font-medium text-gray-700">Download the template, fill in your asset data, then re-upload.</p>
                   <p className="text-xs text-gray-500">
                     Required: <strong>Project Code</strong>, <strong>Machine SL#</strong>, <strong>Equipment Type</strong>, <strong>Ownership</strong>, <strong>Shift Type</strong>.
-                    The template includes an <em>Equipment Types Ref</em> sheet listing all valid types with their categories.
+                    Use <em>Fuel Min/Max (kms/ltr)</em> for KM-basis machines. <em>Hire Charges/Day</em> and <em>/Month</em> for Hire assets.
+                    The template includes an <em>Equipment Types Ref</em> sheet with all valid types.
                   </p>
                   <button onClick={() => downloadAssetTemplate(projects, eqTypes)}
                     className="flex items-center gap-2 px-3 py-1.5 border border-blue-400 text-blue-700 bg-white hover:bg-blue-50 text-xs font-medium rounded-lg transition-colors">
@@ -542,8 +433,18 @@ export default function AddAssetModal({ onClose, onSaved }) {
                   {bulkPreview?.items && (
                     <div className="space-y-2">
                       <p className="text-xs text-green-700 font-medium">
-                        {bulkPreview.items.length} row{bulkPreview.items.length !== 1 ? 's' : ''} ready to upload
+                        ✓ {bulkPreview.items.length} row{bulkPreview.items.length !== 1 ? 's' : ''} ready to upload
                       </p>
+                      {bulkPreview.skipped?.length > 0 && (
+                        <div className="bg-amber-50 border border-amber-200 rounded p-2 space-y-1">
+                          <p className="text-xs font-semibold text-amber-700">
+                            ⚠ {bulkPreview.skipped.length} row{bulkPreview.skipped.length !== 1 ? 's' : ''} skipped (no Machine SL# or Asset Code):
+                          </p>
+                          {bulkPreview.skipped.map((s, i) => (
+                            <p key={i} className="text-xs text-amber-600">Row {s.row}: {s.reason}</p>
+                          ))}
+                        </div>
+                      )}
                       <div className="overflow-x-auto rounded border border-gray-200 max-h-44">
                         <table className="w-full text-xs">
                           <thead className="bg-gray-100 text-gray-600 sticky top-0">

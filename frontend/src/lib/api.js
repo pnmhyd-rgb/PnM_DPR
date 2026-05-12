@@ -29,11 +29,14 @@ export const createProject    = (data)        => client.post('/projects', data)
 export const updateProject    = (id, data)    => client.put(`/projects/${id}`, data)
 export const deleteProject    = (id)          => client.delete(`/projects/${id}`)
 
-export const getMachines      = (params)      => client.get('/machines', { params })
-export const createMachine    = (data)        => client.post('/machines', data)
-export const bulkCreateMachines = (rows)      => client.post('/machines/bulk', { rows })
-export const updateMachine    = (id, data)    => client.put(`/machines/${id}`, data)
-export const deleteMachine    = (id)          => client.delete(`/machines/${id}`)
+export const getMachines        = (params)      => client.get('/machines', { params })
+export const getFleetSummary    = (params)      => client.get('/machines/fleet-summary', { params })
+export const createMachine      = (data)        => client.post('/machines', data)
+export const bulkCreateMachines = (rows)        => client.post('/machines/bulk', { rows })
+export const updateMachine      = (id, data)    => client.put(`/machines/${id}`, data)
+export const deleteMachine      = (id, data)    => client.delete(`/machines/${id}`, data ? { data } : undefined)
+export const transferMachine    = (id, data)    => client.put(`/machines/${id}/transfer`, data)
+export const hardDeleteMachine  = (id)          => client.delete(`/machines/${id}/hard`)
 
 export const getDesignations     = ()         => client.get('/designations')
 export const createDesignation   = (data)     => client.post('/designations', data)
@@ -46,8 +49,13 @@ export const deleteUomType    = (id)          => client.delete(`/uom/${id}`)
 export const getVendors       = ()            => client.get('/vendors')
 export const upsertVendor     = (data)        => client.post('/vendors', data)
 
+export const chatWithKala        = (data)        => client.post('/kala/chat', data)
+
 export const getEntries          = (params)      => client.get('/entries', { params })
 export const getPreviousClosing  = (params)      => client.get('/entries/previous-closing', { params })
+export const getDprStatus              = (params) => client.get('/entries/dpr-status',              { params })
+export const getMonthlyStatus          = (params) => client.get('/entries/monthly-status',          { params })
+export const getMonthlyProjectStatus   = (params) => client.get('/entries/monthly-project-status',  { params })
 export const createEntry         = (data)        => client.post('/entries', data)
 export const updateEntry         = (id, data)    => client.put(`/entries/${id}`, data)
 export const deleteEntry         = (id)          => client.delete(`/entries/${id}`)
@@ -96,6 +104,30 @@ export const updateBreakdownStatus  = (id, data)    => client.patch(`/breakdown/
 export const deleteBreakdownIncident = (id)         => client.delete(`/breakdown/${id}`)
 
 export const getBreakdownSummary    = (params)      => client.get('/reports/breakdown-summary', { params })
+
+// Hire Work Orders
+export const getHireVendors          = ()            => client.get('/hire/vendors')
+export const createHireVendor        = (data)        => client.post('/hire/vendors', data)
+export const updateHireVendor        = (id, data)    => client.put(`/hire/vendors/${id}`, data)
+export const deleteHireVendor        = (id)          => client.delete(`/hire/vendors/${id}`)
+
+export const getHireWorkOrders       = (params)      => client.get('/hire', { params })
+export const getHireWorkOrder        = (id)          => client.get(`/hire/${id}`)
+export const createHireWorkOrder     = (data)        => client.post('/hire', data)
+export const updateHireWorkOrder     = (id, data)    => client.put(`/hire/${id}`, data)
+export const deleteHireWorkOrder     = (id)          => client.delete(`/hire/${id}`)
+export const submitHireWorkOrder     = (id)          => client.patch(`/hire/${id}/submit`)
+export const approveHireWOL1         = (id, data)    => client.patch(`/hire/${id}/approve-l1`, data)
+export const approveHireWOFinal      = (id, data)    => client.patch(`/hire/${id}/approve`, data)
+export const rejectHireWorkOrder     = (id, data)    => client.patch(`/hire/${id}/reject`, data)
+export const renewHireWorkOrder      = (id, data)    => client.post(`/hire/${id}/renew`, data)
+
+// GST Verification (reusable for any entity)
+export const verifyGSTApi       = (gstin, excludeId = null) =>
+  client.post('/gst/verify', { gstin, ...(excludeId ? { exclude_id: excludeId } : {}) })
+export const validateGSTLocal   = (gstin)                   => client.get('/gst/validate',        { params: { gstin } })
+export const checkGSTDuplicate  = (gstin, excludeId = null) =>
+  client.get('/gst/check-duplicate', { params: { gstin, ...(excludeId ? { exclude_id: excludeId } : {}) } })
 
 export const getSpareTransactions  = (params) => client.get('/spare-parts', { params })
 export const getSpareStockSummary  = (params) => client.get('/spare-parts/stock-summary', { params })

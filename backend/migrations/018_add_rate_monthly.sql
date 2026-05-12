@@ -1,0 +1,2 @@
+ALTER TABLE machines
+  ADD COLUMN IF NOT EXISTS rate_monthly DECIMAL(10,2);

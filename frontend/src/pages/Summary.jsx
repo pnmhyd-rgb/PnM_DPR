@@ -1,6 +1,8 @@
 import { useState, useEffect } from 'react'
 import { getSummary } from '../lib/api'
 import { today, formatNum } from '../lib/utils'
+import { Download } from 'lucide-react'
+import DPRDownloadModal from './DPRDownloadModal'
 
 function Stat({ label, value, color = 'text-gray-800' }) {
   return (
@@ -12,9 +14,10 @@ function Stat({ label, value, color = 'text-gray-800' }) {
 }
 
 export default function Summary() {
-  const [date, setDate]     = useState(today())
-  const [data, setData]     = useState([])
-  const [loading, setLoading] = useState(false)
+  const [date, setDate]         = useState(today())
+  const [data, setData]         = useState([])
+  const [loading, setLoading]   = useState(false)
+  const [showDPRModal, setShowDPRModal] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -25,13 +28,24 @@ export default function Summary() {
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
         <h1 className="text-xl font-bold text-gray-900">Daily Summary</h1>
-        <input
-          type="date"
-          value={date}
-          onChange={e => setDate(e.target.value)}
-          className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
-        />
+        <div className="flex items-center gap-3">
+          <input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+          />
+          <button
+            onClick={() => setShowDPRModal(true)}
+            className="flex items-center gap-2 bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+          >
+            <Download size={15} />
+            Download DPR
+          </button>
+        </div>
       </div>
+
+      {showDPRModal && <DPRDownloadModal onClose={() => setShowDPRModal(false)} />}
 
       {loading && (
         <div className="py-12 text-center text-sm text-gray-400">Loading…</div>

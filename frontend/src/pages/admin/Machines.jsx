@@ -1,104 +1,20 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { getProjects, getMachines, createMachine, bulkCreateMachines, updateMachine, deleteMachine, getEquipmentTypes } from '../../lib/api'
+import { getProjects, getMachines, createMachine, bulkCreateMachines, updateMachine, deleteMachine, transferMachine, hardDeleteMachine, getEquipmentTypes } from '../../lib/api'
 import {
   Plus, Edit2, Trash2, X, Search, ChevronUp, ChevronDown as ChevDown,
-  RotateCcw, Eye, EyeOff, Filter, Upload, Download
+  RotateCcw, Filter, Upload, Download,
+  MoreVertical, ArrowRightLeft, PowerOff, AlertTriangle
 } from 'lucide-react'
-
-/* ── Bulk upload helpers ──────────────────────────────────────────────────── */
-async function downloadMachineTemplate(projects) {
-  const XLSX = await import('xlsx')
-  const wb = XLSX.utils.book_new()
-  const projList = projects.map(p => p.code).join(', ') || 'PROJECT_CODE'
-  const ws = XLSX.utils.aoa_to_sheet([
-    ['Machine Registry Bulk Upload Template'],
-    [`Project Codes available: ${projList}`],
-    ['Ownership: Own or Hire  |  Shift Type: Single Shift or Dual Shift  |  Reading Basis: Hours or KM'],
-    [],
-    ['Sl No', 'Project Code', 'Machine SL#', 'Equipment Type', 'Ownership', 'Shift Type',
-     'Capacity', 'Reg No', 'Vendor', 'Reading Basis', 'Fuel Min (L/hr)', 'Fuel Max (L/hr)', 'Planned Hrs/Day'],
-    [1, projects[0]?.code || 'PRJ001', 'E6-EX-02', 'Excavator',       'Own',  'Single Shift', '20T',    'KA01AB1234', '',        'Hours', 5, 8, 10],
-    [2, projects[0]?.code || 'PRJ001', 'E6-DG-01', 'Diesel Generator', 'Hire', 'Single Shift', '125KVA', '',           'AcmeCo',  'Hours', 3, 6, 10],
-  ])
-  ws['!cols'] = [
-    { wch: 6 }, { wch: 14 }, { wch: 14 }, { wch: 28 }, { wch: 10 }, { wch: 14 },
-    { wch: 10 }, { wch: 14 }, { wch: 16 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 14 },
-  ]
-  const headerR = 4
-  for (let ci = 0; ci < 13; ci++) {
-    const ref = XLSX.utils.encode_cell({ r: headerR, c: ci })
-    if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0D8E8' } } }
-  }
-  XLSX.utils.book_append_sheet(wb, ws, 'Template')
-  XLSX.writeFile(wb, 'MachineRegistry_Template.xlsx')
-}
-
-async function parseMachineFile(file) {
-  const XLSX = await import('xlsx')
-  const data = await file.arrayBuffer()
-  const wb   = XLSX.read(data)
-  const ws   = wb.Sheets[wb.SheetNames[0]]
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
-
-  // Find header row
-  let headerRow = -1
-  for (let i = 0; i < rows.length; i++) {
-    const lower = rows[i].map(c => String(c).trim().toLowerCase())
-    if (lower.includes('machine sl#') || lower.includes('project code')) { headerRow = i; break }
-  }
-  if (headerRow === -1)
-    return { error: 'Could not find the header row. Ensure your file has "Project Code" and "Machine SL#" columns.' }
-
-  const headers = rows[headerRow].map(c => String(c).trim().toLowerCase())
-  const col = k => headers.findIndex(h => h.startsWith(k))
-
-  const projCol    = col('project code')
-  const slnoCol    = col('machine sl')
-  const typeCol    = col('equipment type')
-  const ownCol     = col('ownership')
-  const shiftCol   = col('shift type')
-  const capCol     = col('capacity')
-  const regCol     = col('reg no')
-  const vendorCol  = col('vendor')
-  const basisCol   = col('reading basis')
-  const fuelMinCol = col('fuel min')
-  const fuelMaxCol = col('fuel max')
-  const planCol    = col('planned')
-
-  if (projCol === -1 || slnoCol === -1 || typeCol === -1)
-    return { error: 'Missing required columns: "Project Code", "Machine SL#", "Equipment Type".' }
-
-  const items = []
-  for (let i = headerRow + 1; i < rows.length; i++) {
-    const r = rows[i]
-    const slno = String(r[slnoCol] ?? '').trim()
-    if (!slno) continue
-    items.push({
-      project_code:   String(r[projCol]   ?? '').trim(),
-      slno,
-      eq_type:        String(r[typeCol]   ?? '').trim(),
-      ownership:      String(r[ownCol]    ?? 'Own').trim() || 'Own',
-      shift_type:     String(r[shiftCol]  ?? 'Single Shift').trim() || 'Single Shift',
-      capacity:       String(r[capCol]    ?? '').trim() || null,
-      reg_no:         String(r[regCol]    ?? '').trim() || null,
-      vendor:         vendorCol  >= 0 ? (String(r[vendorCol]  ?? '').trim() || null) : null,
-      reading1_basis: basisCol   >= 0 ? (String(r[basisCol]   ?? 'Hours').trim() || 'Hours') : 'Hours',
-      fuel_min:       fuelMinCol >= 0 ? (parseFloat(r[fuelMinCol]) || null) : null,
-      fuel_max:       fuelMaxCol >= 0 ? (parseFloat(r[fuelMaxCol]) || null) : null,
-      planned_hours:  planCol    >= 0 ? (parseFloat(r[planCol])    || 10)   : 10,
-    })
-  }
-  if (items.length === 0) return { error: 'No machine rows found in the file.' }
-  return { items }
-}
+import MachineDownloadModal from './MachineDownloadModal'
+import { downloadAssetTemplate, parseAssetFile } from '../../lib/assetBulkTemplate'
 
 const SHIFT_OPTIONS = ['Single Shift', 'Dual Shift']
 
 const blank = {
-  project_id: '', slno: '', eq_type: '', capacity: '', reg_no: '',
-  ownership: 'Own', vendor: '', rate: '', reading1_basis: 'Hours',
+  project_id: '', asset_code: '', slno: '', eq_type: '', capacity: '', reg_no: '',
+  ownership: 'Own', vendor: '', rate: '', rate_monthly: '', reading1_basis: 'Hours',
   reading2_basis: '', dual_reading: false, fuel_min: '', fuel_max: '',
-  planned_hours: '10', shift_type: ''
+  fuel_min_km: '', fuel_max_km: '', planned_hours: '10', shift_type: ''
 }
 
 function Modal({ title, onClose, children }) {
@@ -128,19 +44,28 @@ export default function Machines() {
   const [machines,      setMachines]      = useState([])
 
   // Filters
-  const [filterProj,    setFilterProj]    = useState('')
-  const [filterType,    setFilterType]    = useState('')
-  const [filterOwn,     setFilterOwn]     = useState('')
-  const [search,        setSearch]        = useState('')
-  const [showInactive,  setShowInactive]  = useState(false)
+  const [filterProj,     setFilterProj]    = useState('')
+  const [filterType,     setFilterType]    = useState('')
+  const [filterOwn,      setFilterOwn]     = useState('')
+  const [filterCategory, setFilterCategory] = useState('')   // Measurable Asset | Non-Measurable Asset
+  const [search,         setSearch]        = useState('')
+  const [showInactive,   setShowInactive]  = useState(false)
 
   // Sort
   const [sortCol,       setSortCol]       = useState('slno')
   const [sortDir,       setSortDir]       = useState('asc')
 
   // Multi-select
-  const [selected,      setSelected]      = useState(new Set())
-  const [bulkDeleting,  setBulkDeleting]  = useState(false)
+  const [selected,           setSelected]           = useState(new Set())
+  const [bulkDeleting,       setBulkDeleting]       = useState(false)
+  const [showBulkTransfer,   setShowBulkTransfer]   = useState(false)
+  const [bulkTransferProj,   setBulkTransferProj]   = useState('')
+  const [bulkTransferDate,   setBulkTransferDate]   = useState('')
+  const [bulkTransferring,   setBulkTransferring]   = useState(false)
+  const [bulkTransferResult, setBulkTransferResult] = useState(null)  // { transferred, failed, errors }
+
+  // Download modal
+  const [showDownloadModal, setShowDownloadModal] = useState(false)
 
   // Bulk upload
   const [showBulkModal, setShowBulkModal] = useState(false)
@@ -155,6 +80,18 @@ export default function Machines() {
   const [form,          setForm]          = useState(blank)
   const [saving,        setSaving]        = useState(false)
   const [error,         setError]         = useState('')
+
+  // Action dropdown + action modals
+  const [actionMenu,        setActionMenu]        = useState(null)   // machine id with open dropdown
+  const [actionMenuPos,     setActionMenuPos]     = useState({ top: 0, right: 0 })
+  const [deactivateModal,   setDeactivateModal]   = useState(null)   // machine to deactivate
+  const [deactivateReason,  setDeactivateReason]  = useState('')
+  const [transferModal,     setTransferModal]      = useState(null)   // machine to transfer
+  const [transferProjectId, setTransferProjectId] = useState('')
+  const [transferDate,      setTransferDate]      = useState('')
+  const [deleteModal,       setDeleteModal]       = useState(null)   // machine to permanently delete
+  const [actionSaving,      setActionSaving]      = useState(false)
+  const [actionError,       setActionError]       = useState('')
 
   const load = () => {
     const params = {}
@@ -173,8 +110,9 @@ export default function Machines() {
   // ── Filtered + sorted list ─────────────────────────────────────────────────
   const displayed = useMemo(() => {
     let list = machines
-    if (filterType) list = list.filter(m => m.eq_type === filterType)
-    if (filterOwn)  list = list.filter(m => m.ownership === filterOwn)
+    if (filterType)     list = list.filter(m => m.eq_type === filterType)
+    if (filterOwn)      list = list.filter(m => m.ownership === filterOwn)
+    if (filterCategory) list = list.filter(m => m.asset_type === filterCategory)
     if (search) {
       const q = search.toLowerCase()
       list = list.filter(m =>
@@ -197,8 +135,7 @@ export default function Machines() {
     return list
   }, [machines, filterType, filterOwn, search, sortCol, sortDir])
 
-  const activeCount   = machines.filter(m => m.active).length
-  const inactiveCount = machines.filter(m => !m.active).length
+  const machineCount = machines.length
 
   // ── Sort toggle ────────────────────────────────────────────────────────────
   const toggleSort = (col) => {
@@ -227,7 +164,7 @@ export default function Machines() {
     const file = e.target.files?.[0]
     if (!file) return
     setBulkFile(file); setBulkResult(null)
-    setBulkPreview(await parseMachineFile(file))
+    setBulkPreview(await parseAssetFile(file))
   }
 
   const handleBulkUpload = async () => {
@@ -236,7 +173,12 @@ export default function Machines() {
     try {
       const res = await bulkCreateMachines(bulkPreview.items)
       setBulkResult(res.data)
-      if (res.data.created > 0) { load(); resetBulk() }
+      if (res.data.created > 0 || res.data.updated > 0 || res.data.reactivated > 0) {
+        load()
+        // Clear file/preview but keep bulkResult so the user can read the outcome
+        setBulkFile(null); setBulkPreview(null)
+        if (fileInputRef.current) fileInputRef.current.value = ''
+      }
     } catch (err) {
       setBulkResult({ error: err.response?.data?.error || 'Upload failed' })
     } finally { setBulkSaving(false) }
@@ -251,6 +193,54 @@ export default function Machines() {
     finally { setBulkDeleting(false) }
   }
 
+  // ── Bulk transfer ──────────────────────────────────────────────────────────
+  const openBulkTransfer = () => {
+    setBulkTransferProj(''); setBulkTransferDate(''); setBulkTransferResult(null)
+    setShowBulkTransfer(true)
+  }
+
+  const handleBulkTransfer = async () => {
+    if (!bulkTransferProj || !bulkTransferDate) return
+    const machines_to_transfer = [...selected]
+      .map(id => displayed.find(m => m.id === id))
+      .filter(m => m && m.active)
+    setBulkTransferring(true); setBulkTransferResult(null)
+    const errors = []; let transferred = 0
+    for (const m of machines_to_transfer) {
+      try {
+        await transferMachine(m.id, { new_project_id: parseInt(bulkTransferProj), transferred_date: bulkTransferDate })
+        transferred++
+      } catch (err) {
+        errors.push({ slno: m.slno, error: err.response?.data?.error || 'Failed' })
+      }
+    }
+    setBulkTransferResult({ transferred, failed: errors.length, errors })
+    setBulkTransferring(false)
+    if (transferred > 0) load()
+  }
+
+  // ── Bulk reactivate (inactive view) ───────────────────────────────────────
+  const handleBulkReactivate = async () => {
+    const ids = [...selected].filter(id => displayed.find(m => m.id === id))
+    if (!confirm(`Reactivate ${ids.length} machine${ids.length > 1 ? 's' : ''}?`)) return
+    setBulkDeleting(true)
+    try { await Promise.all(ids.map(id => updateMachine(id, { active: true }))); load() }
+    finally { setBulkDeleting(false) }
+  }
+
+  // ── Bulk permanent delete (inactive view) ─────────────────────────────────
+  const handleBulkHardDelete = async () => {
+    const ids = [...selected].filter(id => displayed.find(m => m.id === id))
+    if (!confirm(
+      `Permanently delete ${ids.length} machine${ids.length > 1 ? 's' : ''} from the database?\n\n` +
+      `DPR and other historical entries will be preserved but unlinked from the deleted machines.\n\n` +
+      `This cannot be undone.`
+    )) return
+    setBulkDeleting(true)
+    try { await Promise.all(ids.map(id => hardDeleteMachine(id))); load() }
+    finally { setBulkDeleting(false) }
+  }
+
   // ── Modal helpers ──────────────────────────────────────────────────────────
   const openAdd = () => {
     setForm({ ...blank, project_id: projects.find(p => p.code === filterProj)?.id?.toString() || '' })
@@ -258,12 +248,14 @@ export default function Machines() {
   }
   const openEdit = (m) => {
     setForm({
-      project_id: String(m.project_id), slno: m.slno, eq_type: m.eq_type,
-      capacity: m.capacity || '', reg_no: m.reg_no || '',
-      ownership: m.ownership, vendor: m.vendor || '', rate: m.rate || '',
+      project_id: String(m.project_id), asset_code: m.asset_code || '', slno: m.slno,
+      eq_type: m.eq_type, capacity: m.capacity || '', reg_no: m.reg_no || '',
+      ownership: m.ownership, vendor: m.vendor || '', rate: m.rate || '', rate_monthly: m.rate_monthly || '',
       reading1_basis: m.reading1_basis, reading2_basis: m.reading2_basis || '',
       dual_reading: m.dual_reading, fuel_min: m.fuel_min || '', fuel_max: m.fuel_max || '',
-      planned_hours: String(m.planned_hours || 10), shift_type: m.shift_type || 'Single Shift'
+      fuel_min_km: m.fuel_min_km || '', fuel_max_km: m.fuel_max_km || '',
+      planned_hours: String(m.planned_hours || 10),
+      shift_type: m.shift_type || 'Single Shift'
     })
     setError(''); setModal({ edit: m })
   }
@@ -274,13 +266,20 @@ export default function Machines() {
     try {
       const payload = {
         ...form,
-        project_id: parseInt(form.project_id),
-        rate: form.rate || null, fuel_min: form.fuel_min || null,
-        fuel_max: form.fuel_max || null, capacity: form.capacity || null,
-        vendor: form.vendor || null, reg_no: form.reg_no || null,
+        project_id:    parseInt(form.project_id),
+        asset_code:    form.asset_code || null,
+        rate:          form.rate || null,
+        rate_monthly:  form.rate_monthly || null,
+        fuel_min:      form.fuel_min || null,
+        fuel_max:      form.fuel_max || null,
+        fuel_min_km:   form.fuel_min_km || null,
+        fuel_max_km:   form.fuel_max_km || null,
+        capacity:      form.capacity || null,
+        vendor:        form.vendor || null,
+        reg_no:        form.reg_no || null,
         reading2_basis: form.reading2_basis || null,
         planned_hours: parseFloat(form.planned_hours) || 10,
-        shift_type: form.shift_type
+        shift_type:    form.shift_type
       }
       modal === 'add' ? await createMachine(payload) : await updateMachine(modal.edit.id, payload)
       setModal(null); load()
@@ -293,9 +292,39 @@ export default function Machines() {
     await updateMachine(id, { active: true }); load()
   }
 
-  const deactivate = async (id) => {
-    if (!confirm('Deactivate this machine?')) return
-    await deleteMachine(id); load()
+  const handleDeactivate = async () => {
+    if (!deactivateReason) return
+    setActionSaving(true); setActionError('')
+    try {
+      await deleteMachine(deactivateModal.id, { reason: deactivateReason })
+      setDeactivateModal(null); setDeactivateReason('')
+      load()
+    } catch (err) {
+      setActionError(err.response?.data?.error || 'Deactivation failed')
+    } finally { setActionSaving(false) }
+  }
+
+  const handleTransfer = async () => {
+    if (!transferProjectId || !transferDate) return
+    setActionSaving(true); setActionError('')
+    try {
+      await transferMachine(transferModal.id, { new_project_id: parseInt(transferProjectId), transferred_date: transferDate })
+      setTransferModal(null); setTransferProjectId(''); setTransferDate('')
+      load()
+    } catch (err) {
+      setActionError(err.response?.data?.error || 'Transfer failed')
+    } finally { setActionSaving(false) }
+  }
+
+  const handleHardDelete = async () => {
+    setActionSaving(true); setActionError('')
+    try {
+      await hardDeleteMachine(deleteModal.id)
+      setDeleteModal(null)
+      load()
+    } catch (err) {
+      setActionError(err.response?.data?.error || 'Delete failed')
+    } finally { setActionSaving(false) }
   }
 
   const inp = 'border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 w-full'
@@ -322,11 +351,15 @@ export default function Machines() {
         <div>
           <h1 className="text-xl font-bold text-gray-900">Machine Registry</h1>
           <p className="text-sm text-gray-500 mt-0.5">
-            {activeCount} active{inactiveCount > 0 ? `, ${inactiveCount} inactive` : ''}
+            {showInactive ? `${machineCount} deactivated machine${machineCount !== 1 ? 's' : ''}` : `${machineCount} active machine${machineCount !== 1 ? 's' : ''}`}
             {displayed.length !== machines.length ? ` · ${displayed.length} shown` : ''}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button onClick={() => setShowDownloadModal(true)} disabled={displayed.length === 0}
+            className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-40 transition-colors">
+            <Download size={14} />Download
+          </button>
           <button onClick={() => setShowBulkModal(true)}
             className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors">
             <Upload size={14} />Bulk Upload
@@ -370,16 +403,26 @@ export default function Machines() {
             <option value="Hire">Hire only</option>
           </select>
 
-          <button onClick={() => setShowInactive(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border transition-colors ${
-              showInactive ? 'bg-amber-50 border-amber-300 text-amber-700' : 'border-gray-300 text-gray-600 hover:bg-gray-50'
-            }`}>
-            {showInactive ? <Eye size={13} /> : <EyeOff size={13} />}
-            {showInactive ? 'Hiding inactive' : 'Show inactive'}
-          </button>
+          <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}
+            className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+            <option value="">All Categories</option>
+            <option value="Measurable Asset">Measurable</option>
+            <option value="Non-Measurable Asset">Non-Measurable</option>
+          </select>
 
-          {(search || filterType || filterOwn) && (
-            <button onClick={() => { setSearch(''); setFilterType(''); setFilterOwn('') }}
+          <div className="flex rounded-lg border border-gray-300 overflow-hidden text-sm">
+            <button onClick={() => setShowInactive(false)}
+              className={`px-3 py-1.5 transition-colors ${!showInactive ? 'bg-blue-600 text-white font-medium' : 'text-gray-600 hover:bg-gray-50'}`}>
+              Active
+            </button>
+            <button onClick={() => setShowInactive(true)}
+              className={`px-3 py-1.5 border-l border-gray-300 transition-colors ${showInactive ? 'bg-amber-500 text-white font-medium' : 'text-gray-600 hover:bg-gray-50'}`}>
+              Inactive
+            </button>
+          </div>
+
+          {(search || filterType || filterOwn || filterCategory) && (
+            <button onClick={() => { setSearch(''); setFilterType(''); setFilterOwn(''); setFilterCategory('') }}
               className="text-xs text-blue-600 hover:underline">Clear filters</button>
           )}
         </div>
@@ -389,12 +432,37 @@ export default function Machines() {
       <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
         {/* Bulk action toolbar */}
         {selectedCount > 0 && (
-          <div className="px-4 py-2.5 bg-blue-50 border-b border-blue-200 flex items-center justify-between">
-            <span className="text-sm font-medium text-blue-800">{selectedCount} machine{selectedCount > 1 ? 's' : ''} selected</span>
-            <button onClick={handleBulkDeactivate} disabled={bulkDeleting}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
-              <Trash2 size={13} />{bulkDeleting ? 'Deactivating…' : `Deactivate ${selectedCount}`}
-            </button>
+          <div className={`px-4 py-2.5 border-b flex items-center justify-between gap-3 flex-wrap ${
+            showInactive ? 'bg-amber-50 border-amber-200' : 'bg-blue-50 border-blue-200'
+          }`}>
+            <span className={`text-sm font-medium ${showInactive ? 'text-amber-800' : 'text-blue-800'}`}>
+              {selectedCount} machine{selectedCount > 1 ? 's' : ''} selected
+            </span>
+            <div className="flex items-center gap-2">
+              {showInactive ? (
+                <>
+                  <button onClick={handleBulkReactivate} disabled={bulkDeleting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
+                    <RotateCcw size={13} />{bulkDeleting ? 'Reactivating…' : `Reactivate ${selectedCount}`}
+                  </button>
+                  <button onClick={handleBulkHardDelete} disabled={bulkDeleting}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
+                    <Trash2 size={13} />{bulkDeleting ? 'Deleting…' : `Delete Permanently ${selectedCount}`}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button onClick={openBulkTransfer} disabled={bulkDeleting || bulkTransferring}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
+                    <ArrowRightLeft size={13} />Transfer to Site
+                  </button>
+                  <button onClick={handleBulkDeactivate} disabled={bulkDeleting || bulkTransferring}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
+                    <Trash2 size={13} />{bulkDeleting ? 'Deactivating…' : `Deactivate ${selectedCount}`}
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         )}
 
@@ -421,7 +489,7 @@ export default function Machines() {
             <tbody className="divide-y divide-gray-100">
               {displayed.length === 0 && (
                 <tr><td colSpan={12} className="px-4 py-10 text-center text-gray-400">
-                  {search || filterType || filterOwn ? 'No machines match the current filters' : 'No machines found'}
+                  {search || filterType || filterOwn || filterCategory ? 'No machines match the current filters' : 'No machines found'}
                 </td></tr>
               )}
               {displayed.map(m => (
@@ -429,17 +497,19 @@ export default function Machines() {
                   !m.active ? 'bg-gray-50 opacity-60' : selected.has(m.id) ? 'bg-blue-50' : 'hover:bg-gray-50'
                 }`}>
                   <td className="px-3 py-2">
-                    {m.active && (
-                      <input type="checkbox" checked={selected.has(m.id)} onChange={() => toggleOne(m.id)}
-                        className="w-4 h-4 accent-blue-600" />
-                    )}
+                    <input type="checkbox" checked={selected.has(m.id)} onChange={() => toggleOne(m.id)}
+                      className="w-4 h-4 accent-blue-600" />
                   </td>
                   <td className="px-3 py-2">
                     <span className="bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded text-xs">{m.project_code}</span>
                   </td>
                   <td className="px-3 py-2 font-semibold">
                     {m.slno}
-                    {!m.active && <span className="ml-1.5 text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">Inactive</span>}
+                    {!m.active && (
+                      <span className="ml-1.5 text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">
+                        {m.deactivation_reason || 'Inactive'}
+                      </span>
+                    )}
                   </td>
                   <td className="px-3 py-2">{m.eq_type}</td>
                   <td className="px-3 py-2">{m.reg_no || '—'}</td>
@@ -456,17 +526,34 @@ export default function Machines() {
                   <td className="px-3 py-2 text-right tabular-nums">{m.fuel_max ?? '—'}</td>
                   <td className="px-3 py-2 text-right tabular-nums">{m.planned_hours}</td>
                   <td className="px-3 py-2">
-                    <div className="flex gap-1">
+                    <div className="flex gap-1 items-center">
                       {m.active ? (
                         <>
                           <button onClick={() => openEdit(m)} title="Edit"
-                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors"><Edit2 size={13} /></button>
-                          <button onClick={() => deactivate(m.id)} title="Deactivate"
-                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors"><Trash2 size={13} /></button>
+                            className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors">
+                            <Edit2 size={13} />
+                          </button>
+                          <button
+                            onClick={e => {
+                              const rect = e.currentTarget.getBoundingClientRect()
+                              setActionMenuPos({ top: rect.bottom + 4, right: window.innerWidth - rect.right })
+                              setActionMenu(actionMenu === m.id ? null : m.id)
+                            }}
+                            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded transition-colors">
+                            <MoreVertical size={13} />
+                          </button>
                         </>
                       ) : (
-                        <button onClick={() => reactivate(m.id)} title="Reactivate"
-                          className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors"><RotateCcw size={13} /></button>
+                        <>
+                          <button onClick={() => reactivate(m.id)} title="Reactivate"
+                            className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded transition-colors">
+                            <RotateCcw size={13} />
+                          </button>
+                          <button onClick={() => { setDeleteModal(m); setActionError('') }} title="Permanently Delete"
+                            className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded transition-colors">
+                            <Trash2 size={13} />
+                          </button>
+                        </>
                       )}
                     </div>
                   </td>
@@ -491,12 +578,12 @@ export default function Machines() {
             <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
               <span className="w-5 h-5 flex-shrink-0 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold mt-0.5">1</span>
               <div className="flex-1 space-y-2">
-                <p className="text-xs font-medium text-gray-700">Download the template, fill in your machine data, then re-upload.</p>
+                <p className="text-xs font-medium text-gray-700">Download the template, fill in your asset data, then re-upload.</p>
                 <p className="text-xs text-gray-500">
-                  Required columns: <strong>Project Code</strong>, <strong>Machine SL#</strong>, <strong>Equipment Type</strong>.
-                  Ownership: <em>Own</em> or <em>Hire</em>. Shift: <em>Single Shift</em> or <em>Dual Shift</em>.
+                  Required: <strong>Project Code</strong>, <strong>Machine SL#</strong>, <strong>Equipment Type</strong>, <strong>Ownership</strong>, <strong>Shift Type</strong>.
+                  Use <em>Fuel Min/Max (kms/ltr)</em> for KM-basis machines. <em>Hire Charges/Day</em> and <em>/Month</em> for Hire assets.
                 </p>
-                <button onClick={() => downloadMachineTemplate(projects)}
+                <button onClick={() => downloadAssetTemplate(projects, eqTypes)}
                   className="flex items-center gap-2 px-3 py-1.5 border border-blue-400 text-blue-700 bg-white hover:bg-blue-50 text-xs font-medium rounded-lg transition-colors">
                   <Download size={13} />Download Template (.xlsx)
                 </button>
@@ -520,7 +607,19 @@ export default function Machines() {
 
                 {bulkPreview?.items && (
                   <div className="space-y-2">
-                    <p className="text-xs text-green-700 font-medium">{bulkPreview.items.length} row{bulkPreview.items.length !== 1 ? 's' : ''} ready to upload</p>
+                    <p className="text-xs text-green-700 font-medium">
+                      ✓ {bulkPreview.items.length} row{bulkPreview.items.length !== 1 ? 's' : ''} ready to upload
+                    </p>
+                    {bulkPreview.skipped?.length > 0 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded p-2 space-y-1">
+                        <p className="text-xs font-semibold text-amber-700">
+                          ⚠ {bulkPreview.skipped.length} row{bulkPreview.skipped.length !== 1 ? 's' : ''} skipped (no Machine SL# or Asset Code):
+                        </p>
+                        {bulkPreview.skipped.map((s, i) => (
+                          <p key={i} className="text-xs text-amber-600">Row {s.row}: {s.reason}</p>
+                        ))}
+                      </div>
+                    )}
                     <div className="overflow-x-auto rounded border border-gray-200">
                       <table className="w-full text-xs">
                         <thead className="bg-gray-100 text-gray-600">
@@ -568,18 +667,307 @@ export default function Machines() {
 
             {/* Result */}
             {bulkResult && (
-              <div className={`rounded-lg p-3 text-xs space-y-1 ${bulkResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-800'}`}>
-                {bulkResult.error
-                  ? <p>{bulkResult.error}</p>
-                  : <>
-                      <p className="font-semibold">{bulkResult.created} added{bulkResult.failed > 0 ? `, ${bulkResult.failed} failed` : ''}</p>
-                      {bulkResult.errors?.map((e, i) => (
-                        <p key={i} className="text-amber-700">Row {e.row} ({e.slno || '—'}): {e.error}</p>
-                      ))}
-                    </>
-                }
+              <div className={`rounded-lg p-3 text-xs space-y-2 ${bulkResult.error ? 'bg-red-50 border border-red-200' : 'bg-green-50 border border-green-200'}`}>
+                {bulkResult.error ? (
+                  <p className="text-red-700 font-medium">{bulkResult.error}</p>
+                ) : (
+                  <>
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <p className="font-semibold text-green-800">
+                          ✓ Upload complete —&nbsp;
+                          {[
+                            bulkResult.created     > 0 && `${bulkResult.created} new`,
+                            bulkResult.updated     > 0 && `${bulkResult.updated} updated`,
+                            bulkResult.reactivated > 0 && `${bulkResult.reactivated} reactivated`,
+                            bulkResult.failed      > 0 && `${bulkResult.failed} failed`,
+                          ].filter(Boolean).join(', ')}
+                        </p>
+                        {bulkResult.reactivated > 0 && (
+                          <p className="text-green-700 mt-0.5">
+                            {bulkResult.reactivated} previously deactivated machine{bulkResult.reactivated !== 1 ? 's' : ''} were reactivated and updated.
+                          </p>
+                        )}
+                      </div>
+                      <button onClick={() => setBulkResult(null)}
+                        className="flex-shrink-0 text-gray-400 hover:text-gray-600 p-0.5"><X size={13} /></button>
+                    </div>
+                    {bulkResult.errors?.length > 0 && (
+                      <div className="bg-amber-50 border border-amber-200 rounded p-2 space-y-0.5 max-h-32 overflow-y-auto">
+                        {bulkResult.errors.map((e, i) => (
+                          <p key={i} className="text-amber-700">Row {e.row} ({e.slno || '—'}): {e.error}</p>
+                        ))}
+                      </div>
+                    )}
+                    <button onClick={closeBulkModal}
+                      className="mt-1 px-4 py-1.5 bg-green-700 text-white font-medium rounded-lg hover:bg-green-800 transition-colors text-xs">
+                      Done — Close
+                    </button>
+                  </>
+                )}
               </div>
             )}
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Download modal ── */}
+      {showDownloadModal && (
+        <MachineDownloadModal
+          displayed={displayed}
+          filterProj={filterProj}
+          onClose={() => setShowDownloadModal(false)}
+        />
+      )}
+
+      {/* ── Action dropdown (fixed-position to escape overflow-x-auto clipping) ── */}
+      {actionMenu && (() => {
+        const m = displayed.find(x => x.id === actionMenu)
+        if (!m) return null
+        return (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setActionMenu(null)} />
+            <div
+              style={{ top: actionMenuPos.top, right: actionMenuPos.right }}
+              className="fixed z-50 bg-white border border-gray-200 rounded-lg shadow-xl py-1 w-48 text-xs">
+              <button
+                onClick={() => { setActionMenu(null); setDeactivateModal(m); setDeactivateReason(''); setActionError('') }}
+                className="flex items-center gap-2 w-full px-3 py-2 hover:bg-amber-50 text-gray-700">
+                <PowerOff size={12} className="text-amber-500" />Deactivate
+              </button>
+              {m.ownership === 'Own' && (
+                <button
+                  onClick={() => { setActionMenu(null); setTransferModal(m); setTransferProjectId(''); setActionError('') }}
+                  className="flex items-center gap-2 w-full px-3 py-2 hover:bg-blue-50 text-gray-700">
+                  <ArrowRightLeft size={12} className="text-blue-500" />Transfer Site
+                </button>
+              )}
+              <div className="border-t border-gray-100 my-1" />
+              <button
+                onClick={() => { setActionMenu(null); setDeleteModal(m); setActionError('') }}
+                className="flex items-center gap-2 w-full px-3 py-2 hover:bg-red-50 text-red-600">
+                <Trash2 size={12} />Permanent Delete
+              </button>
+            </div>
+          </>
+        )
+      })()}
+
+      {/* ── Bulk Transfer modal ── */}
+      {showBulkTransfer && (() => {
+        const activeSel = [...selected]
+          .map(id => displayed.find(m => m.id === id))
+          .filter(m => m && m.active)
+        const inactiveSel = selectedCount - activeSel.length
+        return (
+          <Modal title="Bulk Transfer to Another Site"
+            onClose={() => { setShowBulkTransfer(false); setBulkTransferResult(null) }}>
+            <div className="space-y-4">
+
+              {/* Summary */}
+              <div className="flex items-start gap-3 p-3 bg-blue-50 border border-blue-100 rounded-lg text-sm text-blue-800">
+                <ArrowRightLeft size={15} className="flex-shrink-0 mt-0.5 text-blue-500" />
+                <div>
+                  <p className="font-semibold">{activeSel.length} active machine{activeSel.length !== 1 ? 's' : ''} will be transferred.</p>
+                  {inactiveSel > 0 && (
+                    <p className="text-xs text-blue-600 mt-0.5">{inactiveSel} inactive machine{inactiveSel !== 1 ? 's' : ''} in your selection will be skipped.</p>
+                  )}
+                  <p className="text-xs text-blue-600 mt-0.5">DPR history stays accessible under each machine's original project.</p>
+                </div>
+              </div>
+
+              {/* Machine list preview */}
+              {activeSel.length > 0 && (
+                <div className="max-h-32 overflow-y-auto rounded-lg border border-gray-200">
+                  <table className="w-full text-xs">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="px-2 py-1.5 text-left font-medium text-gray-500">SL#</th>
+                        <th className="px-2 py-1.5 text-left font-medium text-gray-500">Type</th>
+                        <th className="px-2 py-1.5 text-left font-medium text-gray-500">From</th>
+                        <th className="px-2 py-1.5 text-left font-medium text-gray-500">Own/Hire</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {activeSel.map(m => (
+                        <tr key={m.id} className="bg-white">
+                          <td className="px-2 py-1.5 font-semibold">{m.slno}</td>
+                          <td className="px-2 py-1.5 text-gray-600">{m.eq_type}</td>
+                          <td className="px-2 py-1.5">
+                            <span className="bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded">{m.project_code}</span>
+                          </td>
+                          <td className="px-2 py-1.5">
+                            <span className={`font-medium text-xs ${m.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>
+                              {m.ownership}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+
+              {/* Fields */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={lbl}>Transfer To *</label>
+                  <select value={bulkTransferProj} onChange={e => setBulkTransferProj(e.target.value)} className={inp}>
+                    <option value="">— select project —</option>
+                    {projects
+                      .filter(p => !activeSel.every(m => m.project_id === p.id))
+                      .map(p => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={lbl}>Transfer Date *</label>
+                  <input type="date" value={bulkTransferDate} onChange={e => setBulkTransferDate(e.target.value)}
+                    max={new Date().toISOString().slice(0, 10)} className={inp} />
+                </div>
+              </div>
+
+              {/* Result */}
+              {bulkTransferResult && (
+                <div className={`rounded-lg p-3 text-xs space-y-1.5 ${
+                  bulkTransferResult.failed > 0 && bulkTransferResult.transferred === 0
+                    ? 'bg-red-50 border border-red-200'
+                    : 'bg-green-50 border border-green-200'
+                }`}>
+                  <p className={`font-semibold ${bulkTransferResult.transferred > 0 ? 'text-green-800' : 'text-red-700'}`}>
+                    {bulkTransferResult.transferred > 0 && `✓ ${bulkTransferResult.transferred} machine${bulkTransferResult.transferred !== 1 ? 's' : ''} transferred`}
+                    {bulkTransferResult.failed > 0 && ` · ${bulkTransferResult.failed} failed`}
+                  </p>
+                  {bulkTransferResult.errors?.map((e, i) => (
+                    <p key={i} className="text-red-600">{e.slno}: {e.error}</p>
+                  ))}
+                  {bulkTransferResult.transferred > 0 && (
+                    <button onClick={() => { setShowBulkTransfer(false); setBulkTransferResult(null) }}
+                      className="mt-1 px-4 py-1.5 bg-green-700 text-white font-medium rounded-lg hover:bg-green-800 transition-colors">
+                      Done — Close
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {!bulkTransferResult && (
+                <div className="flex gap-3 pt-1">
+                  <button onClick={handleBulkTransfer}
+                    disabled={!bulkTransferProj || !bulkTransferDate || bulkTransferring || activeSel.length === 0}
+                    className="flex-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors flex items-center justify-center gap-2">
+                    <ArrowRightLeft size={14} />
+                    {bulkTransferring
+                      ? 'Transferring…'
+                      : `Transfer ${activeSel.length} Machine${activeSel.length !== 1 ? 's' : ''}`}
+                  </button>
+                  <button onClick={() => setShowBulkTransfer(false)}
+                    className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          </Modal>
+        )
+      })()}
+
+      {/* ── Deactivate modal ── */}
+      {deactivateModal && (
+        <Modal title="Deactivate Machine" onClose={() => { setDeactivateModal(null); setDeactivateReason(''); setActionError('') }}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Deactivating <strong>{deactivateModal.slno}</strong> will hide it from active listings but preserve all DPR history.
+              {deactivateModal.ownership === 'Hire' && ' You can reactivate it if the machine is rehired in the future.'}
+            </p>
+            <div>
+              <label className={lbl}>Reason *</label>
+              <select value={deactivateReason} onChange={e => setDeactivateReason(e.target.value)} className={inp}>
+                <option value="">— select reason —</option>
+                {deactivateModal.ownership === 'Hire' && <option value="Dehired">Dehired (returned to vendor)</option>}
+                <option value="Idle/Parked">Idle / Parked</option>
+                <option value="Under Repair">Sent for Major Repair</option>
+                {deactivateModal.ownership === 'Own' && <option value="Sold/Disposed">Sold / Disposed</option>}
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            {actionError && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{actionError}</p>}
+            <div className="flex gap-3 pt-1">
+              <button onClick={handleDeactivate} disabled={!deactivateReason || actionSaving}
+                className="flex-1 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors">
+                {actionSaving ? 'Deactivating…' : 'Deactivate Machine'}
+              </button>
+              <button onClick={() => { setDeactivateModal(null); setDeactivateReason(''); setActionError('') }}
+                className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Transfer modal ── */}
+      {transferModal && (
+        <Modal title="Transfer Machine to Another Site" onClose={() => { setTransferModal(null); setTransferProjectId(''); setTransferDate(''); setActionError('') }}>
+          <div className="space-y-4">
+            <p className="text-sm text-gray-600">
+              Transferring <strong>{transferModal.slno}</strong> from <strong>{transferModal.project_code}</strong> to another project.
+              All past DPR history remains accessible under the original project's reports.
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={lbl}>Transfer To *</label>
+                <select value={transferProjectId} onChange={e => setTransferProjectId(e.target.value)} className={inp}>
+                  <option value="">— select project —</option>
+                  {projects
+                    .filter(p => p.id !== transferModal.project_id)
+                    .map(p => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={lbl}>Transfer Date *</label>
+                <input type="date" value={transferDate} onChange={e => setTransferDate(e.target.value)}
+                  max={new Date().toISOString().slice(0, 10)} className={inp} />
+              </div>
+            </div>
+            {actionError && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{actionError}</p>}
+            <div className="flex gap-3 pt-1">
+              <button onClick={handleTransfer} disabled={!transferProjectId || !transferDate || actionSaving}
+                className="flex-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors">
+                {actionSaving ? 'Transferring…' : 'Confirm Transfer'}
+              </button>
+              <button onClick={() => { setTransferModal(null); setTransferProjectId(''); setTransferDate(''); setActionError('') }}
+                className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Permanent Delete modal ── */}
+      {deleteModal && (
+        <Modal title="Permanently Delete Machine" onClose={() => { setDeleteModal(null); setActionError('') }}>
+          <div className="space-y-4">
+            <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+              <AlertTriangle size={16} className="text-red-500 flex-shrink-0 mt-0.5" />
+              <div className="text-sm text-red-700 space-y-1">
+                <p className="font-semibold">This action cannot be undone.</p>
+                <p>
+                  Permanently deleting <strong>{deleteModal.slno}</strong> removes the machine record from the database.
+                  Existing DPR, fuel, and service history entries are preserved but will no longer be linked to this machine.
+                </p>
+              </div>
+            </div>
+            {actionError && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{actionError}</p>}
+            <div className="flex gap-3 pt-1">
+              <button onClick={handleHardDelete} disabled={actionSaving}
+                className="flex-1 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors">
+                {actionSaving ? 'Deleting…' : 'Permanently Delete'}
+              </button>
+              <button onClick={() => { setDeleteModal(null); setActionError('') }}
+                className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">
+                Cancel
+              </button>
+            </div>
           </div>
         </Modal>
       )}
@@ -597,22 +985,22 @@ export default function Machines() {
                 </select>
               </div>
               <div>
-                <label className={lbl}>SL# *</label>
-                <input type="text" value={form.slno} onChange={set('slno')} className={inp} placeholder="e.g. E6-EX-02" required />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div>
                 <label className={lbl}>Equipment Type *</label>
                 <select value={form.eq_type} onChange={set('eq_type')} className={inp} required>
                   <option value="">— select —</option>
                   {eqTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                 </select>
               </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={lbl}>Capacity</label>
-                <input type="text" value={form.capacity} onChange={set('capacity')} className={inp} placeholder="e.g. 20T" />
+                <label className={lbl}>Asset Code</label>
+                <input type="text" value={form.asset_code} onChange={set('asset_code')} className={inp} placeholder="e.g. AST-001" />
+              </div>
+              <div>
+                <label className={lbl}>SL# *</label>
+                <input type="text" value={form.slno} onChange={set('slno')} className={inp} placeholder="e.g. E6-EX-02" required />
               </div>
             </div>
 
@@ -622,27 +1010,38 @@ export default function Machines() {
                 <input type="text" value={form.reg_no} onChange={set('reg_no')} className={inp} />
               </div>
               <div>
+                <label className={lbl}>Capacity</label>
+                <input type="text" value={form.capacity} onChange={set('capacity')} className={inp} placeholder="e.g. 20T" />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
                 <label className={lbl}>Ownership</label>
                 <select value={form.ownership} onChange={set('ownership')} className={inp}>
                   <option>Own</option><option>Hire</option>
                 </select>
               </div>
-            </div>
-
-            <div>
-              <label className={lbl}>Shift Type *</label>
-              <select value={form.shift_type} onChange={set('shift_type')} className={inp} required>
-                <option value="">— select shift —</option>
-                {SHIFT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-              <p className="text-xs text-gray-400 mt-1">Single Shift: operator selects Day or Night each entry. Dual Shift: both readings captured together.</p>
+              <div>
+                <label className={lbl}>Shift Type *</label>
+                <select value={form.shift_type} onChange={set('shift_type')} className={inp} required>
+                  <option value="">— select shift —</option>
+                  {SHIFT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
             </div>
 
             {form.ownership === 'Hire' && (
-              <div className="grid grid-cols-2 gap-3">
-                <div><label className={lbl}>Vendor</label><input type="text" value={form.vendor} onChange={set('vendor')} className={inp} /></div>
-                <div><label className={lbl}>Rate (₹/day)</label><input type="number" value={form.rate} onChange={set('rate')} className={inp} /></div>
-              </div>
+              <>
+                <div>
+                  <label className={lbl}>Vendor</label>
+                  <input type="text" value={form.vendor} onChange={set('vendor')} className={inp} />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><label className={lbl}>Hire Charges/Day (₹)</label><input type="number" step="0.01" value={form.rate} onChange={set('rate')} className={inp} placeholder="e.g. 15000" /></div>
+                  <div><label className={lbl}>Hire Charges/Month (₹)</label><input type="number" step="0.01" value={form.rate_monthly} onChange={set('rate_monthly')} className={inp} placeholder="e.g. 350000" /></div>
+                </div>
+              </>
             )}
 
             <div className="grid grid-cols-2 gap-3">
@@ -667,10 +1066,17 @@ export default function Machines() {
               </div>
             )}
 
-            <div className="grid grid-cols-3 gap-3">
-              <div><label className={lbl}>Fuel Min (L/hr)</label><input type="number" step="0.1" value={form.fuel_min} onChange={set('fuel_min')} className={inp} /></div>
-              <div><label className={lbl}>Fuel Max (L/hr)</label><input type="number" step="0.1" value={form.fuel_max} onChange={set('fuel_max')} className={inp} /></div>
-              <div><label className={lbl}>Planned Hrs/Day</label><input type="number" step="0.5" value={form.planned_hours} onChange={set('planned_hours')} className={inp} /></div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className={lbl}>Fuel Min (L/hr)</label><input type="number" step="0.1" value={form.fuel_min} onChange={set('fuel_min')} className={inp} placeholder="Hours-basis" /></div>
+              <div><label className={lbl}>Fuel Max (L/hr)</label><input type="number" step="0.1" value={form.fuel_max} onChange={set('fuel_max')} className={inp} placeholder="Hours-basis" /></div>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div><label className={lbl}>Fuel Min (kms/ltr)</label><input type="number" step="0.1" value={form.fuel_min_km} onChange={set('fuel_min_km')} className={inp} placeholder="KM-basis" /></div>
+              <div><label className={lbl}>Fuel Max (kms/ltr)</label><input type="number" step="0.1" value={form.fuel_max_km} onChange={set('fuel_max_km')} className={inp} placeholder="KM-basis" /></div>
+            </div>
+            <div>
+              <label className={lbl}>Planned Hrs/Day</label>
+              <input type="number" step="0.5" value={form.planned_hours} onChange={set('planned_hours')} className={inp + ' max-w-xs'} />
             </div>
 
             {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}

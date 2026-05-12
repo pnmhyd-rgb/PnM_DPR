@@ -73,40 +73,65 @@ const create = async (req, res) => {
 };
 
 const update = async (req, res) => {
+  const client = await db.getClient();
   try {
     const { id } = req.params;
-    const { name, address, active, user_ids } = req.body;
+    const { name, address, active, user_ids, code } = req.body;
 
-    const result = await db.query(
+    await client.query('BEGIN');
+
+    // Fetch current code so we know if it's changing
+    const cur = await client.query('SELECT code FROM projects WHERE id = $1', [id]);
+    if (cur.rows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Project not found' });
+    }
+    const oldCode = cur.rows[0].code;
+    const newCode = code?.trim()?.toUpperCase() || oldCode;
+
+    const result = await client.query(
       `UPDATE projects SET
-        name    = COALESCE($1, name),
-        address = COALESCE($2, address),
-        active  = COALESCE($3, active)
-       WHERE id = $4 RETURNING *`,
-      [name || null, address || null, active !== undefined ? active : null, id]
+        code    = $1,
+        name    = COALESCE($2, name),
+        address = COALESCE($3, address),
+        active  = COALESCE($4, active)
+       WHERE id = $5 RETURNING *`,
+      [newCode, name || null, address || null, active !== undefined ? active : null, id]
     );
-    if (result.rows.length === 0) return res.status(404).json({ error: 'Project not found' });
     const project = result.rows[0];
 
-    // Sync user access: remove code from all non-admin users, then re-add for selected ones
+    // If code changed, cascade to users.project_codes[]
+    if (newCode !== oldCode) {
+      await client.query(
+        `UPDATE users SET project_codes = array_replace(project_codes, $1, $2)`,
+        [oldCode, newCode]
+      );
+    }
+
+    // Sync user access for selected users
     if (Array.isArray(user_ids)) {
-      await db.query(
+      await client.query(
         `UPDATE users SET project_codes = array_remove(project_codes, $1) WHERE role != 'admin'`,
-        [project.code]
+        [newCode]
       );
       if (user_ids.length > 0) {
-        await db.query(
+        await client.query(
           `UPDATE users SET project_codes = array_append(project_codes, $1)
            WHERE id = ANY($2) AND NOT ($1 = ANY(project_codes)) AND role != 'admin'`,
-          [project.code, user_ids]
+          [newCode, user_ids]
         );
       }
     }
 
+    await client.query('COMMIT');
     res.json({ data: project });
   } catch (err) {
+    await client.query('ROLLBACK');
+    if (err.code === '23505') return res.status(409).json({ error: 'Site code already exists' });
     console.error('Update project error:', err);
     res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
   }
 };
 
