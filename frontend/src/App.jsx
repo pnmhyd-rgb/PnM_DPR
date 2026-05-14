@@ -23,6 +23,7 @@ import OwnNonMeasurable from './pages/asset-register/OwnNonMeasurable'
 import HireAssets from './pages/asset-register/HireAssets'
 import MyDashboard from './pages/MyDashboard'
 import HireWorkOrders from './pages/hire/HireWorkOrders'
+import Compliance from './pages/compliance/Compliance'
 
 function ProtectedLayout() {
   const { user } = useAuth()
@@ -50,6 +51,7 @@ export default function App() {
             <Route path="utilization" element={<Utilization />} />
             <Route path="summary"     element={<Summary />} />
             <Route path="fuel"        element={<FuelEntries />} />
+            <Route path="compliance"  element={<Compliance />} />
             <Route path="hire/work-orders" element={<HireWorkOrders defaultTab="wo" />} />
             <Route path="hire/vendors"     element={<HireWorkOrders defaultTab="vendors" />} />
             <Route path="service"     element={<ServiceEntries />} />

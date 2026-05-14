@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getProjects, getFleetSummary, getSummary } from '../lib/api'
+import { getProjects, getFleetSummary, getSummary, getComplianceSummary, getComplianceUpcoming } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import { today } from '../lib/utils'
-import { ChevronDown, RefreshCw, PinOff } from 'lucide-react'
+import { ChevronDown, RefreshCw, PinOff, ShieldAlert, AlertTriangle, Clock, CheckCircle2 } from 'lucide-react'
 
 /* ─── Status config ───────────────────────────────────────────── */
 const STATUSES = [
@@ -174,30 +174,52 @@ function Dropdown({ value, onChange, children, className = '' }) {
   )
 }
 
+/* ─── Compliance status helpers ──────────────────────────────── */
+const COMP_STATUS = [
+  { key: 'expired',  label: 'Expired',        color: '#dc2626', bg: '#fee2e2', icon: AlertTriangle },
+  { key: 'critical', label: 'Critical (≤7d)', color: '#ea580c', bg: '#ffedd5', icon: AlertTriangle },
+  { key: 'warning',  label: 'Due Soon (≤30d)',color: '#d97706', bg: '#fef3c7', icon: Clock },
+  { key: 'valid',    label: 'Valid',          color: '#16a34a', bg: '#dcfce7', icon: CheckCircle2 },
+]
+
+function compCalcStatus(expiryDate) {
+  if (!expiryDate) return 'na'
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const exp = new Date(expiryDate)
+  const days = Math.ceil((exp - today) / 86400000)
+  if (days < 0) return 'expired'
+  if (days <= 7)  return 'critical'
+  if (days <= 30) return 'warning'
+  return 'valid'
+}
+
 /* ─── Main Page ───────────────────────────────────────────────── */
 export default function MyDashboard() {
   const navigate       = useNavigate()
   const { user, isAdmin } = useAuth()
 
   const [projects, setProjects]       = useState([])
-  const [rows, setRows]               = useState([])        // fleet-summary (status × asset_type)
-  const [summaryRows, setSummaryRows] = useState([])        // reports/summary (own/hire/util)
+  const [rows, setRows]               = useState([])
+  const [summaryRows, setSummaryRows] = useState([])
   const [loading, setLoading]         = useState(false)
   const [error, setError]             = useState('')
   const [reportDate, setReportDate]   = useState(today())
   const [tick, setTick]               = useState(0)
-  const [filters, setFilters]         = useState({
-    date:         today(),
-    project_code: '',
-    asset_type:   '',
-  })
+  const [filters, setFilters]         = useState({ date: today(), project_code: '', asset_type: '' })
 
-  /* Only admins can switch between sites */
+  // Compliance widget state
+  const [compSummary,  setCompSummary]  = useState({ expired:0, critical:0, warning:0, valid:0, na:0, total:0 })
+  const [compUpcoming, setCompUpcoming] = useState([])
+
   useEffect(() => {
-    if (isAdmin) {
-      getProjects().then(r => setProjects(r.data?.data || [])).catch(() => {})
-    }
+    if (isAdmin) getProjects().then(r => setProjects(r.data?.data || [])).catch(() => {})
   }, [isAdmin])
+
+  // Fetch compliance summary once on mount
+  useEffect(() => {
+    getComplianceSummary().then(r => setCompSummary(r.data?.data || {})).catch(() => {})
+    getComplianceUpcoming(30).then(r => setCompUpcoming(r.data?.data || [])).catch(() => {})
+  }, [])
 
   const fetchData = useCallback(() => {
     setLoading(true); setError('')
@@ -420,6 +442,104 @@ export default function MyDashboard() {
           borderColor="#95A5A6"
           valueColor="#7F8C8D"
         />
+      </div>
+
+      {/* ── COMPLIANCE summary widget ─────────────────────────── */}
+      <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+          <span className="text-base font-extrabold tracking-widest text-blue-600 uppercase flex items-center gap-2">
+            <ShieldAlert size={16} className="text-blue-500" />
+            RTA Compliance
+          </span>
+          <button
+            onClick={() => navigate('/compliance')}
+            className="text-xs font-semibold text-blue-600 hover:text-blue-800 border border-blue-200 rounded px-2.5 py-1 hover:bg-blue-50 transition-colors"
+          >
+            View All →
+          </button>
+        </div>
+
+        <div className="flex flex-col md:flex-row">
+          {/* Status counts */}
+          <div className="p-4 flex-shrink-0">
+            <div className="grid grid-cols-2 gap-2" style={{ minWidth: 260 }}>
+              {COMP_STATUS.map(({ key, label, color, bg, icon: Icon }) => (
+                <button
+                  key={key}
+                  onClick={() => navigate('/compliance')}
+                  className="rounded-lg border p-2.5 text-left hover:opacity-90 transition-opacity"
+                  style={{ backgroundColor: bg, borderColor: color + '40' }}
+                >
+                  <div className="flex items-center gap-1.5 mb-1">
+                    <Icon size={11} style={{ color }} />
+                    <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color }}>{label}</span>
+                  </div>
+                  <p className="text-xl font-extrabold tabular-nums" style={{ color }}>
+                    {compSummary[key] ?? 0}
+                  </p>
+                </button>
+              ))}
+            </div>
+            <p className="text-[10px] text-gray-400 mt-2">{compSummary.total ?? 0} total document records</p>
+          </div>
+
+          {/* Upcoming expiries list */}
+          <div className="flex-1 border-t md:border-t-0 md:border-l border-gray-100 p-4">
+            <p className="text-xs font-semibold text-gray-500 mb-2">Expiring within 30 days</p>
+            {compUpcoming.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-6 text-center">
+                <CheckCircle2 size={24} className="text-green-400 mb-1" />
+                <p className="text-sm text-gray-400 font-medium">All clear!</p>
+                <p className="text-xs text-gray-300">No documents expiring in the next 30 days</p>
+              </div>
+            ) : (
+              <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                {compUpcoming.slice(0, 8).map(d => {
+                  const status = compCalcStatus(d.expiry_date)
+                  const statusColors = {
+                    expired: 'text-red-600 bg-red-50',
+                    critical: 'text-orange-600 bg-orange-50',
+                    warning: 'text-yellow-700 bg-yellow-50',
+                    valid: 'text-green-700 bg-green-50',
+                  }
+                  const days = d.days_remaining
+                  const daysText = days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'Today' : `${days}d`
+                  const docLabel = d.doc_type === 'custom' ? (d.doc_label || 'Custom') : ({
+                    insurance: 'Insurance', road_tax: 'Road Tax', fitness: 'Fitness',
+                    puc: 'PUC', national_permit: 'Nat.Permit', state_permit: 'St.Permit', load_test: 'Load Test',
+                  }[d.doc_type] || d.doc_type)
+                  return (
+                    <div key={d.id} className="flex items-center justify-between gap-2 py-1 border-b border-gray-50 last:border-0">
+                      <div className="min-w-0">
+                        <span className="font-semibold text-gray-800 text-xs">{d.slno}</span>
+                        <span className="text-gray-400 text-xs ml-1">· {docLabel}</span>
+                        {d.reg_no && <span className="text-gray-400 text-xs ml-1 hidden sm:inline">· {d.reg_no}</span>}
+                      </div>
+                      <span className={`text-xs font-bold px-1.5 py-0.5 rounded flex-shrink-0 ${statusColors[status] || 'text-gray-500'}`}>
+                        {daysText}
+                      </span>
+                    </div>
+                  )
+                })}
+                {compUpcoming.length > 8 && (
+                  <button onClick={() => navigate('/compliance')} className="text-xs text-blue-500 hover:underline w-full text-center pt-1">
+                    +{compUpcoming.length - 8} more — view all
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Mini pie chart */}
+          <div className="flex-shrink-0 border-t md:border-t-0 md:border-l border-gray-100 flex items-center justify-center p-4">
+            <div style={{ width: 200, height: 200 }}>
+              <PieChart
+                slices={COMP_STATUS.map(s => ({ label: s.label, value: compSummary[s.key] || 0, color: s.color }))}
+                total={['expired','critical','warning','valid'].reduce((a, k) => a + (compSummary[k] || 0), 0)}
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
       {/* ── ASSETS detail card (status table + pie) ──────────── */}

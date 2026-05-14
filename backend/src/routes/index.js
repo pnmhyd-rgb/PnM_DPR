@@ -20,5 +20,6 @@ router.use('/designations',    require('./designations'));
 router.use('/hire',            require('./hireWorkOrders'));
 router.use('/gst',             require('./gst'));
 router.use('/kala',            require('./kala'));
+router.use('/compliance',      require('./compliance'));
 
 module.exports = router;

@@ -58,6 +58,7 @@ export const getMonthlyStatus          = (params) => client.get('/entries/monthl
 export const getMonthlyProjectStatus   = (params) => client.get('/entries/monthly-project-status',  { params })
 export const createEntry         = (data)        => client.post('/entries', data)
 export const updateEntry         = (id, data)    => client.put(`/entries/${id}`, data)
+export const updateEntryStatus   = (id, status)  => client.patch(`/entries/${id}/status`, { status })
 export const deleteEntry         = (id)          => client.delete(`/entries/${id}`)
 
 export const getUtilization   = (params)      => client.get('/reports/utilization', { params })
@@ -133,3 +134,12 @@ export const getSpareTransactions  = (params) => client.get('/spare-parts', { pa
 export const getSpareStockSummary  = (params) => client.get('/spare-parts/stock-summary', { params })
 export const createSpareTransaction = (data)  => client.post('/spare-parts', data)
 export const deleteSpareTransaction = (id)    => client.delete(`/spare-parts/${id}`)
+
+// RTA Compliance
+export const getComplianceAll        = (params)      => client.get('/compliance', { params })
+export const getComplianceSummary    = ()            => client.get('/compliance/summary')
+export const getComplianceUpcoming   = (days)        => client.get('/compliance/upcoming', { params: { days } })
+export const getMachineCompliance    = (machineId)   => client.get(`/compliance/machine/${machineId}`)
+export const getComplianceAttachment = (id)          => client.get(`/compliance/${id}/attachment`, { responseType: 'blob' })
+export const batchUpsertCompliance   = (data)        => client.post('/compliance/batch', data)
+export const deleteCompliance        = (id)          => client.delete(`/compliance/${id}`)

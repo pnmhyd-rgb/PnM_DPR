@@ -1,17 +1,24 @@
-const { Pool } = require('pg');
+const { Pool, types } = require('pg');
+
+// Return PostgreSQL DATE columns as plain "YYYY-MM-DD" strings.
+// Without this, pg parses them into JS Date objects and JSON.stringify
+// converts them to UTC ISO strings (e.g. "2026-04-30T18:30:00.000Z" for IST),
+// causing an off-by-one-day mismatch on the frontend date grid.
+types.setTypeParser(1082, val => val);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 
-  // Connection pool limits
-  max: 10,                        // max concurrent DB connections
-  min: 0,                         // don't hold idle connections open
+  max: 5,
+  min: 0,
+  connectionTimeoutMillis: 20000,
+  idleTimeoutMillis:        7000,   // below Supabase PgBouncer's ~10 s server idle timeout
+  statement_timeout:       30000,
 
-  // Timeouts — critical for Supabase pooler which can drop connections
-  connectionTimeoutMillis: 10000, // fail fast if pool can't give a connection in 10 s
-  idleTimeoutMillis:       30000, // release idle clients after 30 s
-  statement_timeout:       30000, // kill any query running > 30 s (passed via options)
+  // Keep TCP connections alive so Supabase pooler doesn't drop them silently
+  keepAlive:                    true,
+  keepAliveInitialDelayMillis:  5000,
 });
 
 pool.on('error', (err) => {
@@ -25,19 +32,33 @@ pool.on('error', (err) => {
   }
 });
 
-// Wrap query with a single retry on connection-lost errors
+const CONN_CODES = new Set(['ENOTFOUND', 'ECONNREFUSED', 'EAUTHTIMEOUT', '08006', '08001', '08004']);
+const CONN_MSGS  = ['Connection terminated', 'connection timeout', 'timeout exceeded', 'Connection refused'];
+
+function isConnErr(err) {
+  if (!err) return false;
+  // Check the error itself and its cause (pg-pool wraps the root error)
+  const check = e => CONN_CODES.has(e?.code) || CONN_MSGS.some(m => e?.message?.includes(m));
+  return check(err) || check(err.cause);
+}
+
+// Wrap query with exponential-backoff retries on connection-lost errors
 const query = async (text, params) => {
-  try {
-    return await pool.query(text, params);
-  } catch (err) {
-    const isConnErr = ['ENOTFOUND', 'ECONNREFUSED', 'EAUTHTIMEOUT', '08006', '08001', '08004'].includes(err.code);
-    if (isConnErr) {
-      // Wait 500 ms then try once more (pool will open a fresh connection)
-      await new Promise(r => setTimeout(r, 500));
-      return pool.query(text, params);
+  const delays = [500, 1500, 3000];
+  let lastErr;
+  for (let attempt = 0; attempt <= delays.length; attempt++) {
+    try {
+      return await pool.query(text, params);
+    } catch (err) {
+      if (!isConnErr(err)) throw err;
+      lastErr = err;
+      if (attempt < delays.length) {
+        console.warn(`[DB] Connection error (attempt ${attempt + 1}), retrying in ${delays[attempt]}ms…`);
+        await new Promise(r => setTimeout(r, delays[attempt]));
+      }
     }
-    throw err;
   }
+  throw lastErr;
 };
 
 module.exports = {

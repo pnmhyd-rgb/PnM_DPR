@@ -1,0 +1,13 @@
+{
+  "name": "product-notes-generator",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Generates Word and PDF product documentation for RVR PnM DPR System",
+  "scripts": {
+    "generate": "node generate-product-notes.js"
+  },
+  "dependencies": {
+    "docx": "^8.5.0",
+    "pdfkit": "^0.15.0"
+  }
+}

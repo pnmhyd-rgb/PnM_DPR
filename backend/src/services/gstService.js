@@ -285,6 +285,44 @@ const providers = {
     };
   },
 
+  // ── GSTINCheck.co.in ─────────────────────────────────────────────────────
+  // GET https://sheet.gstincheck.co.in/check/{API_KEY}/{GSTIN}
+  // Response: { flag: true, data: { lgnm, tradeNam, sts, stj, rgdt, ctb, pradr: { addr: {...} } } }
+  gstincheck: async (gstin, apiKey) => {
+    if (!apiKey) throw new Error('GST_API_KEY must be set for gstincheck provider');
+    const url = `https://sheet.gstincheck.co.in/check/${encodeURIComponent(apiKey)}/${encodeURIComponent(gstin)}`;
+    const raw = await fetchJSON(url, { timeout: 15000 });
+
+    // flag can be boolean true or string "true"
+    if (raw.flag === false || raw.flag === 'false' || !raw.data) {
+      throw Object.assign(new Error('GSTIN not found in GST records'), { statusCode: 404 });
+    }
+
+    const d    = raw.data;
+    const addr = d.pradr?.addr || {};
+
+    // Build readable address from structured address fields
+    const addrParts = [addr.bnm, addr.flno, addr.st, addr.loc, addr.dst, addr.stcd]
+      .map(v => (v || '').trim()).filter(Boolean)
+    const adrStr = addrParts.join(', ') + (addr.pncd ? ' - ' + addr.pncd : '')
+
+    const state    = stateFromStj(d.stj) || addr.stcd || stateFromAddress(adrStr)
+    const district = districtFromStj(d.stj) || addr.dst || ''
+
+    return {
+      legal_name:        (d.lgnm     || '').trim(),
+      trade_name:        (d.tradeNam || d.lgnm || '').trim(),
+      address:           adrStr,
+      state,
+      district,
+      pincode:           (addr.pncd || '').trim(),
+      gst_status:        normalizeStatus(d.sts || ''),
+      business_type:     (d.ctb || '').trim(),
+      registration_date: parseDDMMYYYY(d.rgdt || ''),
+      raw,
+    };
+  },
+
   // ── India Government GST Portal (free, no API key needed) ────────────────
   // Uses the public endpoint the official GST website (gst.gov.in) uses.
   // NOTE: The portal runs F5 BIG-IP WAF which may block server-side calls.
@@ -420,7 +458,7 @@ async function verifyGST(gstin) {
   const apiUrl       = process.env.GST_API_URL || '';
 
   const providerFn = providers[providerName];
-  if (!providerFn) throw new Error(`Unknown GST_API_PROVIDER: "${providerName}". Use masters_india, karza, http_bearer, or mock.`);
+  if (!providerFn) throw new Error(`Unknown GST_API_PROVIDER: "${providerName}". Use gstincheck, masters_india, karza, http_bearer, or mock.`);
 
   // 5. Call with up to 3 retries
   let lastErr;

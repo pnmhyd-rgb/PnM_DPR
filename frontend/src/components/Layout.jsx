@@ -6,7 +6,7 @@ import {
   Settings, LogOut, Menu, X, ChevronDown, ChevronRight,
   Fuel, Wrench, Users, Package, AlertTriangle, BookOpen,
   User, Camera, RefreshCw, KeyRound, Shield, Info, Layers, Home, Download,
-  FileSignature, Sparkles,
+  FileSignature, Sparkles, ShieldAlert,
 } from 'lucide-react'
 import DPRDownloadModal from '../pages/DPRDownloadModal'
 import KalaPanel from '../pages/KalaPanel'
@@ -285,7 +285,8 @@ function UserMenu({ onClose, onOpenProfile, onOpenRoles, onOpenAbout }) {
   return (
     <div
       ref={menuRef}
-      className="absolute right-3 top-14 z-50 w-64 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
+      style={{ position: 'fixed', top: 72, right: 12, zIndex: 9999 }}
+      className="w-64 bg-white rounded-2xl shadow-xl border border-gray-200 overflow-hidden"
     >
       {/* User header */}
       <div className="px-4 py-3.5 bg-gradient-to-br from-blue-50 to-blue-100/60 border-b border-gray-200">
@@ -426,6 +427,11 @@ export default function Layout({ children }) {
           </NavLink>
         ))}
 
+        {/* Compliance */}
+        <NavLink to="/compliance" className={linkCls} onClick={() => setMobileOpen(false)}>
+          <ShieldAlert size={17} />Compliance
+        </NavLink>
+
         {/* Hire */}
         <div className="pt-2">
           <button
@@ -558,90 +564,113 @@ export default function Layout({ children }) {
   )
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
 
-      {/* ── Full-width white top header ── */}
-      <header style={{
-        flexShrink: 0,
-        height: 72,
-        width: '100%',
-        background: '#ffffff',
-        borderBottom: '1px solid #e5e7eb',
-        boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0 24px',
-      }}>
-        {/* LEFT: mobile hamburger + RVR logo */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button
-            onClick={() => setMobileOpen(v => !v)}
-            className="md:hidden"
-            style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, lineHeight: 0, color: '#6b7280' }}
-          >
-            {mobileOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
-          <img
-            src="/rvr-logo.png"
-            alt="RVR"
-            style={{ width: 148, height: 'auto', display: 'block' }}
-          />
-        </div>
+      {/* ── Desktop sidebar — full height, flush to top ── */}
+      <aside className="hidden md:flex w-56 flex-shrink-0 flex-col">{sidebar}</aside>
 
-        {/* CENTER: live date & time */}
-        <div className="hidden md:flex flex-col items-center leading-tight select-none">
-          <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 500, letterSpacing: '0.02em' }}>
-            {clockDate}
-          </span>
-          <span style={{ fontSize: 17, color: '#111827', fontWeight: 700, fontVariantNumeric: 'tabular-nums', letterSpacing: '0.03em' }}>
-            {clockTime}
-          </span>
-        </div>
+      {/* ── Right column: header + content ── */}
+      <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minWidth: 0, overflow: 'hidden' }}>
 
-        {/* RIGHT: Kala button + username + avatar */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+        {/* ── Header — spans only the content area ── */}
+        <header style={{
+          flexShrink: 0,
+          background: '#ffffff',
+          borderBottom: '1px solid #e5e7eb',
+          boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          height: 72,
+          padding: '0 20px',
+          overflow: 'hidden',
+          gap: 12,
+        }}>
 
-          {/* Kala AI toggle */}
-          <button
-            onClick={() => setKalaOpen(v => !v)}
-            className="hidden md:flex items-center gap-2"
-            style={{
-              padding: '7px 13px',
-              borderRadius: 10,
-              border: kalaOpen ? '1.5px solid #1d4ed8' : '1.5px solid #bfdbfe',
-              background: kalaOpen
-                ? 'linear-gradient(135deg, #1e3a8a, #1d4ed8)'
-                : 'linear-gradient(135deg, #eff6ff, #dbeafe)',
-              color: kalaOpen ? '#ffffff' : '#1d4ed8',
-              cursor: 'pointer',
-              fontSize: 13,
-              fontWeight: 700,
-              letterSpacing: '0.01em',
-              boxShadow: kalaOpen ? '0 2px 10px rgba(29,78,216,0.35)' : 'none',
-              transition: 'all 0.15s',
-              whiteSpace: 'nowrap',
-            }}
-            title="Open Kala AI Assistant"
-          >
-            <Sparkles size={14} />
-            Kala AI
-          </button>
-          <span
-            className="hidden md:block"
-            style={{ fontSize: 16, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}
-          >
-            {user?.name}
-          </span>
-          <div style={{ position: 'relative' }}>
+          {/* LEFT: mobile hamburger + RVR logo + division title */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0, flex: 1 }}>
             <button
-              onClick={() => setUserMenuOpen(v => !v)}
-              style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
-              title={user?.name}
+              onClick={() => setMobileOpen(v => !v)}
+              className="md:hidden"
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4, color: '#6b7280', flexShrink: 0 }}
             >
-              <Avatar user={user} size={44} />
+              {mobileOpen ? <X size={20} /> : <Menu size={20} />}
             </button>
-            {userMenuOpen && (
+
+            <img
+              src="/rvr-logo.png"
+              alt="RVR"
+              style={{ width: 148, height: 'auto', display: 'block', flexShrink: 0 }}
+            />
+
+            {/* Divider */}
+            <div className="hidden sm:block" style={{ width: 1, height: 36, background: '#e5e7eb', flexShrink: 0 }} />
+
+            {/* Division title */}
+            <p className="hidden sm:block" style={{
+              fontSize: 14,
+              fontWeight: 600,
+              color: '#111827',
+              whiteSpace: 'nowrap',
+            }}>
+              Plants &amp; Machinery Asset Management Division
+            </p>
+          </div>
+
+          {/* RIGHT: date/time + Kala + username + avatar */}
+          <div className="hidden md:flex items-center" style={{ gap: 16, flexShrink: 0 }}>
+
+            <div className="flex flex-col items-end leading-tight select-none">
+              <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 500, letterSpacing: '0.03em' }}>
+                {clockDate}
+              </span>
+              <span style={{ fontSize: 16, color: '#111827', fontWeight: 700, fontVariantNumeric: 'tabular-nums', letterSpacing: '0.03em' }}>
+                {clockTime}
+              </span>
+            </div>
+
+            <button
+              onClick={() => setKalaOpen(v => !v)}
+              className="flex items-center gap-2"
+              style={{
+                padding: '7px 14px',
+                borderRadius: 10,
+                border: kalaOpen
+                  ? '1.5px solid rgba(255,255,255,0.35)'
+                  : '1.5px solid rgba(167,139,250,0.6)',
+                background: kalaOpen
+                  ? 'linear-gradient(135deg, #4c1d95, #5b21b6)'
+                  : 'linear-gradient(135deg, #7c3aed, #4f46e5)',
+                color: '#ffffff',
+                cursor: 'pointer',
+                fontSize: 13,
+                fontWeight: 700,
+                letterSpacing: '0.02em',
+                boxShadow: kalaOpen
+                  ? '0 0 22px rgba(124,58,237,0.65), 0 2px 8px rgba(0,0,0,0.2)'
+                  : '0 0 16px rgba(124,58,237,0.45), 0 2px 6px rgba(0,0,0,0.15)',
+                transition: 'all 0.18s',
+                whiteSpace: 'nowrap',
+              }}
+              title="Open Ask Kala AI Assistant"
+            >
+              <Sparkles size={14} />
+              Ask Kala
+            </button>
+
+            <span style={{ fontSize: 14, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}>
+              {user?.name}
+            </span>
+
+            <div style={{ position: 'relative' }}>
+              <button
+                onClick={() => setUserMenuOpen(v => !v)}
+                style={{ display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+                title={user?.name}
+              >
+                <Avatar user={user} size={40} />
+              </button>
+              {userMenuOpen && (
                 <UserMenu
                   onClose={() => setUserMenuOpen(false)}
                   onOpenProfile={() => setShowProfile(true)}
@@ -649,47 +678,44 @@ export default function Layout({ children }) {
                   onOpenAbout={() => setShowAbout(true)}
                 />
               )}
+            </div>
           </div>
+        </header>
+
+        {/* ── Content row: main + optional Kala panel ── */}
+        <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
+
+          {/* Main content */}
+          <main className="flex-1 overflow-y-auto p-4 md:p-6">
+            {children}
+          </main>
+
+          {/* Kala AI side panel */}
+          {kalaOpen && (
+            <div
+              className="hidden md:flex flex-col flex-shrink-0"
+              style={{
+                width: 380,
+                borderLeft: '1px solid #e5e7eb',
+                boxShadow: '-4px 0 20px rgba(0,0,0,0.06)',
+                animation: 'slideInRight 0.2s ease',
+              }}
+            >
+              <KalaPanel onClose={() => setKalaOpen(false)} />
+            </div>
+          )}
         </div>
-      </header>
-
-      {/* ── Below header: blue sidebar + main content ── */}
-      <div style={{ display: 'flex', flex: 1, minHeight: 0, overflow: 'hidden' }}>
-
-        {/* Desktop sidebar — starts below header */}
-        <aside className="hidden md:flex w-56 flex-shrink-0 flex-col">{sidebar}</aside>
-
-        {/* Mobile overlay — starts below 72px header */}
-        {mobileOpen && (
-          <div className="md:hidden fixed inset-x-0 bottom-0 z-40 flex" style={{ top: 72 }}>
-            <div className="w-56 flex-shrink-0">{sidebar}</div>
-            <div className="flex-1 bg-black/50" onClick={() => setMobileOpen(false)} />
-          </div>
-        )}
-
-        {/* Main content */}
-        <main className="flex-1 overflow-y-auto p-4 md:p-6">
-          {children}
-        </main>
-
-        {/* ── Kala AI side panel ── */}
-        {kalaOpen && (
-          <div
-            className="hidden md:flex flex-col flex-shrink-0"
-            style={{
-              width: 380,
-              borderLeft: '1px solid #e5e7eb',
-              boxShadow: '-4px 0 20px rgba(0,0,0,0.06)',
-              animation: 'slideInRight 0.2s ease',
-            }}
-          >
-            <KalaPanel onClose={() => setKalaOpen(false)} />
-          </div>
-        )}
-
       </div>
 
-      {/* Kala slide-in animation */}
+      {/* ── Mobile overlay sidebar ── */}
+      {mobileOpen && (
+        <div className="md:hidden fixed inset-0 z-40 flex">
+          <div className="w-56 flex-shrink-0">{sidebar}</div>
+          <div className="flex-1 bg-black/50" onClick={() => setMobileOpen(false)} />
+        </div>
+      )}
+
+      {/* Animations */}
       <style>{`
         @keyframes slideInRight {
           from { transform: translateX(20px); opacity: 0; }
@@ -701,7 +727,7 @@ export default function Layout({ children }) {
         }
       `}</style>
 
-      {/* ── Layout-level modals (outside UserMenu so they survive dropdown close) ── */}
+      {/* Layout-level modals */}
       {showProfile  && <ProfileModal onClose={() => setShowProfile(false)} />}
       {showRoles    && <RolesModal user={user} onClose={() => setShowRoles(false)} />}
       {showAbout    && <AboutModal onClose={() => setShowAbout(false)} />}

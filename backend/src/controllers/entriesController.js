@@ -89,6 +89,41 @@ const getPreviousClosing = async (req, res) => {
   }
 };
 
+// Shift timing rules (IST — server local time):
+//   Day Shift:   entry allowed from 20:00 (8 PM) same day
+//   Night Shift: entry allowed from 08:00 (8 AM) next day
+//   Dual Shift:  same as Night Shift (both shifts end at next-day 8 AM)
+function checkEntryTiming(entryDate, shift, now = new Date()) {
+  const [y, m, d] = entryDate.split('-').map(Number);
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  const entryDay   = new Date(y, m - 1, d, 0, 0, 0);
+
+  if (entryDay > todayStart) {
+    return { allowed: false, message: 'Cannot enter DPR for a future date.' };
+  }
+
+  const earliest = shift === 'Day Shift'
+    ? new Date(y, m - 1, d, 20, 0, 0)          // 8 PM same day
+    : new Date(y, m - 1, d + 1, 8, 0, 0);      // 8 AM next day
+
+  if (now < earliest) {
+    const isPrevDay = entryDay < todayStart;
+    let message;
+    if (shift === 'Day Shift') {
+      message = 'Day Shift DPR can be entered only after 8:00 PM.';
+    } else if (isPrevDay) {
+      message = "Previous day's DPR entry is allowed only after 8:00 AM.";
+    } else if (shift === 'Night Shift') {
+      message = 'Night Shift DPR can be entered only after 8:00 AM (next day).';
+    } else {
+      message = 'Dual Shift DPR can be entered only after 8:00 AM (next day).';
+    }
+    return { allowed: false, message };
+  }
+
+  return { allowed: true };
+}
+
 const create = async (req, res) => {
   try {
     const {
@@ -112,6 +147,44 @@ const create = async (req, res) => {
       return res.status(404).json({ error: 'Machine not found' });
     }
     const machine = machineResult.rows[0];
+
+    // Shift timing enforcement: nobody can submit before the shift physically ends
+    const timing = checkEntryTiming(entry_date, shift);
+    if (!timing.allowed) {
+      return res.status(403).json({ error: timing.message });
+    }
+
+    // Machine-level sequential enforcement for non-admins:
+    // This machine's previous-day entry must exist AND have a valid status.
+    if (req.user.role !== 'admin') {
+      const [prevEntryRes, historyRes] = await Promise.all([
+        db.query(
+          `SELECT id, status FROM dpr_entries
+           WHERE machine_id = $1 AND entry_date = $2::date - INTERVAL '1 day'
+           ORDER BY submitted_at DESC LIMIT 1`,
+          [machine_id, entry_date]
+        ),
+        db.query(
+          'SELECT 1 FROM dpr_entries WHERE machine_id = $1 AND entry_date < $2::date LIMIT 1',
+          [machine_id, entry_date]
+        ),
+      ]);
+      const prevEntry  = prevEntryRes.rows[0];
+      const hasHistory = historyRes.rows.length > 0;
+
+      if (hasHistory && !prevEntry) {
+        const pd = await db.query("SELECT ($1::date - INTERVAL '1 day')::text AS d", [entry_date]);
+        return res.status(403).json({
+          error: `Previous day's DPR (${pd.rows[0].d}) for this machine has not been submitted. Complete it before creating today's entry.`
+        });
+      }
+      if (prevEntry && prevEntry.status === 'open') {
+        const pd = await db.query("SELECT ($1::date - INTERVAL '1 day')::text AS d", [entry_date]);
+        return res.status(403).json({
+          error: `Previous day's DPR (${pd.rows[0].d}) for this machine is still open. Please close it before creating today's entry.`
+        });
+      }
+    }
 
     const r1Total = r1_close != null && r1_open != null
       ? parseFloat(r1_close) - parseFloat(r1_open) : null;
@@ -141,18 +214,18 @@ const create = async (req, res) => {
 
     const result = await db.query(
       `INSERT INTO dpr_entries (
-        machine_id, project_id, entry_date, shift,
+        machine_id, project_id, entry_date, shift, status,
         slno, eq_type, capacity, reg_no, ownership, dual_reading, planned_hours,
         r1_open, r1_close, r1_total, r2_open, r2_close, r2_total,
         working_hours, util_pct, hsd, fuel_avg,
         breakdown, qty, work_done, remarks, submitted_by
       ) VALUES (
-        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
-        $12,$13,$14,$15,$16,$17,$18,$19,$20,$21,
-        $22,$23,$24,$25,$26
+        $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
+        $13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
+        $23,$24,$25,$26,$27
       ) RETURNING *`,
       [
-        machine_id, project_id, entry_date, shift,
+        machine_id, project_id, entry_date, shift, 'submitted',
         machine.slno, machine.eq_type, machine.capacity, machine.reg_no,
         machine.ownership, machine.dual_reading, machine.planned_hours,
         r1_open ?? null, r1_close ?? null, r1Total,
@@ -253,6 +326,28 @@ const update = async (req, res) => {
   }
 };
 
+// Admin: change status of a single entry (submitted → closed, or reopen → open)
+const updateStatus = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    if (!['open', 'submitted', 'closed'].includes(status)) {
+      return res.status(400).json({ error: "status must be 'open', 'submitted', or 'closed'" });
+    }
+    const result = await db.query(
+      `UPDATE dpr_entries SET status = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
+      [status, id]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Entry not found' });
+    }
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('Update status error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
 const remove = async (req, res) => {
   try {
     const { id } = req.params;
@@ -297,12 +392,26 @@ const getDprStatus = async (req, res) => {
     }
 
     const machineIds = machines.map(m => m.id);
-    const entriesResult = await db.query(
-      `SELECT machine_id, shift, working_hours
-       FROM dpr_entries
-       WHERE machine_id = ANY($1) AND entry_date = $2`,
-      [machineIds, date]
-    );
+
+    const [entriesResult, prevEntriesResult, historyResult, prevDateResult] = await Promise.all([
+      db.query(
+        `SELECT id, machine_id, shift, working_hours, status
+         FROM dpr_entries
+         WHERE machine_id = ANY($1) AND entry_date = $2`,
+        [machineIds, date]
+      ),
+      // Previous-day entries that are NOT open (submitted or closed = valid)
+      db.query(
+        `SELECT machine_id, status FROM dpr_entries
+         WHERE machine_id = ANY($1) AND entry_date = $2::date - INTERVAL '1 day'`,
+        [machineIds, date]
+      ),
+      db.query(
+        'SELECT 1 FROM dpr_entries WHERE machine_id = ANY($1) AND entry_date < $2::date LIMIT 1',
+        [machineIds, date]
+      ),
+      db.query("SELECT ($1::date - INTERVAL '1 day')::text AS d", [date]),
+    ]);
 
     const entryMap = {};
     for (const e of entriesResult.rows) {
@@ -310,19 +419,60 @@ const getDprStatus = async (req, res) => {
       entryMap[e.machine_id].push(e);
     }
 
+    // Per-machine previous-day status map
+    const prevMap = {};
+    for (const e of prevEntriesResult.rows) {
+      if (!prevMap[e.machine_id]) prevMap[e.machine_id] = [];
+      prevMap[e.machine_id].push(e.status);
+    }
+
+    const hasHistory  = historyResult.rows.length > 0;
+    const prevDayDate = prevDateResult.rows[0].d;
+
     const result = machines.map(m => {
-      const entries = entryMap[m.id] || [];
-      const work_hrs = entries.reduce((s, e) => s + (parseFloat(e.working_hours) || 0), 0);
-      return { ...m, has_entry: entries.length > 0, work_hrs: parseFloat(work_hrs.toFixed(2)), entry_count: entries.length };
+      const entries   = entryMap[m.id] || [];
+      const work_hrs  = entries.reduce((s, e) => s + (parseFloat(e.working_hours) || 0), 0);
+      const statuses  = entries.map(e => e.status || 'submitted');
+      const hasOpen   = statuses.includes('open');
+      const allClosed = statuses.length > 0 && statuses.every(s => s === 'closed');
+      const entryStatus = entries.length === 0 ? null
+        : hasOpen    ? 'open'
+        : allClosed  ? 'closed'
+        : 'submitted';
+
+      // Machine's prev-day validity
+      const prevStatuses  = prevMap[m.id] || [];
+      const prevHasEntry  = prevStatuses.length > 0;
+      const prevHasOpen   = prevStatuses.includes('open');
+      // prev day is valid when it has at least one non-open entry
+      const prevDayOk = !hasHistory || (prevHasEntry && !prevHasOpen);
+
+      return {
+        ...m,
+        has_entry:    entries.length > 0,
+        work_hrs:     parseFloat(work_hrs.toFixed(2)),
+        entry_count:  entries.length,
+        entry_status: entryStatus,
+        entry_ids:    entries.map(e => e.id),
+        prev_day_ok:  prevDayOk,
+      };
     });
 
     const completed = result.filter(m => m.has_entry).length;
     const total     = result.length;
+
+    // Project-level prev-day summary: all machines with valid prev-day entries
+    const prevDayCompleted = result.filter(m => (prevMap[m.id] || []).some(s => s !== 'open')).length;
+    const prevDayComplete  = total === 0 || !hasHistory || prevDayCompleted >= total;
+
     res.json({
       date, project_code, total, completed,
-      pending:       total - completed,
-      pct_completed: total > 0 ? Math.round((completed / total) * 100) : 0,
-      machines:      result,
+      pending:            total - completed,
+      pct_completed:      total > 0 ? Math.round((completed / total) * 100) : 0,
+      machines:           result,
+      prev_day_complete:  prevDayComplete,
+      prev_day_date:      prevDayDate,
+      prev_day_completed: prevDayCompleted,
     });
   } catch (err) {
     console.error('Get DPR status error:', err);
@@ -450,4 +600,4 @@ const getMonthlyProjectStatus = async (req, res) => {
   }
 };
 
-module.exports = { getAll, getPreviousClosing, create, update, remove, getDprStatus, getMonthlyStatus, getMonthlyProjectStatus };
+module.exports = { getAll, getPreviousClosing, create, update, updateStatus, remove, getDprStatus, getMonthlyStatus, getMonthlyProjectStatus };
