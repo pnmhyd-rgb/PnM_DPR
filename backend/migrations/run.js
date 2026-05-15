@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 const fs = require('fs');
 const path = require('path');
 const db = require('../src/config/db');
@@ -27,6 +27,11 @@ const migrations = [
   '021_hire_work_orders.sql',
   '022_hire_wo_vendor_offer.sql',
   '023_gst_verification_fields.sql',
+  '024_machine_compliance.sql',
+  '025_compliance_attachments.sql',
+  '026_dpr_entry_status.sql',
+  '027_compliance_attachment_key.sql',
+  '028_drop_attachment_data.sql',
 ];
 
 async function runMigrations() {
