@@ -1,10 +1,16 @@
 const OpenAI = require('openai');
 const db = require('../config/db');
 
-const client = new OpenAI({
-  apiKey: process.env.GROQ_API_KEY,
-  baseURL: 'https://api.groq.com/openai/v1',
-});
+let _client = null;
+function getClient() {
+  if (!_client) {
+    _client = new OpenAI({
+      apiKey: process.env.GROQ_API_KEY,
+      baseURL: 'https://api.groq.com/openai/v1',
+    });
+  }
+  return _client;
+}
 
 const MODEL          = 'llama-3.3-70b-versatile';
 const FALLBACK_MODELS = ['llama3-8b-8192', 'llama-3.1-8b-instant'];
@@ -679,7 +685,7 @@ async function createWithRetry(params, maxRetries = 3) {
     const callParams = { ...params, model };
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        return await client.chat.completions.create(callParams);
+        return await getClient().chat.completions.create(callParams);
       } catch (err) {
         const status = err?.status;
         const isOverload = status === 503 || err?.message?.includes('overloaded') || err?.message?.includes('unavailable');
