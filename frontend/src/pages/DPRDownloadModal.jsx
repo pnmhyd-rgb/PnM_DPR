@@ -95,6 +95,35 @@ const FIXED_COLS = [
   { key: 'r1_total',  label: 'Total Hrs/KMs'},
 ]
 
+// For multi-reading machines: replace r1 fixed cols with per-reading cols
+function getMachineCols(machine, activeCols) {
+  const configs = machine.reading_configs || []
+  if (configs.length === 0) return activeCols
+  const baseCols = [
+    { key: 'sno', label: 'S.No' },
+    { key: 'date', label: 'Date' },
+    { key: 'shift', label: 'Shift' },
+  ]
+  const readingCols = configs.flatMap(rc => [
+    { key: `rl_open_${rc.reading_type_id}`,  label: `${rc.code} Open`,  rtId: rc.reading_type_id, field: 'open_value',  unit: rc.unit },
+    { key: `rl_close_${rc.reading_type_id}`, label: `${rc.code} Close`, rtId: rc.reading_type_id, field: 'close_value', unit: rc.unit },
+    { key: `rl_total_${rc.reading_type_id}`, label: `${rc.code} Total`, rtId: rc.reading_type_id, field: 'total',       unit: rc.unit },
+  ])
+  const toggleCols = activeCols.filter(c => !['sno','date','shift','r1_open','r1_close','r1_total'].includes(c.key))
+  return [...baseCols, ...readingCols, ...toggleCols]
+}
+
+function cellValForCol(e, col, idx) {
+  if (col.rtId !== undefined) {
+    const log = (e.reading_logs || []).find(l => l.reading_type_id === col.rtId)
+    if (!log) return ''
+    const v = log[col.field]
+    if (col.field === 'total') return v != null ? Number(v).toFixed(2) : ''
+    return v ?? ''
+  }
+  return cellVal(e, col.key, idx)
+}
+
 const SECTIONS = [
   { key: 'header',      label: 'Machine Header'      },
   { key: 'log',         label: 'Daily Log Table'      },
@@ -151,6 +180,7 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
   for (const m of machines) {
     const entries   = entriesMap[m.id] || []
     const sheetName = (m.slno || `M${m.id}`).slice(0, 31).replace(/[:\\/?*[\]]/g, '_')
+    const machineCols = getMachineCols(m, activeCols)
     const wsData    = []
 
     if (sections.header) {
@@ -164,15 +194,21 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
     const logStartRow = wsData.length
 
     if (sections.log) {
-      wsData.push(activeCols.map(c => c.label))
+      wsData.push(machineCols.map(c => c.label))
       if (entries.length > 0) {
-        entries.forEach((e, i) => wsData.push(activeCols.map(c => cellVal(e, c.key, i))))
+        entries.forEach((e, i) => wsData.push(machineCols.map(c => cellValForCol(e, c, i))))
         // Total row
-        const totRow = activeCols.map(c => {
+        const totRow = machineCols.map(c => {
           if (c.key === 'sno')       return 'Total'
           if (c.key === 'r1_total')  return entries.reduce((s, e) => s + (parseFloat(e.r1_total) || 0), 0).toFixed(2)
           if (c.key === 'hsd')       return entries.reduce((s, e) => s + (parseFloat(e.hsd) || 0), 0).toFixed(2)
           if (c.key === 'breakdown') return entries.reduce((s, e) => s + (parseFloat(e.breakdown) || 0), 0).toFixed(2)
+          if (c.rtId !== undefined && c.field === 'total') {
+            return entries.reduce((s, e) => {
+              const log = (e.reading_logs || []).find(l => l.reading_type_id === c.rtId)
+              return s + (parseFloat(log?.total) || 0)
+            }, 0).toFixed(2)
+          }
           return ''
         })
         wsData.push(totRow)
@@ -211,7 +247,7 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
 
     // Style header row of log table
     if (sections.log) {
-      activeCols.forEach((_, ci) => {
+      machineCols.forEach((_, ci) => {
         const ref = XLSX.utils.encode_cell({ r: logStartRow, c: ci })
         if (!ws[ref]) return
         ws[ref].s = {
@@ -222,7 +258,7 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
       })
     }
 
-    ws['!cols'] = activeCols.map(c => ({ wch: Math.max(c.label.length + 2, 14) }))
+    ws['!cols'] = machineCols.map(c => ({ wch: Math.max(c.label.length + 2, 14) }))
     XLSX.utils.book_append_sheet(wb, ws, sheetName)
   }
 
@@ -243,7 +279,8 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
     if (!isFirst) doc.addPage()
     isFirst = false
 
-    const entries = entriesMap[m.id] || []
+    const entries     = entriesMap[m.id] || []
+    const machineCols = getMachineCols(m, activeCols)
     let y = 10
 
     if (sections.header) {
@@ -269,12 +306,12 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
 
     if (sections.log) {
       const body = entries.length > 0
-        ? entries.map((e, i) => activeCols.map(c => String(cellVal(e, c.key, i))))
+        ? entries.map((e, i) => machineCols.map(c => String(cellValForCol(e, c, i))))
         : [['No entries found for this period.']]
 
       autoTable(doc, {
         startY: y,
-        head: [activeCols.map(c => c.label)],
+        head: [machineCols.map(c => c.label)],
         body,
         styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
         headStyles: { fillColor: [30, 58, 95], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },

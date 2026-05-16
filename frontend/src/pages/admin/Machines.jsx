@@ -3,7 +3,7 @@ import { getProjects, getMachines, createMachine, bulkCreateMachines, updateMach
 import {
   Plus, Edit2, Trash2, X, Search, ChevronUp, ChevronDown as ChevDown,
   RotateCcw, Filter, Upload, Download,
-  MoreVertical, ArrowRightLeft, PowerOff, AlertTriangle
+  MoreVertical, ArrowRightLeft, PowerOff, AlertTriangle, ShieldAlert
 } from 'lucide-react'
 import MachineDownloadModal from './MachineDownloadModal'
 import { downloadAssetTemplate, parseAssetFile } from '../../lib/assetBulkTemplate'
@@ -58,6 +58,7 @@ export default function Machines() {
   // Multi-select
   const [selected,           setSelected]           = useState(new Set())
   const [bulkDeleting,       setBulkDeleting]       = useState(false)
+  const [showBulkDeleteModal, setShowBulkDeleteModal] = useState(false)
   const [showBulkTransfer,   setShowBulkTransfer]   = useState(false)
   const [bulkTransferProj,   setBulkTransferProj]   = useState('')
   const [bulkTransferDate,   setBulkTransferDate]   = useState('')
@@ -228,15 +229,10 @@ export default function Machines() {
     finally { setBulkDeleting(false) }
   }
 
-  // ── Bulk permanent delete (inactive view) ─────────────────────────────────
+  // ── Bulk permanent delete ─────────────────────────────────────────────────
   const handleBulkHardDelete = async () => {
     const ids = [...selected].filter(id => displayed.find(m => m.id === id))
-    if (!confirm(
-      `Permanently delete ${ids.length} machine${ids.length > 1 ? 's' : ''} from the database?\n\n` +
-      `DPR and other historical entries will be preserved but unlinked from the deleted machines.\n\n` +
-      `This cannot be undone.`
-    )) return
-    setBulkDeleting(true)
+    setBulkDeleting(true); setShowBulkDeleteModal(false)
     try { await Promise.all(ids.map(id => hardDeleteMachine(id))); load() }
     finally { setBulkDeleting(false) }
   }
@@ -392,7 +388,7 @@ export default function Machines() {
 
           <select value={filterType} onChange={e => setFilterType(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-            <option value="">All Types</option>
+            <option value="">All Category</option>
             {eqTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
           </select>
 
@@ -438,16 +434,16 @@ export default function Machines() {
             <span className={`text-sm font-medium ${showInactive ? 'text-amber-800' : 'text-blue-800'}`}>
               {selectedCount} machine{selectedCount > 1 ? 's' : ''} selected
             </span>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               {showInactive ? (
                 <>
                   <button onClick={handleBulkReactivate} disabled={bulkDeleting}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
-                    <RotateCcw size={13} />{bulkDeleting ? 'Reactivating…' : `Reactivate ${selectedCount}`}
+                    <RotateCcw size={13} />{bulkDeleting ? 'Processing…' : `Reactivate ${selectedCount}`}
                   </button>
-                  <button onClick={handleBulkHardDelete} disabled={bulkDeleting}
+                  <button onClick={() => setShowBulkDeleteModal(true)} disabled={bulkDeleting}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
-                    <Trash2 size={13} />{bulkDeleting ? 'Deleting…' : `Delete Permanently ${selectedCount}`}
+                    <Trash2 size={13} />{bulkDeleting ? 'Deleting…' : `Delete Permanently (${selectedCount})`}
                   </button>
                 </>
               ) : (
@@ -457,8 +453,12 @@ export default function Machines() {
                     <ArrowRightLeft size={13} />Transfer to Site
                   </button>
                   <button onClick={handleBulkDeactivate} disabled={bulkDeleting || bulkTransferring}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
+                    <PowerOff size={13} />{bulkDeleting ? 'Processing…' : `Deactivate (${selectedCount})`}
+                  </button>
+                  <button onClick={() => setShowBulkDeleteModal(true)} disabled={bulkDeleting || bulkTransferring}
                     className="flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white text-xs font-medium rounded-lg transition-colors">
-                    <Trash2 size={13} />{bulkDeleting ? 'Deactivating…' : `Deactivate ${selectedCount}`}
+                    <Trash2 size={13} />{bulkDeleting ? 'Deleting…' : `Delete Permanently (${selectedCount})`}
                   </button>
                 </>
               )}
@@ -971,6 +971,75 @@ export default function Machines() {
           </div>
         </Modal>
       )}
+
+      {/* ── Bulk Delete confirmation modal ── */}
+      {showBulkDeleteModal && (() => {
+        const targets = [...selected]
+          .map(id => displayed.find(m => m.id === id))
+          .filter(Boolean)
+        return (
+          <Modal title="Permanently Delete Assets" onClose={() => setShowBulkDeleteModal(false)}>
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <ShieldAlert size={18} className="text-red-500 flex-shrink-0 mt-0.5" />
+                <div className="text-sm text-red-700 space-y-1">
+                  <p className="font-semibold">This action cannot be undone.</p>
+                  <p>
+                    Permanently deletes <strong>{targets.length} asset{targets.length !== 1 ? 's' : ''}</strong> from the database.
+                    DPR, fuel, and service history entries are preserved but will no longer be linked to these machines.
+                  </p>
+                </div>
+              </div>
+
+              {/* Asset list */}
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200">
+                <table className="w-full text-xs">
+                  <thead className="bg-gray-50 sticky top-0">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-500">SL#</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-500">Type</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-500">Project</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-500">Own/Hire</th>
+                      <th className="px-3 py-2 text-left font-semibold text-gray-500">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {targets.map(m => (
+                      <tr key={m.id} className="bg-white">
+                        <td className="px-3 py-2 font-semibold text-gray-800">{m.slno}</td>
+                        <td className="px-3 py-2 text-gray-600">{m.eq_type}</td>
+                        <td className="px-3 py-2">
+                          <span className="bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded">{m.project_code}</span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className={`font-medium ${m.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>{m.ownership}</span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${m.active ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'}`}>
+                            {m.active ? 'Active' : 'Inactive'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              <div className="flex gap-3 pt-1">
+                <button onClick={handleBulkHardDelete} disabled={bulkDeleting}
+                  className="flex-1 flex items-center justify-center gap-2 bg-red-600 hover:bg-red-700 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm transition-colors">
+                  <Trash2 size={14} />
+                  {bulkDeleting ? 'Deleting…' : `Delete ${targets.length} Asset${targets.length !== 1 ? 's' : ''} Permanently`}
+                </button>
+                <button onClick={() => setShowBulkDeleteModal(false)}
+                  className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </Modal>
+        )
+      })()}
 
       {/* ── Add / Edit modal ── */}
       {modal && (

@@ -67,9 +67,37 @@ function checkEntryTiming(entryDate, shift) {
 }
 
 function buildEditForm(machine, dayEntry, nightEntry) {
-  const isDual = machine.shift_type === 'Dual Shift'
+  const isDual         = machine.shift_type === 'Dual Shift'
+  const isMultiReading = machine.reading_configs?.length > 0
+  const configs        = machine.reading_configs || []
   const d = decimalToHrsMin(dayEntry?.breakdown)
   const n = nightEntry ? decimalToHrsMin(nightEntry?.breakdown) : { hrs: '', min: '0' }
+
+  if (isMultiReading) {
+    return {
+      shift:           isDual ? '' : (dayEntry?.shift || ''),
+      readings: configs.map(rc => {
+        const log = dayEntry?.reading_logs?.find(l => l.reading_type_id === rc.reading_type_id)
+        return { reading_type_id: rc.reading_type_id, code: rc.code, reading_name: rc.reading_name, unit: rc.unit, open_value: log?.open_value != null ? String(log.open_value) : '', close_value: log?.close_value != null ? String(log.close_value) : '' }
+      }),
+      n_readings: configs.map(rc => {
+        const log = nightEntry?.reading_logs?.find(l => l.reading_type_id === rc.reading_type_id)
+        return { reading_type_id: rc.reading_type_id, close_value: log?.close_value != null ? String(log.close_value) : '' }
+      }),
+      hsd:             dayEntry?.hsd != null ? String(dayEntry.hsd) : '',
+      breakdown_hrs:   d.hrs,
+      breakdown_min:   d.min,
+      qty:             dayEntry?.qty != null ? String(dayEntry.qty) : '',
+      work_done:       dayEntry?.work_done || '',
+      n_hsd:           nightEntry?.hsd != null ? String(nightEntry.hsd) : '',
+      n_breakdown_hrs: n.hrs,
+      n_breakdown_min: n.min,
+      n_qty:           nightEntry?.qty != null ? String(nightEntry.qty) : '',
+      n_work_done:     nightEntry?.work_done || '',
+      remarks:         dayEntry?.remarks || '',
+    }
+  }
+
   return {
     shift:           isDual ? '' : (dayEntry?.shift || ''),
     r1_open:         dayEntry?.r1_open  != null ? String(dayEntry.r1_open)  : '',
@@ -97,13 +125,40 @@ function buildEditForm(machine, dayEntry, nightEntry) {
 function ShiftRow({
   machine, date, shift,
   existingEntry, dayR1Close, onR1CloseChange,
+  dayReadingsClose, onReadingsCloseChange,
   isFirst, rowSpan, onViewMonth,
   onSaved, isAdmin, canAddDpr,
 }) {
-  const isDualNight = shift === 'Night Shift' && machine.shift_type === 'Dual Shift'
-  const isDualDay   = shift === 'Day Shift'   && machine.shift_type === 'Dual Shift'
+  const isDualNight    = shift === 'Night Shift' && machine.shift_type === 'Dual Shift'
+  const isDualDay      = shift === 'Day Shift'   && machine.shift_type === 'Dual Shift'
+  const configs        = machine.reading_configs || []
+  const isMultiReading = configs.length > 0
+
+  const buildReadings = (entry) => configs.map(rc => {
+    const log = entry?.reading_logs?.find(l => l.reading_type_id === rc.reading_type_id)
+    return {
+      reading_type_id: rc.reading_type_id,
+      code:         rc.code,
+      reading_name: rc.reading_name,
+      unit:         rc.unit,
+      open_value:   log?.open_value  != null ? String(log.open_value)  : '',
+      close_value:  log?.close_value != null ? String(log.close_value) : '',
+    }
+  })
 
   const initForm = useCallback(() => {
+    if (isMultiReading) {
+      const { hrs, min } = existingEntry ? decimalToHrsMin(existingEntry.breakdown) : { hrs: '0', min: '0' }
+      return {
+        shift:         existingEntry?.shift || shift || '',
+        readings:      buildReadings(existingEntry),
+        hsd:           existingEntry?.hsd != null ? String(existingEntry.hsd) : '',
+        breakdown_hrs: hrs, breakdown_min: min,
+        qty:           existingEntry?.qty != null ? String(existingEntry.qty) : '',
+        work_done:     existingEntry?.work_done || '',
+        remarks:       existingEntry?.remarks || '',
+      }
+    }
     if (existingEntry) {
       const { hrs, min } = decimalToHrsMin(existingEntry.breakdown)
       return {
@@ -111,15 +166,15 @@ function ShiftRow({
         r1_open:       existingEntry.r1_open  != null ? String(existingEntry.r1_open)  : '',
         r1_close:      existingEntry.r1_close != null ? String(existingEntry.r1_close) : '',
         hsd:           existingEntry.hsd != null ? String(existingEntry.hsd) : '',
-        breakdown_hrs: hrs,
-        breakdown_min: min,
+        breakdown_hrs: hrs, breakdown_min: min,
         qty:           existingEntry.qty != null ? String(existingEntry.qty) : '',
         work_done:     existingEntry.work_done || '',
         remarks:       existingEntry.remarks || '',
       }
     }
+    if (isMultiReading) return { shift: shift || '', readings: buildReadings(null), hsd: '', breakdown_hrs: '0', breakdown_min: '0', qty: '', work_done: '', remarks: '' }
     return { shift: shift || '', r1_open: '', r1_close: '', hsd: '', breakdown_hrs: '0', breakdown_min: '0', qty: '', work_done: '', remarks: '' }
-  }, [existingEntry, shift])
+  }, [existingEntry, shift, isMultiReading])
 
   const [form,          setForm]          = useState(initForm)
   const [saving,        setSaving]        = useState(false)
@@ -128,62 +183,86 @@ function ShiftRow({
   const [errorMsg,      setErrorMsg]      = useState('')
   const [openingLocked, setOpeningLocked] = useState(false)
 
-  // readOnly = saved entry that user hasn't clicked Edit on yet
   const readOnly = isSaved && !isEditing
 
   const set = k => e => { if (!readOnly) setForm(f => ({ ...f, [k]: e.target.value })) }
+  const setReadingValue = (rtId, field, value) => {
+    if (readOnly) return
+    setForm(f => ({ ...f, readings: f.readings.map(r => r.reading_type_id === rtId ? { ...r, [field]: value } : r) }))
+  }
 
-  // Notify parent of Day Shift r1_close changes (for Night Shift opening sync)
+  // Notify parent of close changes (for Night Shift sync)
   useEffect(() => {
-    if (isDualDay && onR1CloseChange) onR1CloseChange(form.r1_close)
-  }, [form.r1_close, isDualDay, onR1CloseChange])
+    if (!isDualDay) return
+    if (onR1CloseChange) onR1CloseChange(isMultiReading ? '' : form.r1_close)
+    if (onReadingsCloseChange && isMultiReading) {
+      onReadingsCloseChange(form.readings?.map(r => ({ reading_type_id: r.reading_type_id, close_value: r.close_value })))
+    }
+  }, [isDualDay, form.r1_close, form.readings, isMultiReading])
 
-  // Auto-fetch previous closing for Day Shift (create mode)
+  const applyPrevClosing = (prev) => {
+    if (isMultiReading && prev?.readings?.length > 0) {
+      setForm(f => ({
+        ...f,
+        readings: f.readings.map(r => {
+          const p = prev.readings.find(pr => pr.reading_type_id === r.reading_type_id)
+          return p?.close_value != null ? { ...r, open_value: String(p.close_value) } : r
+        }),
+      }))
+      setOpeningLocked(true)
+    } else if (!isMultiReading && prev?.r1_close != null) {
+      setForm(f => ({ ...f, r1_open: String(prev.r1_close) }))
+      setOpeningLocked(true)
+    }
+  }
+
+  // Auto-fetch for Dual Day Shift (create mode)
   useEffect(() => {
     if (isDualDay && !existingEntry) {
       const timing = checkEntryTiming(date, 'Day Shift')
       if (!timing.allowed) return
       getPreviousClosing({ machine_id: machine.id, entry_date: date, shift: 'Day Shift' })
-        .then(r => {
-          const prev = r.data.data
-          if (prev?.r1_close != null) {
-            setForm(f => ({ ...f, r1_open: String(prev.r1_close) }))
-            setOpeningLocked(true)
-          }
-        }).catch(() => {})
+        .then(r => applyPrevClosing(r.data.data)).catch(() => {})
     }
   }, [machine.id, date, isDualDay, existingEntry])
 
-  // Single-shift: fetch previous closing when shift selected
   const handleShiftChange = async (newShift) => {
-    setForm(f => ({ ...f, shift: newShift, r1_open: '', r1_close: '' }))
-    setOpeningLocked(false)
-    setErrorMsg('')
+    const resetReadings = isMultiReading
+      ? buildReadings(null)
+      : undefined
+    setForm(f => ({ ...f, shift: newShift, r1_open: '', r1_close: '', ...(isMultiReading ? { readings: resetReadings } : {}) }))
+    setOpeningLocked(false); setErrorMsg('')
     if (!newShift) return
     const timing = checkEntryTiming(date, newShift)
     if (!timing.allowed) { setErrorMsg(timing.message); return }
     try {
-      const r    = await getPreviousClosing({ machine_id: machine.id, entry_date: date, shift: newShift })
-      const prev = r.data.data
-      if (prev?.r1_close != null) {
-        setForm(f => ({ ...f, r1_open: String(prev.r1_close) }))
-        setOpeningLocked(true)
-      }
+      const r = await getPreviousClosing({ machine_id: machine.id, entry_date: date, shift: newShift })
+      applyPrevClosing(r.data.data)
     } catch {}
   }
 
-  const handleCancel = () => {
-    setForm(initForm())
-    setIsEditing(false)
-    setErrorMsg('')
-  }
+  const handleCancel = () => { setForm(initForm()); setIsEditing(false); setErrorMsg('') }
 
   const effectiveShift = shift || form.shift
-  const effectiveOpen  = isDualNight ? (dayR1Close || '') : form.r1_open
+
+  // Single-reading totals / validation
+  const effectiveOpen  = isDualNight ? (dayR1Close || '') : (form.r1_open || '')
   const r1Total        = effectiveOpen !== '' && form.r1_close !== ''
     ? parseFloat(form.r1_close) - parseFloat(effectiveOpen) : null
-  const totalInvalid   = r1Total !== null && r1Total < 0
-  const totalExceeded  = r1Total !== null && r1Total > SHIFT_MAX
+  const totalInvalid   = !isMultiReading && r1Total !== null && r1Total < 0
+  const totalExceeded  = !isMultiReading && r1Total !== null && r1Total > SHIFT_MAX
+
+  // Multi-reading computed values
+  const computedReadings = isMultiReading ? (form.readings || []).map(r => {
+    const effOpen = isDualNight
+      ? (dayReadingsClose?.find(d => d.reading_type_id === r.reading_type_id)?.close_value || '')
+      : r.open_value
+    const total = effOpen !== '' && r.close_value !== ''
+      ? parseFloat(r.close_value) - parseFloat(effOpen) : null
+    return { ...r, effective_open: effOpen, total, invalid: total !== null && total < 0 }
+  }) : []
+  const anyReadingInvalid = computedReadings.some(r => r.invalid)
+  const primaryTotal = computedReadings.find(r => r.unit === 'Hrs')?.total ?? computedReadings[0]?.total ?? null
 
   const timing  = effectiveShift ? checkEntryTiming(date, effectiveShift) : { allowed: true }
   const isLocked = !existingEntry && !isAdmin && (!canAddDpr || !timing.allowed)
@@ -194,8 +273,12 @@ function ShiftRow({
       const t = checkEntryTiming(date, effectiveShift)
       if (!t.allowed) { setErrorMsg(t.message); return }
     }
-    if (totalInvalid)   { setErrorMsg('Closing HMR must be ≥ Opening HMR'); return }
-    if (totalExceeded)  { setErrorMsg('Total exceeds 12-hour shift limit'); return }
+    if (!isMultiReading) {
+      if (totalInvalid)  { setErrorMsg('Closing HMR must be ≥ Opening HMR'); return }
+      if (totalExceeded) { setErrorMsg('Total exceeds 12-hour shift limit'); return }
+    } else if (anyReadingInvalid) {
+      setErrorMsg('One or more readings have closing < opening value'); return
+    }
 
     const breakdown = brkHrsToDecimal(form.breakdown_hrs, form.breakdown_min)
     const payload = {
@@ -203,36 +286,38 @@ function ShiftRow({
       project_id: machine.project_id,
       entry_date: date,
       shift:      effectiveShift,
-      r1_open:    effectiveOpen || null,
-      r1_close:   form.r1_close || null,
-      hsd:        form.hsd || null,
-      breakdown:  breakdown || 0,
-      qty:        form.qty || null,
-      work_done:  form.work_done || null,
-      remarks:    form.remarks || null,
+      ...(isMultiReading ? {
+        readings: computedReadings.map(r => ({
+          reading_type_id: r.reading_type_id,
+          open_value:  r.effective_open || null,
+          close_value: r.close_value    || null,
+        })),
+      } : {
+        r1_open:  effectiveOpen || null,
+        r1_close: form.r1_close || null,
+      }),
+      hsd:       form.hsd || null,
+      breakdown: breakdown || 0,
+      qty:       form.qty || null,
+      work_done: form.work_done || null,
+      remarks:   form.remarks   || null,
     }
 
     setSaving(true); setErrorMsg('')
     try {
       if (existingEntry) await updateEntry(existingEntry.id, payload)
       else               await createEntry(payload)
-      setIsSaved(true)
-      setIsEditing(false)
-      onSaved()
+      setIsSaved(true); setIsEditing(false); onSaved()
     } catch (err) {
-      const msg = err.response?.status === 409
-        ? 'Entry already exists for this shift.'
-        : (err.response?.data?.error || 'Failed to save')
-      setErrorMsg(msg)
+      setErrorMsg(err.response?.status === 409 ? 'Entry already exists for this shift.' : (err.response?.data?.error || 'Failed to save'))
     } finally { setSaving(false) }
   }
 
-  const thCls  = 'border-b border-r border-gray-100 px-1.5 py-1.5 align-middle'
-  const inp    = `border rounded px-1.5 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400`
-  const roInp  = `${inp} bg-gray-50 text-gray-600 border-gray-100 cursor-default select-none`
+  const thCls   = 'border-b border-r border-gray-100 px-1.5 py-1.5 align-middle'
+  const inp     = `border rounded px-1.5 py-1 text-xs w-full focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-400`
+  const roInp   = `${inp} bg-gray-50 text-gray-600 border-gray-100 cursor-default select-none`
   const editInp = (extra = '') => readOnly ? roInp : `${inp} ${extra}`
-
-  const rowBg = readOnly ? 'bg-green-50/40' : isSaved ? 'bg-blue-50/30' : isDualNight ? 'bg-indigo-50/20' : 'bg-white'
+  const rowBg   = readOnly ? 'bg-green-50/40' : isSaved ? 'bg-blue-50/30' : isDualNight ? 'bg-indigo-50/20' : 'bg-white'
 
   return (
     <tr className={`${rowBg} transition-colors`}>
@@ -274,37 +359,70 @@ function ShiftRow({
         )}
       </td>
 
-      {/* Start HMR */}
-      <td className={`${thCls} w-20`}>
-        <input type="number" step="0.01" placeholder="0.00"
-          value={isDualNight ? effectiveOpen : form.r1_open}
-          onChange={isDualNight || readOnly ? undefined : set('r1_open')}
-          readOnly={isDualNight || readOnly || (openingLocked && !isAdmin)}
-          className={
-            isDualNight || readOnly
-              ? roInp
-              : openingLocked && !isAdmin
-                ? `${inp} bg-amber-50 border-amber-200`
-                : `${inp} border-gray-200`
-          }
-        />
-      </td>
-
-      {/* Close HMR */}
-      <td className={`${thCls} w-20`}>
-        <input type="number" step="0.01" placeholder="0.00"
-          value={form.r1_close} onChange={readOnly ? undefined : set('r1_close')}
-          readOnly={readOnly}
-          className={readOnly ? roInp : `${inp} ${totalInvalid ? 'border-red-400 bg-red-50' : totalExceeded ? 'border-amber-400 bg-amber-50' : 'border-gray-200'}`}
-        />
-      </td>
-
-      {/* Total */}
-      <td className={`${thCls} w-14 text-center`}>
-        <span className={`text-xs font-mono font-bold ${totalInvalid ? 'text-red-600' : totalExceeded ? 'text-amber-600' : r1Total !== null && r1Total > 0 ? 'text-blue-700' : 'text-gray-300'}`}>
-          {r1Total !== null ? r1Total.toFixed(2) : '—'}
-        </span>
-      </td>
+      {/* Readings — multi or single */}
+      {isMultiReading ? (
+        <td colSpan={3} className={`${thCls} p-0`} style={{ minWidth: 220 }}>
+          <div className="divide-y divide-gray-50">
+            {computedReadings.map((r, idx) => (
+              <div key={r.reading_type_id} className="flex items-center gap-1 px-1.5 py-1">
+                <span className="text-[9px] font-mono font-bold text-blue-600 w-14 flex-shrink-0 leading-tight">{r.code}</span>
+                <input type="number" step="0.01" placeholder="Open"
+                  value={isDualNight ? r.effective_open : r.open_value}
+                  readOnly={isDualNight || readOnly || (idx === 0 && openingLocked && !isAdmin)}
+                  onChange={!isDualNight && !readOnly ? e => setReadingValue(r.reading_type_id, 'open_value', e.target.value) : undefined}
+                  style={{ width: 68 }}
+                  className={`border rounded px-1 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 ${
+                    isDualNight || readOnly ? 'bg-gray-50 text-gray-500 border-gray-100' :
+                    idx === 0 && openingLocked && !isAdmin ? 'bg-amber-50 border-amber-200' : 'border-gray-200'
+                  }`}
+                />
+                <input type="number" step="0.01" placeholder="Close"
+                  value={r.close_value}
+                  readOnly={readOnly}
+                  onChange={!readOnly ? e => setReadingValue(r.reading_type_id, 'close_value', e.target.value) : undefined}
+                  style={{ width: 68 }}
+                  className={`border rounded px-1 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 ${
+                    readOnly ? 'bg-gray-50 text-gray-500 border-gray-100' :
+                    r.invalid ? 'border-red-400 bg-red-50' : 'border-gray-200'
+                  }`}
+                />
+                <span className={`text-[10px] font-mono font-bold w-10 text-right flex-shrink-0 ${r.invalid ? 'text-red-600' : r.total !== null && r.total > 0 ? 'text-blue-700' : 'text-gray-300'}`}>
+                  {r.total !== null ? r.total.toFixed(1) : '—'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </td>
+      ) : (
+        <>
+          {/* Start HMR */}
+          <td className={`${thCls} w-20`}>
+            <input type="number" step="0.01" placeholder="0.00"
+              value={isDualNight ? effectiveOpen : form.r1_open}
+              onChange={isDualNight || readOnly ? undefined : set('r1_open')}
+              readOnly={isDualNight || readOnly || (openingLocked && !isAdmin)}
+              className={
+                isDualNight || readOnly ? roInp :
+                openingLocked && !isAdmin ? `${inp} bg-amber-50 border-amber-200` : `${inp} border-gray-200`
+              }
+            />
+          </td>
+          {/* Close HMR */}
+          <td className={`${thCls} w-20`}>
+            <input type="number" step="0.01" placeholder="0.00"
+              value={form.r1_close} onChange={readOnly ? undefined : set('r1_close')}
+              readOnly={readOnly}
+              className={readOnly ? roInp : `${inp} ${totalInvalid ? 'border-red-400 bg-red-50' : totalExceeded ? 'border-amber-400 bg-amber-50' : 'border-gray-200'}`}
+            />
+          </td>
+          {/* Total */}
+          <td className={`${thCls} w-14 text-center`}>
+            <span className={`text-xs font-mono font-bold ${totalInvalid ? 'text-red-600' : totalExceeded ? 'text-amber-600' : r1Total !== null && r1Total > 0 ? 'text-blue-700' : 'text-gray-300'}`}>
+              {r1Total !== null ? r1Total.toFixed(2) : '—'}
+            </span>
+          </td>
+        </>
+      )}
 
       {/* HSD */}
       <td className={`${thCls} w-16`}>
@@ -387,13 +505,14 @@ function ShiftRow({
 // ── Machine rows (1 row for single-shift, 2 for dual) ────────────────────────
 
 function MachineRows({ machine, date, entries, isAdmin, canAddDpr, onSaved, onViewMonth }) {
-  const isDual    = machine.shift_type === 'Dual Shift'
-  const dayEntry  = entries.find(e => e.shift === 'Day Shift') || null
-  const nightEntry = entries.find(e => e.shift === 'Night Shift') || null
+  const isDual      = machine.shift_type === 'Dual Shift'
+  const dayEntry    = entries.find(e => e.shift === 'Day Shift') || null
+  const nightEntry  = entries.find(e => e.shift === 'Night Shift') || null
   const singleEntry = !isDual ? (entries[0] || null) : null
 
-  const [dayR1Close, setDayR1Close] = useState(
-    dayEntry?.r1_close != null ? String(dayEntry.r1_close) : ''
+  const [dayR1Close,      setDayR1Close]      = useState(dayEntry?.r1_close != null ? String(dayEntry.r1_close) : '')
+  const [dayReadingsClose, setDayReadingsClose] = useState(
+    dayEntry?.reading_logs?.map(l => ({ reading_type_id: l.reading_type_id, close_value: l.close_value != null ? String(l.close_value) : '' })) || []
   )
 
   if (!isDual) {
@@ -414,6 +533,7 @@ function MachineRows({ machine, date, entries, isAdmin, canAddDpr, onSaved, onVi
         machine={machine} date={date} shift="Day Shift"
         existingEntry={dayEntry}
         onR1CloseChange={setDayR1Close}
+        onReadingsCloseChange={setDayReadingsClose}
         isFirst rowSpan={2}
         onViewMonth={onViewMonth} onSaved={onSaved}
         isAdmin={isAdmin} canAddDpr={canAddDpr}
@@ -422,6 +542,7 @@ function MachineRows({ machine, date, entries, isAdmin, canAddDpr, onSaved, onVi
         machine={machine} date={date} shift="Night Shift"
         existingEntry={nightEntry}
         dayR1Close={dayR1Close}
+        dayReadingsClose={dayReadingsClose}
         onSaved={onSaved}
         isAdmin={isAdmin} canAddDpr={canAddDpr}
       />
@@ -448,8 +569,8 @@ function DprEntryTable({ machines, allEntries, date, isAdmin, canAddDpr, onSaved
             <th className={thCls} style={{ width: 48 }}>Sl#</th>
             <th className={thCls} style={{ width: 144 }}>Equipment</th>
             <th className={thCls} style={{ width: 90 }}>Shift</th>
-            <th className={thCls} style={{ width: 80 }}>Start HMR</th>
-            <th className={thCls} style={{ width: 80 }}>Close HMR</th>
+            <th className={thCls} style={{ width: 80 }}>Open</th>
+            <th className={thCls} style={{ width: 80 }}>Close</th>
             <th className={thCls} style={{ width: 56, textAlign: 'center' }}>Total</th>
             <th className={thCls} style={{ width: 64 }}>HSD (L)</th>
             <th className={thCls} style={{ width: 56 }}>Bkdn Hrs</th>
@@ -482,8 +603,16 @@ function DprEntryTable({ machines, allEntries, date, isAdmin, canAddDpr, onSaved
 // ── Entry Form Modal (used inside MonthGridPanel) ─────────────────────────────
 
 function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, editIds }) {
-  const isEditMode = !!editData
-  const [form,          setForm]          = useState(editData || emptyForm)
+  const isEditMode     = !!editData
+  const isMultiReading = machine?.reading_configs?.length > 0
+  const configs        = machine?.reading_configs || []
+  const isDual         = machine?.shift_type === 'Dual Shift'
+
+  const mkReadings  = () => configs.map(rc => ({ reading_type_id: rc.reading_type_id, code: rc.code, reading_name: rc.reading_name, unit: rc.unit, open_value: '', close_value: '' }))
+  const mkNReadings = () => configs.map(rc => ({ reading_type_id: rc.reading_type_id, close_value: '' }))
+  const mrEmpty     = { shift: '', readings: mkReadings(), n_readings: mkNReadings(), hsd: '', breakdown_hrs: '0', breakdown_min: '0', qty: '', work_done: '', n_hsd: '', n_breakdown_hrs: '0', n_breakdown_min: '0', n_qty: '', n_work_done: '', remarks: '' }
+
+  const [form,          setForm]          = useState(editData || (isMultiReading ? mrEmpty : emptyForm))
   const [loading,       setLoading]       = useState(false)
   const [loadingPrev,   setLoadingPrev]   = useState(false)
   const [toast,         setToast]         = useState(null)
@@ -495,32 +624,32 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
   useEffect(() => {
     setToast(null)
     if (isEditMode) { setForm(editData); setOpeningLocked(false); return }
-    setForm(emptyForm); setOpeningLocked(false)
-    if (!machine) return
-    if (machine.shift_type === 'Dual Shift') {
-      const timing = checkEntryTiming(date, 'Dual Shift')
-      if (!timing.allowed) setToast({ type: 'error', msg: timing.message })
-      setLoadingPrev(true)
-      getPreviousClosing({ machine_id: machine.id, entry_date: date, shift: 'Day Shift' })
-        .then(r => {
-          const prev = r.data.data
-          if (prev) {
-            setForm(f => ({
-              ...f, r1_open: prev.r1_close != null ? String(prev.r1_close) : '',
-              ...(machine.dual_reading && prev.r2_close != null ? { r2_open: String(prev.r2_close) } : {}),
-            }))
-            setOpeningLocked(true)
-          }
-        }).catch(() => {}).finally(() => setLoadingPrev(false))
-    }
+    setForm(isMultiReading ? { ...mrEmpty, readings: mkReadings(), n_readings: mkNReadings() } : emptyForm)
+    setOpeningLocked(false)
+    if (!machine || !isDual) return
+    setLoadingPrev(true)
+    getPreviousClosing({ machine_id: machine.id, entry_date: date, shift: 'Day Shift' })
+      .then(r => {
+        const prev = r.data.data
+        if (!prev) return
+        if (isMultiReading && prev.readings?.length > 0) {
+          setForm(f => ({ ...f, readings: f.readings.map(r => { const p = prev.readings.find(pr => pr.reading_type_id === r.reading_type_id); return p?.close_value != null ? { ...r, open_value: String(p.close_value) } : r }) }))
+        } else if (!isMultiReading && prev.r1_close != null) {
+          setForm(f => ({ ...f, r1_open: String(prev.r1_close), ...(machine.dual_reading && prev.r2_close != null ? { r2_open: String(prev.r2_close) } : {}) }))
+        }
+        setOpeningLocked(true)
+      }).catch(() => {}).finally(() => setLoadingPrev(false))
   }, [machine?.id, date, isEditMode])
 
   const set = k => e => setForm(f => ({ ...f, [k]: e.target.value }))
+  const setReadingOpen   = (rtId, val) => setForm(f => ({ ...f, readings:   f.readings.map(r   => r.reading_type_id === rtId ? { ...r, open_value:  val } : r) }))
+  const setReadingClose  = (rtId, val) => setForm(f => ({ ...f, readings:   f.readings.map(r   => r.reading_type_id === rtId ? { ...r, close_value: val } : r) }))
+  const setNReadingClose = (rtId, val) => setForm(f => ({ ...f, n_readings: f.n_readings.map(r => r.reading_type_id === rtId ? { ...r, close_value: val } : r) }))
 
   const handleShiftChange = async e => {
     if (isEditMode) return
     const newShift = e.target.value
-    setForm(f => ({ ...f, shift: newShift, r1_open: '', r2_open: '' }))
+    setForm(f => ({ ...f, shift: newShift, r1_open: '', r2_open: '', ...(isMultiReading ? { readings: mkReadings() } : {}) }))
     setOpeningLocked(false); setToast(null)
     if (!machine || !newShift) return
     const timing = checkEntryTiming(date, newShift)
@@ -528,35 +657,54 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
     try {
       const r    = await getPreviousClosing({ machine_id: machine.id, entry_date: date, shift: newShift })
       const prev = r.data.data
-      if (prev) {
-        setForm(f => ({
-          ...f, r1_open: prev.r1_close != null ? String(prev.r1_close) : f.r1_open,
-          ...(machine.dual_reading && prev.r2_close != null ? { r2_open: String(prev.r2_close) } : {}),
-        }))
-        setOpeningLocked(true)
+      if (!prev) return
+      if (isMultiReading && prev.readings?.length > 0) {
+        setForm(f => ({ ...f, readings: f.readings.map(r => { const p = prev.readings.find(pr => pr.reading_type_id === r.reading_type_id); return p?.close_value != null ? { ...r, open_value: String(p.close_value) } : r }) }))
+      } else if (!isMultiReading && prev.r1_close != null) {
+        setForm(f => ({ ...f, r1_open: String(prev.r1_close), ...(machine.dual_reading && prev.r2_close != null ? { r2_open: String(prev.r2_close) } : {}) }))
       }
+      setOpeningLocked(true)
     } catch {}
   }
 
-  const isDual = machine?.shift_type === 'Dual Shift'
-  const r1Total  = form.r1_open !== '' && form.r1_close !== '' ? parseFloat(form.r1_close) - parseFloat(form.r1_open) : null
-  const r2Total  = machine?.dual_reading && form.r2_open !== '' && form.r2_close !== '' ? parseFloat(form.r2_close) - parseFloat(form.r2_open) : null
-  const nR1Total = isDual && form.r1_close !== '' && form.n_r1_close !== '' ? parseFloat(form.n_r1_close) - parseFloat(form.r1_close) : null
-  const nR2Total = isDual && machine?.dual_reading && form.r2_close !== '' && form.n_r2_close !== '' ? parseFloat(form.n_r2_close) - parseFloat(form.r2_close) : null
-  const dayWorkHrs   = (r1Total || 0) + (r2Total || 0)
-  const nightWorkHrs = (nR1Total || 0) + (nR2Total || 0)
+  // Multi-reading computed values
+  const computedReadings = isMultiReading ? (form.readings || []).map(r => {
+    const total = r.open_value !== '' && r.close_value !== '' ? parseFloat(r.close_value) - parseFloat(r.open_value) : null
+    return { ...r, total, invalid: total !== null && total < 0, exceeded: total !== null && total > SHIFT_MAX }
+  }) : []
+  const nComputedReadings = isMultiReading && isDual ? (form.n_readings || []).map(nr => {
+    const cfg      = configs.find(c => c.reading_type_id === nr.reading_type_id)
+    const dayClose = (form.readings || []).find(r => r.reading_type_id === nr.reading_type_id)?.close_value || ''
+    const total    = dayClose !== '' && nr.close_value !== '' ? parseFloat(nr.close_value) - parseFloat(dayClose) : null
+    return { ...nr, code: cfg?.code, reading_name: cfg?.reading_name, unit: cfg?.unit, day_close: dayClose, total, invalid: total !== null && total < 0 }
+  }) : []
+
+  // Legacy r1/r2 computed values
+  const r1Total  = !isMultiReading && form.r1_open  !== '' && form.r1_close  !== '' ? parseFloat(form.r1_close)   - parseFloat(form.r1_open)  : null
+  const r2Total  = !isMultiReading && machine?.dual_reading && form.r2_open !== '' && form.r2_close !== '' ? parseFloat(form.r2_close) - parseFloat(form.r2_open) : null
+  const nR1Total = !isMultiReading && isDual && form.r1_close !== '' && form.n_r1_close !== '' ? parseFloat(form.n_r1_close) - parseFloat(form.r1_close) : null
+  const nR2Total = !isMultiReading && isDual && machine?.dual_reading && form.r2_close !== '' && form.n_r2_close !== '' ? parseFloat(form.n_r2_close) - parseFloat(form.r2_close) : null
+
+  const dayWorkHrs = isMultiReading
+    ? (computedReadings.find(r => r.unit === 'Hrs')?.total || computedReadings[0]?.total || 0)
+    : ((r1Total || 0) + (r2Total || 0))
+  const nightWorkHrs = isMultiReading
+    ? (nComputedReadings.find(r => r.unit === 'Hrs')?.total || nComputedReadings[0]?.total || 0)
+    : ((nR1Total || 0) + (nR2Total || 0))
   const workHrs      = isDual ? dayWorkHrs + nightWorkHrs : dayWorkHrs
   const planned      = parseFloat(machine?.planned_hours) || 10
   const utilPct      = planned > 0 ? Math.round((workHrs / planned) * 100) : 0
   const dayFuelRate   = dayWorkHrs > 0 && form.hsd     ? (parseFloat(form.hsd)   / dayWorkHrs).toFixed(2)   : null
   const nightFuelRate = nightWorkHrs > 0 && form.n_hsd ? (parseFloat(form.n_hsd) / nightWorkHrs).toFixed(2) : null
-  const r1Invalid = r1Total !== null && r1Total < 0
-  const r2Invalid = r2Total !== null && r2Total < 0
-  const nR1Invalid = nR1Total !== null && nR1Total < 0
-  const nR2Invalid = nR2Total !== null && nR2Total < 0
-  const dayExceeded   = dayWorkHrs > SHIFT_MAX
-  const nightExceeded = isDual && nightWorkHrs > SHIFT_MAX
-  const anyError      = r1Invalid || r2Invalid || nR1Invalid || nR2Invalid || dayExceeded || nightExceeded
+  const r1Invalid  = !isMultiReading && r1Total  !== null && r1Total  < 0
+  const r2Invalid  = !isMultiReading && r2Total  !== null && r2Total  < 0
+  const nR1Invalid = !isMultiReading && nR1Total !== null && nR1Total < 0
+  const nR2Invalid = !isMultiReading && nR2Total !== null && nR2Total < 0
+  const dayExceeded   = isMultiReading ? computedReadings.some(r => r.exceeded) : dayWorkHrs > SHIFT_MAX
+  const nightExceeded = isDual && (isMultiReading ? nComputedReadings.some(r => r.total !== null && r.total > SHIFT_MAX) : nightWorkHrs > SHIFT_MAX)
+  const anyError      = isMultiReading
+    ? (computedReadings.some(r => r.invalid) || nComputedReadings.some(r => r.invalid) || dayExceeded || nightExceeded)
+    : (r1Invalid || r2Invalid || nR1Invalid || nR2Invalid || dayExceeded || nightExceeded)
 
   const handleSubmit = async e => {
     e.preventDefault()
@@ -564,32 +712,57 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
       const shift = isDual ? 'Dual Shift' : form.shift
       if (shift) { const t = checkEntryTiming(date, shift); if (!t.allowed) { setToast({ type: 'error', msg: t.message }); return } }
     }
-    if (!isDual && !form.shift) { setToast({ type: 'error', msg: 'Please select Day Shift or Night Shift.' }); return }
-    if (r1Invalid)              { setToast({ type: 'error', msg: 'Day Reading 1: Closing must be ≥ Opening.' }); return }
-    if (r2Invalid)              { setToast({ type: 'error', msg: 'Day Reading 2: Closing must be ≥ Opening.' }); return }
-    if (isDual && nR1Invalid)   { setToast({ type: 'error', msg: 'Night Reading 1: Closing must be ≥ Day Shift closing.' }); return }
-    if (isDual && nR2Invalid)   { setToast({ type: 'error', msg: 'Night Reading 2: Closing must be ≥ Day Shift closing.' }); return }
-    if (dayExceeded)            { setToast({ type: 'error', msg: `${isDual ? 'Day Shift' : form.shift}: total hours (${dayWorkHrs.toFixed(2)}) exceed 12-hour limit.` }); return }
-    if (isDual && nightExceeded){ setToast({ type: 'error', msg: `Night Shift: total hours (${nightWorkHrs.toFixed(2)}) exceed 12-hour limit.` }); return }
+    if (isMultiReading) {
+      if (!isDual && !form.shift) { setToast({ type: 'error', msg: 'Please select a shift.' }); return }
+      if (computedReadings.some(r => r.invalid)) { setToast({ type: 'error', msg: 'One or more readings: closing must be ≥ opening.' }); return }
+      if (dayExceeded) { setToast({ type: 'error', msg: `Day readings exceed ${SHIFT_MAX}-hour shift limit.` }); return }
+      if (isDual && nComputedReadings.some(r => r.invalid)) { setToast({ type: 'error', msg: 'Night readings: closing must be ≥ day closing.' }); return }
+      if (isDual && nightExceeded) { setToast({ type: 'error', msg: `Night readings exceed ${SHIFT_MAX}-hour shift limit.` }); return }
+    } else {
+      if (!isDual && !form.shift) { setToast({ type: 'error', msg: 'Please select Day Shift or Night Shift.' }); return }
+      if (r1Invalid)               { setToast({ type: 'error', msg: 'Day Reading 1: Closing must be ≥ Opening.' }); return }
+      if (r2Invalid)               { setToast({ type: 'error', msg: 'Day Reading 2: Closing must be ≥ Opening.' }); return }
+      if (isDual && nR1Invalid)    { setToast({ type: 'error', msg: 'Night Reading 1: Closing must be ≥ Day Shift closing.' }); return }
+      if (isDual && nR2Invalid)    { setToast({ type: 'error', msg: 'Night Reading 2: Closing must be ≥ Day Shift closing.' }); return }
+      if (dayExceeded)             { setToast({ type: 'error', msg: `${isDual ? 'Day Shift' : form.shift}: total hours (${dayWorkHrs.toFixed(2)}) exceed 12-hour limit.` }); return }
+      if (isDual && nightExceeded) { setToast({ type: 'error', msg: `Night Shift: total hours (${nightWorkHrs.toFixed(2)}) exceed 12-hour limit.` }); return }
+    }
 
     const breakdownVal  = brkHrsToDecimal(form.breakdown_hrs,   form.breakdown_min)
     const nBreakdownVal = brkHrsToDecimal(form.n_breakdown_hrs, form.n_breakdown_min)
     setLoading(true); setToast(null)
     try {
-      if (isEditMode) {
-        if (isDual && editIds.length >= 2) {
+      if (isMultiReading) {
+        const dayPayload   = { readings: computedReadings.map(r => ({ reading_type_id: r.reading_type_id, open_value: r.open_value || null, close_value: r.close_value || null })), hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null }
+        const nightPayload = { readings: nComputedReadings.map(r => ({ reading_type_id: r.reading_type_id, open_value: r.day_close || null, close_value: r.close_value || null })), hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.remarks || null }
+        if (isEditMode) {
+          if (isDual && editIds.length >= 2) {
+            await Promise.all([updateEntry(editIds[0], dayPayload), updateEntry(editIds[1], nightPayload)])
+          } else {
+            await updateEntry(editIds[0], { ...dayPayload, shift: form.shift })
+          }
+        } else if (isDual) {
           await Promise.all([
-            updateEntry(editIds[0], { r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null }),
-            updateEntry(editIds[1], { r1_open: form.r1_close || null, r1_close: form.n_r1_close || null, r2_open: form.r2_close || null, r2_close: form.n_r2_close || null, hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.remarks || null }),
+            createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Day Shift',   ...dayPayload }),
+            createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Night Shift', ...nightPayload }),
           ])
         } else {
-          await updateEntry(editIds[0], { shift: form.shift, r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null })
+          await createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: form.shift, ...dayPayload })
         }
       } else {
-        if (isDual) {
+        if (isEditMode) {
+          if (isDual && editIds.length >= 2) {
+            await Promise.all([
+              updateEntry(editIds[0], { r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null }),
+              updateEntry(editIds[1], { r1_open: form.r1_close || null, r1_close: form.n_r1_close || null, r2_open: form.r2_close || null, r2_close: form.n_r2_close || null, hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.remarks || null }),
+            ])
+          } else {
+            await updateEntry(editIds[0], { shift: form.shift, r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null })
+          }
+        } else if (isDual) {
           await Promise.all([
-            createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Day Shift', r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null }),
-            createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Night Shift', r1_open: form.r1_close || null, r1_close: form.n_r1_close || null, r2_open: form.r2_close || null, r2_close: form.n_r2_close || null, hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.remarks || null }),
+            createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Day Shift',   r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null }),
+            createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Night Shift',  r1_open: form.r1_close || null, r1_close: form.n_r1_close || null, r2_open: form.r2_close || null, r2_close: form.n_r2_close || null, hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.remarks || null }),
           ])
         } else {
           await createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: form.shift, r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null })
@@ -649,8 +822,14 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
                 <span className="text-xs font-bold text-green-700 bg-green-50 border border-green-200 px-2 py-1 rounded">DAY SHIFT</span>
                 {dayWorkHrs > 0 && <span className={`text-xs font-medium ${dayExceeded ? 'text-red-600' : 'text-gray-500'}`}>{dayWorkHrs.toFixed(2)} hrs{dayExceeded ? ' — exceeds 12 h limit' : ''}</span>}
               </div>
-              <ReadingRow label={`Reading 1 · ${machine.reading1_basis}`} open={form.r1_open} close={form.r1_close} total={r1Total} basis={machine.reading1_basis} invalid={r1Invalid} onOpen={set('r1_open')} onClose={set('r1_close')} required openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} />
-              {machine.dual_reading && <ReadingRow label={`Reading 2 · ${machine.reading2_basis || 'KM'}`} open={form.r2_open} close={form.r2_close} total={r2Total} basis={machine.reading2_basis || 'KM'} invalid={r2Invalid} onOpen={set('r2_open')} onClose={set('r2_close')} openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} />}
+              {isMultiReading ? (
+                <MultiReadingGrid readings={computedReadings} isNight={false} onChangeOpen={setReadingOpen} onChangeClose={setReadingClose} openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} lbl={lbl} inp={inp} />
+              ) : (
+                <>
+                  <ReadingRow label={`Reading 1 · ${machine.reading1_basis}`} open={form.r1_open} close={form.r1_close} total={r1Total} basis={machine.reading1_basis} invalid={r1Invalid} onOpen={set('r1_open')} onClose={set('r1_close')} required openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} />
+                  {machine.dual_reading && <ReadingRow label={`Reading 2 · ${machine.reading2_basis || 'KM'}`} open={form.r2_open} close={form.r2_close} total={r2Total} basis={machine.reading2_basis || 'KM'} invalid={r2Invalid} onOpen={set('r2_open')} onClose={set('r2_close')} openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} />}
+                </>
+              )}
               <FuelBreakdown hsd={form.hsd} breakdownHrs={form.breakdown_hrs} breakdownMin={form.breakdown_min} qty={form.qty} workDone={form.work_done} fuelRate={dayFuelRate} machine={machine} onHsd={set('hsd')} onBreakdownHrs={set('breakdown_hrs')} onBreakdownMin={set('breakdown_min')} onQty={set('qty')} onWorkDone={set('work_done')} lbl={lbl} inp={inp} />
             </div>
           )}
@@ -660,33 +839,45 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
                 <span className="text-xs font-bold text-indigo-700 bg-indigo-50 border border-indigo-200 px-2 py-1 rounded">NIGHT SHIFT</span>
                 {nightWorkHrs > 0 && <span className={`text-xs font-medium ${nightExceeded ? 'text-red-600' : 'text-gray-500'}`}>{nightWorkHrs.toFixed(2)} hrs{nightExceeded ? ' — exceeds 12 h limit' : ''}</span>}
               </div>
-              <div>
-                <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Reading 1 · {machine.reading1_basis}</p>
-                <div className="grid grid-cols-3 gap-3">
-                  <div><label className={lbl}>Opening <span className="text-gray-400 font-normal">(= Day closing)</span></label><input readOnly value={form.r1_close || ''} className={`${inp} bg-gray-50 text-gray-500 cursor-not-allowed`} placeholder="—" /></div>
-                  <div><label className={lbl}>Closing</label><input type="number" step="0.01" value={form.n_r1_close} onChange={set('n_r1_close')} className={`${inp} ${nR1Invalid ? 'border-red-500' : ''}`} placeholder="0.00" required /></div>
-                  <div><label className={lbl}>Total</label><input readOnly value={nR1Total !== null ? `${nR1Total.toFixed(2)} ${machine.reading1_basis}` : ''} className={`${inp} ${nR1Invalid ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-600'}`} /></div>
-                </div>
-                {nR1Invalid && <p className="text-xs text-red-600 mt-1">Night closing must be ≥ Day closing</p>}
-              </div>
-              {machine.dual_reading && (
-                <div>
-                  <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Reading 2 · {machine.reading2_basis || 'KM'}</p>
-                  <div className="grid grid-cols-3 gap-3">
-                    <div><label className={lbl}>Opening</label><input readOnly value={form.r2_close || ''} className={`${inp} bg-gray-50 text-gray-500 cursor-not-allowed`} placeholder="—" /></div>
-                    <div><label className={lbl}>Closing</label><input type="number" step="0.01" value={form.n_r2_close} onChange={set('n_r2_close')} className={`${inp} ${nR2Invalid ? 'border-red-500' : ''}`} placeholder="0.00" /></div>
-                    <div><label className={lbl}>Total</label><input readOnly value={nR2Total !== null ? nR2Total.toFixed(2) : ''} className={`${inp} ${nR2Invalid ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-600'}`} /></div>
+              {isMultiReading ? (
+                <MultiReadingGrid readings={nComputedReadings} isNight={true} onChangeOpen={null} onChangeClose={setNReadingClose} openLocked={false} isAdmin={isAdmin} lbl={lbl} inp={inp} />
+              ) : (
+                <>
+                  <div>
+                    <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Reading 1 · {machine.reading1_basis}</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      <div><label className={lbl}>Opening <span className="text-gray-400 font-normal">(= Day closing)</span></label><input readOnly value={form.r1_close || ''} className={`${inp} bg-gray-50 text-gray-500 cursor-not-allowed`} placeholder="—" /></div>
+                      <div><label className={lbl}>Closing</label><input type="number" step="0.01" value={form.n_r1_close} onChange={set('n_r1_close')} className={`${inp} ${nR1Invalid ? 'border-red-500' : ''}`} placeholder="0.00" required /></div>
+                      <div><label className={lbl}>Total</label><input readOnly value={nR1Total !== null ? `${nR1Total.toFixed(2)} ${machine.reading1_basis}` : ''} className={`${inp} ${nR1Invalid ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-600'}`} /></div>
+                    </div>
+                    {nR1Invalid && <p className="text-xs text-red-600 mt-1">Night closing must be ≥ Day closing</p>}
                   </div>
-                  {nR2Invalid && <p className="text-xs text-red-600 mt-1">Night closing must be ≥ Day closing</p>}
-                </div>
+                  {machine.dual_reading && (
+                    <div>
+                      <p className="text-xs font-semibold text-gray-400 uppercase mb-2">Reading 2 · {machine.reading2_basis || 'KM'}</p>
+                      <div className="grid grid-cols-3 gap-3">
+                        <div><label className={lbl}>Opening</label><input readOnly value={form.r2_close || ''} className={`${inp} bg-gray-50 text-gray-500 cursor-not-allowed`} placeholder="—" /></div>
+                        <div><label className={lbl}>Closing</label><input type="number" step="0.01" value={form.n_r2_close} onChange={set('n_r2_close')} className={`${inp} ${nR2Invalid ? 'border-red-500' : ''}`} placeholder="0.00" /></div>
+                        <div><label className={lbl}>Total</label><input readOnly value={nR2Total !== null ? nR2Total.toFixed(2) : ''} className={`${inp} ${nR2Invalid ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-600'}`} /></div>
+                      </div>
+                      {nR2Invalid && <p className="text-xs text-red-600 mt-1">Night closing must be ≥ Day closing</p>}
+                    </div>
+                  )}
+                </>
               )}
               <FuelBreakdown hsd={form.n_hsd} breakdownHrs={form.n_breakdown_hrs} breakdownMin={form.n_breakdown_min} qty={form.n_qty} workDone={form.n_work_done} fuelRate={nightFuelRate} machine={machine} onHsd={set('n_hsd')} onBreakdownHrs={set('n_breakdown_hrs')} onBreakdownMin={set('n_breakdown_min')} onQty={set('n_qty')} onWorkDone={set('n_work_done')} lbl={lbl} inp={inp} />
             </div>
           )}
           {!isDual && (
             <>
-              <ReadingRow label={`Reading 1 · ${machine.reading1_basis}`} open={form.r1_open} close={form.r1_close} total={r1Total} basis={machine.reading1_basis} invalid={r1Invalid} onOpen={set('r1_open')} onClose={set('r1_close')} required openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} />
-              {machine.dual_reading && <ReadingRow label={`Reading 2 · ${machine.reading2_basis || 'KM'}`} open={form.r2_open} close={form.r2_close} total={r2Total} basis={machine.reading2_basis || 'KM'} invalid={r2Invalid} onOpen={set('r2_open')} onClose={set('r2_close')} openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} />}
+              {isMultiReading ? (
+                <MultiReadingGrid readings={computedReadings} isNight={false} onChangeOpen={setReadingOpen} onChangeClose={setReadingClose} openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} lbl={lbl} inp={inp} />
+              ) : (
+                <>
+                  <ReadingRow label={`Reading 1 · ${machine.reading1_basis}`} open={form.r1_open} close={form.r1_close} total={r1Total} basis={machine.reading1_basis} invalid={r1Invalid} onOpen={set('r1_open')} onClose={set('r1_close')} required openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} />
+                  {machine.dual_reading && <ReadingRow label={`Reading 2 · ${machine.reading2_basis || 'KM'}`} open={form.r2_open} close={form.r2_close} total={r2Total} basis={machine.reading2_basis || 'KM'} invalid={r2Invalid} onOpen={set('r2_open')} onClose={set('r2_close')} openLocked={!isEditMode && openingLocked} isAdmin={isAdmin} />}
+                </>
+              )}
               <FuelBreakdown hsd={form.hsd} breakdownHrs={form.breakdown_hrs} breakdownMin={form.breakdown_min} qty={form.qty} workDone={form.work_done} fuelRate={dayFuelRate} machine={machine} onHsd={set('hsd')} onBreakdownHrs={set('breakdown_hrs')} onBreakdownMin={set('breakdown_min')} onQty={set('qty')} onWorkDone={set('work_done')} lbl={lbl} inp={inp} />
             </>
           )}
@@ -705,6 +896,56 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
           </div>
         </form>
       </div>
+    </div>
+  )
+}
+
+// ── Multi-Reading Grid (modal) ────────────────────────────────────────────────
+
+function MultiReadingGrid({ readings, isNight, onChangeOpen, onChangeClose, openLocked, isAdmin, lbl, inp }) {
+  return (
+    <div className="space-y-3">
+      {readings.map(r => (
+        <div key={r.reading_type_id} className="border border-gray-100 rounded-lg p-3 bg-gray-50/30">
+          <p className="text-xs font-semibold text-gray-500 uppercase mb-2">
+            <span className="font-mono text-blue-600 mr-2">{r.code}</span>
+            <span className="text-gray-400 font-normal normal-case">{r.reading_name}</span>
+          </p>
+          <div className="grid grid-cols-3 gap-3">
+            <div>
+              <label className={lbl}>
+                Opening
+                {isNight && <span className="text-gray-400 font-normal ml-1">(= Day close)</span>}
+                {!isNight && openLocked && !isAdmin && <Lock size={10} className="inline ml-1 text-amber-500" />}
+              </label>
+              <input type="number" step="0.01" placeholder="0.00"
+                value={isNight ? (r.day_close || '') : r.open_value}
+                readOnly={isNight || (!isAdmin && openLocked)}
+                onChange={(!isNight && (isAdmin || !openLocked)) ? e => onChangeOpen(r.reading_type_id, e.target.value) : undefined}
+                className={`${inp} ${isNight ? 'bg-gray-50 text-gray-500 cursor-not-allowed' : !isAdmin && openLocked ? 'bg-amber-50 border-amber-200' : ''}`}
+              />
+              {!isNight && openLocked && !isAdmin && <p className="text-[10px] text-amber-600 mt-0.5">Carried from previous shift</p>}
+              {!isNight && openLocked && isAdmin && <p className="text-[10px] text-blue-600 mt-0.5">Admin: editable</p>}
+            </div>
+            <div>
+              <label className={lbl}>Closing</label>
+              <input type="number" step="0.01" placeholder="0.00"
+                value={r.close_value}
+                onChange={e => onChangeClose(r.reading_type_id, e.target.value)}
+                className={`${inp} ${r.invalid ? 'border-red-500' : ''}`}
+              />
+            </div>
+            <div>
+              <label className={lbl}>Total</label>
+              <input readOnly
+                value={r.total !== null ? `${r.total.toFixed(2)} ${r.unit}` : ''}
+                className={`${inp} ${r.invalid ? 'bg-red-50 text-red-600' : 'bg-gray-50 text-gray-600'}`}
+              />
+            </div>
+          </div>
+          {r.invalid && <p className="text-xs text-red-600 mt-1">Closing must be ≥ Opening</p>}
+        </div>
+      ))}
     </div>
   )
 }

@@ -20,6 +20,9 @@ router.use('/designations',    require('./designations'));
 router.use('/hire',            require('./hireWorkOrders'));
 router.use('/gst',             require('./gst'));
 router.use('/kala',            require('./kala'));
-router.use('/compliance',      require('./compliance'));
+router.use('/compliance',           require('./compliance'));
+router.use('/reading-types',        require('./readingTypes'));
+router.use('/reading-mappings',     require('./readingMappings'));
+router.use('/machine-reading-configs', require('./machineReadingConfigs'));
 
 module.exports = router;

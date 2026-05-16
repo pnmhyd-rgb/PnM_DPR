@@ -1,8 +1,22 @@
 const db = require('../config/db');
-// v2 — bulk upsert
-const FULL_FIELDS = `
-  m.*, p.code AS project_code, p.name AS project_name
-`;
+
+// Auto-create machine_reading_configs from equipment_reading_mappings for a given machine + eq_type
+async function autoCreateReadingConfigs(machineId, eqType) {
+  const mappings = await db.query(
+    `SELECT erm.reading_type_id, erm.display_order
+     FROM equipment_reading_mappings erm
+     WHERE LOWER(erm.equipment_type_name) = LOWER($1)
+     ORDER BY erm.display_order`,
+    [eqType]
+  );
+  for (const m of mappings.rows) {
+    await db.query(
+      `INSERT INTO machine_reading_configs (machine_id, reading_type_id, is_active, display_order)
+       VALUES ($1, $2, true, $3) ON CONFLICT DO NOTHING`,
+      [machineId, m.reading_type_id, m.display_order]
+    );
+  }
+}
 
 const getAll = async (req, res) => {
   try {
@@ -10,7 +24,25 @@ const getAll = async (req, res) => {
     const { include_inactive } = req.query;
     // include_inactive=true → show ONLY deactivated machines; default → only active
     const activeFilter = include_inactive === 'true' ? 'false' : 'true';
-    let query = `SELECT ${FULL_FIELDS} FROM machines m JOIN projects p ON m.project_id = p.id WHERE m.active = ${activeFilter}`;
+    let query = `
+      SELECT m.*, p.code AS project_code, p.name AS project_name,
+        COALESCE(
+          (SELECT JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'id', mrc.id,
+              'reading_type_id', rt.id,
+              'code', rt.code,
+              'reading_name', rt.name,
+              'unit', rt.unit,
+              'display_order', mrc.display_order,
+              'is_active', mrc.is_active
+            ) ORDER BY mrc.display_order
+          ) FROM machine_reading_configs mrc
+            JOIN reading_types rt ON rt.id = mrc.reading_type_id
+          WHERE mrc.machine_id = m.id AND mrc.is_active = true),
+          '[]'::json
+        ) AS reading_configs
+      FROM machines m JOIN projects p ON m.project_id = p.id WHERE m.active = ${activeFilter}`;
     const params = [];
 
     if (project_id) { params.push(project_id); query += ` AND m.project_id = $${params.length}`; }
@@ -88,11 +120,11 @@ const create = async (req, res) => {
 
     // Auto-save vendor to vendor history
     if (ownership === 'Hire' && vendor?.trim()) {
-      await db.query(
-        'INSERT INTO vendors (name) VALUES ($1) ON CONFLICT DO NOTHING',
-        [vendor.trim()]
-      );
+      await db.query('INSERT INTO vendors (name) VALUES ($1) ON CONFLICT DO NOTHING', [vendor.trim()]);
     }
+
+    // Auto-create reading configs from equipment mapping
+    await autoCreateReadingConfigs(result.rows[0].id, eq_type.trim());
 
     res.status(201).json({ data: result.rows[0] });
   } catch (err) {
@@ -209,6 +241,13 @@ const bulkCreate = async (req, res) => {
         );
         if (row.ownership === 'Hire' && row.vendor?.trim()) {
           await db.query('INSERT INTO vendors (name) VALUES ($1) ON CONFLICT DO NOTHING', [row.vendor.trim()]);
+        }
+        // Auto-create reading configs for new or reactivated machines
+        if (isNew || wasInactive) {
+          await autoCreateReadingConfigs(
+            (await db.query('SELECT id FROM machines WHERE project_id = $1 AND slno = $2', [project_id, slnoTrimmed])).rows[0]?.id,
+            row.eq_type?.trim()
+          );
         }
         results.push({ row: i + 1, slno: slnoTrimmed, status: isNew ? 'created' : wasInactive ? 'reactivated' : 'updated' });
       } catch (err) {

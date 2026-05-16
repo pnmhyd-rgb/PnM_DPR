@@ -18,6 +18,8 @@ import Machines from './pages/admin/Machines'
 import AdminEntries from './pages/admin/Entries'
 import Users from './pages/admin/Users'
 import EquipmentTypes from './pages/admin/EquipmentTypes'
+import ReadingMaster from './pages/admin/ReadingMaster'
+import ReadingMappings from './pages/admin/ReadingMappings'
 import OwnMeasurable from './pages/asset-register/OwnMeasurable'
 import OwnNonMeasurable from './pages/asset-register/OwnNonMeasurable'
 import HireAssets from './pages/asset-register/HireAssets'
@@ -68,7 +70,9 @@ export default function App() {
               <Route path="machines"        element={<Machines />} />
               <Route path="entries"         element={<AdminEntries />} />
               <Route path="users"           element={<Users />} />
-              <Route path="equipment-types" element={<EquipmentTypes />} />
+              <Route path="equipment-types"  element={<EquipmentTypes />} />
+              <Route path="reading-master"   element={<ReadingMaster />} />
+              <Route path="reading-mappings" element={<ReadingMappings />} />
             </Route>
           </Route>
         </Routes>

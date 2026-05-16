@@ -143,3 +143,22 @@ export const getMachineCompliance    = (machineId)   => client.get(`/compliance/
 export const getComplianceAttachment = (id)          => client.get(`/compliance/${id}/attachment`, { responseType: 'blob' })
 export const batchUpsertCompliance   = (data)        => client.post('/compliance/batch', data)
 export const deleteCompliance        = (id)          => client.delete(`/compliance/${id}`)
+
+// Reading Master
+export const getReadingTypes        = ()             => client.get('/reading-types')
+export const createReadingType      = (data)         => client.post('/reading-types', data)
+export const updateReadingType      = (id, data)     => client.put(`/reading-types/${id}`, data)
+export const deleteReadingType      = (id)           => client.delete(`/reading-types/${id}`)
+
+// Reading Mappings
+export const getReadingMappings       = (params)     => client.get('/reading-mappings', { params })
+export const getReadingMappingsGrouped = ()          => client.get('/reading-mappings/grouped')
+export const createReadingMapping     = (data)       => client.post('/reading-mappings', data)
+export const updateReadingMapping     = (id, data)   => client.put(`/reading-mappings/${id}`, data)
+export const deleteReadingMapping     = (id)         => client.delete(`/reading-mappings/${id}`)
+export const bulkReplaceReadingMappings = (data)     => client.put('/reading-mappings/bulk-replace', data)
+
+// Machine Reading Configs
+export const getMachineReadingConfigs  = (machineId)  => client.get(`/machine-reading-configs/${machineId}`)
+export const setMachineReadingConfigs  = (machineId, data) => client.put(`/machine-reading-configs/${machineId}/set`, data)
+export const toggleMachineReadingConfig = (id, data)  => client.patch(`/machine-reading-configs/${id}/toggle`, data)

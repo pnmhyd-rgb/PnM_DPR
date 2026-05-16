@@ -32,6 +32,10 @@ const migrations = [
   '026_dpr_entry_status.sql',
   '027_compliance_attachment_key.sql',
   '028_drop_attachment_data.sql',
+  '029_reading_types.sql',
+  '030_equipment_reading_mappings.sql',
+  '031_machine_reading_configs.sql',
+  '032_dpr_reading_logs.sql',
 ];
 
 async function runMigrations() {

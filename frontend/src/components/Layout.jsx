@@ -28,8 +28,10 @@ const ADMIN_GENERAL_NAV = [
 ]
 
 const ADMIN_ASSET_NAV = [
-  { label: 'Machines',        href: '/admin/machines' },
-  { label: 'Equipment Types', href: '/admin/equipment-types' },
+  { label: 'Asset Master',      href: '/admin/machines' },
+  { label: 'Asset Category',    href: '/admin/equipment-types' },
+  { label: 'Reading Master',    href: '/admin/reading-master' },
+  { label: 'Reading Mappings',  href: '/admin/reading-mappings' },
 ]
 
 const HR_NAV = [
