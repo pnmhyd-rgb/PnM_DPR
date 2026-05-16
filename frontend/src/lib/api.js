@@ -148,7 +148,7 @@ export const deleteCompliance        = (id)          => client.delete(`/complian
 export const getReadingTypes        = ()             => client.get('/reading-types')
 export const createReadingType      = (data)         => client.post('/reading-types', data)
 export const updateReadingType      = (id, data)     => client.put(`/reading-types/${id}`, data)
-export const deleteReadingType      = (id)           => client.delete(`/reading-types/${id}`)
+export const deleteReadingType      = (id, force)    => client.delete(`/reading-types/${id}${force ? '?force=true' : ''}`)
 
 // Reading Mappings
 export const getReadingMappings       = (params)     => client.get('/reading-mappings', { params })

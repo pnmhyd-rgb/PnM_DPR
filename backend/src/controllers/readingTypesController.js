@@ -63,10 +63,20 @@ const update = async (req, res) => {
 const remove = async (req, res) => {
   try {
     const { id } = req.params;
-    const usage = await db.query('SELECT COUNT(*)::int AS cnt FROM equipment_reading_mappings WHERE reading_type_id = $1', [id]);
-    if (usage.rows[0].cnt > 0) {
-      return res.status(409).json({ error: `Reading type is used in ${usage.rows[0].cnt} equipment mapping(s). Remove mappings first.` });
+    const force = req.query.force === 'true';
+
+    if (force) {
+      // Cascade: remove all dependent records before deleting the type
+      await db.query('DELETE FROM dpr_reading_logs       WHERE reading_type_id = $1', [id]);
+      await db.query('DELETE FROM machine_reading_configs WHERE reading_type_id = $1', [id]);
+      await db.query('DELETE FROM equipment_reading_mappings WHERE reading_type_id = $1', [id]);
+    } else {
+      const usage = await db.query('SELECT COUNT(*)::int AS cnt FROM equipment_reading_mappings WHERE reading_type_id = $1', [id]);
+      if (usage.rows[0].cnt > 0) {
+        return res.status(409).json({ error: `Reading type is used in ${usage.rows[0].cnt} equipment mapping(s). Use force delete to remove it along with all mappings.` });
+      }
     }
+
     const result = await db.query('DELETE FROM reading_types WHERE id = $1 RETURNING id', [id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Reading type not found' });
     res.json({ message: 'Reading type deleted' });
