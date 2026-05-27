@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Plus, Trash2, X, Check, Link2, ChevronDown, ChevronRight, Search } from 'lucide-react'
+import { Plus, Trash2, X, Check, Link2, ChevronDown, ChevronRight, Search, RefreshCw, AlertTriangle } from 'lucide-react'
 import {
   getReadingMappingsGrouped, getReadingTypes, getEquipmentTypes,
   createReadingMapping, deleteReadingMapping, bulkReplaceReadingMappings,
+  propagateMachineReadingConfigs,
 } from '../../lib/api'
 
 const UNIT_COLOR = { Hrs: 'bg-blue-100 text-blue-700', Km: 'bg-green-100 text-green-700' }
@@ -20,6 +21,11 @@ export default function ReadingMappings() {
   const [editReadings, setEditReadings] = useState([]) // [{reading_type_id, display_order, code, reading_name, unit}]
   const [saving,    setSaving]    = useState(false)
   const [error,     setError]     = useState('')
+
+  // Propagate banner — shown after a mapping is saved
+  const [propagateFor,     setPropagateFor]     = useState(null)  // equipment_type_name
+  const [propagating,      setPropagating]      = useState(false)
+  const [propagateResult,  setPropagateResult]  = useState(null)  // { updated } | { error }
 
   const load = async () => {
     setLoading(true)
@@ -101,9 +107,23 @@ export default function ReadingMappings() {
       })
       closeEdit()
       await load()
+      // Prompt admin to propagate to existing machines
+      setPropagateFor(name)
+      setPropagateResult(null)
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to save')
     } finally { setSaving(false) }
+  }
+
+  const handlePropagate = async () => {
+    if (!propagateFor) return
+    setPropagating(true); setPropagateResult(null)
+    try {
+      const res = await propagateMachineReadingConfigs(propagateFor)
+      setPropagateResult({ updated: res.data.data.updated })
+    } catch (err) {
+      setPropagateResult({ error: err.response?.data?.error || 'Propagation failed' })
+    } finally { setPropagating(false) }
   }
 
   const filtered = grouped.filter(g =>
@@ -212,6 +232,53 @@ export default function ReadingMappings() {
               className="flex items-center gap-2 border border-gray-300 text-gray-600 hover:bg-gray-50 text-sm px-4 py-2 rounded-lg transition-colors">
               <X size={14} /> Cancel
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Propagate banner — appears after mapping is saved */}
+      {propagateFor && !editEq && (
+        <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
+          <AlertTriangle size={16} className="text-amber-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            {!propagateResult ? (
+              <>
+                <p className="text-sm font-semibold text-amber-800">
+                  Mapping saved for <span className="italic">{propagateFor}</span>
+                </p>
+                <p className="text-xs text-amber-700 mt-0.5">
+                  Existing machines still have the old reading configs. Apply new mapping to all active machines of this type?
+                </p>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    onClick={handlePropagate}
+                    disabled={propagating}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white text-xs font-semibold rounded-lg transition-colors"
+                  >
+                    <RefreshCw size={12} className={propagating ? 'animate-spin' : ''} />
+                    {propagating ? 'Applying…' : 'Yes, Apply to All Machines'}
+                  </button>
+                  <button
+                    onClick={() => setPropagateFor(null)}
+                    className="px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-100 rounded-lg transition-colors"
+                  >
+                    Skip
+                  </button>
+                </div>
+              </>
+            ) : propagateResult.error ? (
+              <p className="text-sm text-red-700 font-medium">{propagateResult.error}</p>
+            ) : (
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-green-800">
+                  Done — reading configs updated for {propagateResult.updated} machine{propagateResult.updated !== 1 ? 's' : ''}.
+                  {propagateResult.updated === 0 && ' (No active machines of this type found.)'}
+                </p>
+                <button onClick={() => setPropagateFor(null)} className="text-gray-400 hover:text-gray-600 flex-shrink-0">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

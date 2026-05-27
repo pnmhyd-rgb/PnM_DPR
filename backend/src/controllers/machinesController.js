@@ -25,23 +25,7 @@ const getAll = async (req, res) => {
     // include_inactive=true → show ONLY deactivated machines; default → only active
     const activeFilter = include_inactive === 'true' ? 'false' : 'true';
     let query = `
-      SELECT m.*, p.code AS project_code, p.name AS project_name,
-        COALESCE(
-          (SELECT JSON_AGG(
-            JSON_BUILD_OBJECT(
-              'id', mrc.id,
-              'reading_type_id', rt.id,
-              'code', rt.code,
-              'reading_name', rt.name,
-              'unit', rt.unit,
-              'display_order', mrc.display_order,
-              'is_active', mrc.is_active
-            ) ORDER BY mrc.display_order
-          ) FROM machine_reading_configs mrc
-            JOIN reading_types rt ON rt.id = mrc.reading_type_id
-          WHERE mrc.machine_id = m.id AND mrc.is_active = true),
-          '[]'::json
-        ) AS reading_configs
+      SELECT m.*, p.code AS project_code, p.name AS project_name
       FROM machines m JOIN projects p ON m.project_id = p.id WHERE m.active = ${activeFilter}`;
     const params = [];
 
@@ -439,4 +423,44 @@ const fleetSummary = async (req, res) => {
   }
 };
 
-module.exports = { getAll, create, update, remove, transfer, hardDelete, bulkCreate, fleetSummary };
+// Bulk-propagate: reset reading configs for ALL active machines of a given equipment type
+const propagateReadingConfigs = async (req, res) => {
+  try {
+    const { equipment_type_name } = req.body;
+    if (!equipment_type_name) return res.status(400).json({ error: 'equipment_type_name is required' });
+    const machines = await db.query(
+      'SELECT id FROM machines WHERE LOWER(eq_type) = LOWER($1) AND active = true',
+      [equipment_type_name]
+    );
+    for (const m of machines.rows) {
+      await db.query('DELETE FROM machine_reading_configs WHERE machine_id = $1', [m.id]);
+      await autoCreateReadingConfigs(m.id, equipment_type_name);
+    }
+    res.json({ data: { updated: machines.rows.length, equipment_type_name } });
+  } catch (err) {
+    console.error('Propagate reading configs error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const resetReadingConfigs = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const machine = await db.query('SELECT eq_type FROM machines WHERE id = $1', [id]);
+    if (machine.rows.length === 0) return res.status(404).json({ error: 'Machine not found' });
+    await db.query('DELETE FROM machine_reading_configs WHERE machine_id = $1', [id]);
+    await autoCreateReadingConfigs(id, machine.rows[0].eq_type);
+    const result = await db.query(`
+      SELECT mrc.*, rt.code, rt.name AS reading_name, rt.unit
+      FROM machine_reading_configs mrc
+      JOIN reading_types rt ON rt.id = mrc.reading_type_id
+      WHERE mrc.machine_id = $1 ORDER BY mrc.display_order
+    `, [id]);
+    res.json({ data: result.rows });
+  } catch (err) {
+    console.error('Reset reading configs error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+module.exports = { getAll, create, update, remove, transfer, hardDelete, bulkCreate, fleetSummary, resetReadingConfigs, propagateReadingConfigs };

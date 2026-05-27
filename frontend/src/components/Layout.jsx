@@ -30,6 +30,8 @@ const ADMIN_GENERAL_NAV = [
 const ADMIN_ASSET_NAV = [
   { label: 'Asset Master',      href: '/admin/machines' },
   { label: 'Asset Category',    href: '/admin/equipment-types' },
+  { label: 'UOM Types',         href: '/admin/uom-types' },
+  { label: 'Vendor Master',     href: '/admin/vendors' },
   { label: 'Reading Master',    href: '/admin/reading-master' },
   { label: 'Reading Mappings',  href: '/admin/reading-mappings' },
 ]
@@ -343,7 +345,7 @@ export default function Layout({ children }) {
   const { user, isAdmin } = useAuth()
   const [mobileOpen, setMobileOpen]           = useState(false)
   const [adminOpen, setAdminOpen]             = useState(false)
-  const [assetSettingsOpen, setAssetSettingsOpen] = useState(false)
+  const [assetMatrixOpen, setAssetMatrixOpen] = useState(false)
   const [hrOpen, setHrOpen]                   = useState(false)
   const [inventoryOpen, setInventoryOpen]     = useState(false)
   const [reportsOpen, setReportsOpen]         = useState(false)
@@ -451,6 +453,9 @@ export default function Layout({ children }) {
               <NavLink to="/hire/vendors" className={subLinkCls} onClick={() => setMobileOpen(false)}>
                 Vendors
               </NavLink>
+              <NavLink to="/hire/billing" className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                Billing
+              </NavLink>
             </div>
           )}
         </div>
@@ -519,6 +524,28 @@ export default function Layout({ children }) {
           )}
         </div>
 
+        {/* Asset Matrix — standalone nav item (admin only) */}
+        {isAdmin && (
+          <div className="pt-2">
+            <button
+              onClick={() => setAssetMatrixOpen(v => !v)}
+              className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-700/50 transition-colors"
+            >
+              <span className="flex items-center gap-3"><Layers size={17} />Asset Matrix</span>
+              {assetMatrixOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            </button>
+            {assetMatrixOpen && (
+              <div className="ml-7 mt-1 space-y-0.5">
+                {ADMIN_ASSET_NAV.map(({ label, href }) => (
+                  <NavLink key={href} to={href} className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                    {label}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {isAdmin && (
           <div className="pt-2">
             <button
@@ -531,32 +558,11 @@ export default function Layout({ children }) {
 
             {adminOpen && (
               <div className="ml-7 mt-1 space-y-0.5">
-                {/* General admin links */}
                 {ADMIN_GENERAL_NAV.map(({ label, href }) => (
                   <NavLink key={href} to={href} className={subLinkCls} onClick={() => setMobileOpen(false)}>
                     {label}
                   </NavLink>
                 ))}
-
-                {/* Asset Settings sub-group */}
-                <div className="pt-0.5">
-                  <button
-                    onClick={() => setAssetSettingsOpen(v => !v)}
-                    className="w-full flex items-center justify-between px-3 py-1.5 rounded text-sm text-blue-200 hover:bg-blue-700/50 transition-colors"
-                  >
-                    <span className="flex items-center gap-2"><Layers size={13} />Asset Settings</span>
-                    {assetSettingsOpen ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
-                  </button>
-                  {assetSettingsOpen && (
-                    <div className="ml-4 mt-0.5 space-y-0.5">
-                      {ADMIN_ASSET_NAV.map(({ label, href }) => (
-                        <NavLink key={href} to={href} className={subLinkCls} onClick={() => setMobileOpen(false)}>
-                          {label}
-                        </NavLink>
-                      ))}
-                    </div>
-                  )}
-                </div>
               </div>
             )}
           </div>

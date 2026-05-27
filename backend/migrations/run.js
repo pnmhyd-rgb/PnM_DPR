@@ -36,6 +36,7 @@ const migrations = [
   '030_equipment_reading_mappings.sql',
   '031_machine_reading_configs.sql',
   '032_dpr_reading_logs.sql',
+  '033_hire_billing.sql',
 ];
 
 async function runMigrations() {

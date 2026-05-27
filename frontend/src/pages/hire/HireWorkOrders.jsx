@@ -9,8 +9,9 @@ import {
 import GSTVerifyField from '../../components/GSTVerifyField'
 import {
   Plus, Edit2, Trash2, X, Search, Eye, CheckCircle, XCircle,
-  FileText, Download, RefreshCw, ChevronDown, AlertCircle, Loader2,
+  FileText, Download, RefreshCw, ChevronDown, ChevronRight, AlertCircle, Loader2,
   Building2, FileCheck, RotateCcw, ShieldCheck, ShieldX, BadgeCheck,
+  ToggleLeft, ToggleRight,
 } from 'lucide-react'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
@@ -380,6 +381,80 @@ function ItemRow({ item, machines, onChange, onRemove }) {
 
 // ── CREATE / EDIT WO MODAL ────────────────────────────────────────────────────
 
+const DEFAULT_BILLING_RULES = {
+  overtime_applicable:      false,
+  overtime_threshold_hrs:   8,
+  overtime_rate_multiplier: 1.5,
+  sunday_applicable:        false,
+  sunday_rate_multiplier:   2.0,
+  holiday_applicable:       false,
+  holiday_rate_multiplier:  2.0,
+  prorata_applicable:       true,
+}
+
+function BillingRulesSection({ rules, onChange }) {
+  const [open, setOpen] = useState(false)
+  const set = (k, v) => onChange({ ...rules, [k]: v })
+  const Toggle = ({ k, label }) => (
+    <button type="button" onClick={() => set(k, !rules[k])}
+      className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border transition-all
+        ${rules[k] ? 'bg-blue-50 border-blue-300 text-blue-700' : 'border-gray-200 text-gray-500 bg-gray-50'}`}>
+      {rules[k] ? <ToggleRight size={15} className="text-blue-600"/> : <ToggleLeft size={15} className="text-gray-400"/>}
+      {label}
+    </button>
+  )
+  return (
+    <div className="border border-gray-200 rounded-xl overflow-hidden">
+      <button type="button" onClick={() => setOpen(v => !v)}
+        className="w-full flex items-center justify-between px-4 py-3 bg-gray-50 hover:bg-gray-100 transition-colors text-sm font-semibold text-gray-700">
+        <span>Billing Rules <span className="text-xs font-normal text-gray-400">(OT, Sunday, Pro-rata)</span></span>
+        {open ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+      </button>
+      {open && (
+        <div className="p-4 space-y-4">
+          <div className="space-y-2">
+            <Toggle k="overtime_applicable" label="Overtime Applicable"/>
+            {rules.overtime_applicable && (
+              <div className="ml-4 grid grid-cols-2 gap-3">
+                <div><label className={lbl}>Threshold Hrs/Day</label>
+                  <input type="number" step="0.5" className={inp} value={rules.overtime_threshold_hrs}
+                    onChange={e => set('overtime_threshold_hrs', parseFloat(e.target.value)||8)}/></div>
+                <div><label className={lbl}>OT Rate Multiplier</label>
+                  <input type="number" step="0.25" className={inp} value={rules.overtime_rate_multiplier}
+                    onChange={e => set('overtime_rate_multiplier', parseFloat(e.target.value)||1.5)}/></div>
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Toggle k="sunday_applicable" label="Sunday Premium"/>
+            {rules.sunday_applicable && (
+              <div className="ml-4 grid grid-cols-2 gap-3">
+                <div><label className={lbl}>Sunday Rate Multiplier</label>
+                  <input type="number" step="0.25" className={inp} value={rules.sunday_rate_multiplier}
+                    onChange={e => set('sunday_rate_multiplier', parseFloat(e.target.value)||2.0)}/></div>
+              </div>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Toggle k="holiday_applicable" label="Holiday Premium"/>
+            {rules.holiday_applicable && (
+              <div className="ml-4 grid grid-cols-2 gap-3">
+                <div><label className={lbl}>Holiday Rate Multiplier</label>
+                  <input type="number" step="0.25" className={inp} value={rules.holiday_rate_multiplier}
+                    onChange={e => set('holiday_rate_multiplier', parseFloat(e.target.value)||2.0)}/></div>
+              </div>
+            )}
+          </div>
+          <Toggle k="prorata_applicable" label="Pro-rata (partial month billing)"/>
+          {rules.prorata_applicable && (
+            <p className="ml-4 text-xs text-gray-400">Bill calculated as: Rate × (working days ÷ calendar days in period)</p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 const blankItem = () => ({ machine_id: null, equipment_desc: '', quantity: 1, unit: 'No.', rate: '', rate_type: 'per_month', amount: '0' })
 
 const PRESET_TERMS = [
@@ -432,6 +507,11 @@ function WOModal({ wo, onClose, onSaved }) {
   const [machines, setMachines] = useState([])
   const [saving,   setSaving]   = useState(false)
   const [error,    setError]    = useState('')
+  const [billingRules, setBillingRules] = useState(
+    wo?.billing_rules
+      ? (typeof wo.billing_rules === 'string' ? JSON.parse(wo.billing_rules) : wo.billing_rules)
+      : { ...DEFAULT_BILLING_RULES }
+  )
 
   const toggleTerm = id => setSelectedTermIds(prev => {
     const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
@@ -481,7 +561,7 @@ function WOModal({ wo, onClose, onSaved }) {
     if (items.every(i => !i.equipment_desc.trim())) { setError('Add at least one equipment item'); return }
     setSaving(true); setError('')
     try {
-      const payload = { ...form, terms_conditions: buildTerms(), items: items.filter(i => i.equipment_desc.trim()) }
+      const payload = { ...form, terms_conditions: buildTerms(), billing_rules: billingRules, items: items.filter(i => i.equipment_desc.trim()) }
       if (wo?.id) await updateHireWorkOrder(wo.id, payload)
       else        await createHireWorkOrder(payload)
       onSaved()
@@ -527,6 +607,12 @@ function WOModal({ wo, onClose, onSaved }) {
             <div><label className={lbl}>End Date</label><input type="date" className={inp} value={form.end_date} onChange={setF('end_date')} /></div>
             <div><label className={lbl}>Tenure (Months)</label><input type="number" step="0.5" className={inp} value={form.tenure_months} onChange={setF('tenure_months')} placeholder="Auto-calculated" /></div>
           </div>
+        </section>
+
+        {/* Billing Rules */}
+        <section>
+          <p className={`${lbl} mb-3`}>Billing Rules</p>
+          <BillingRulesSection rules={billingRules} onChange={setBillingRules} />
         </section>
 
         {/* Equipment Items */}

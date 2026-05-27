@@ -259,9 +259,12 @@ function ShiftRow({
       : r.open_value
     const total = effOpen !== '' && r.close_value !== ''
       ? parseFloat(r.close_value) - parseFloat(effOpen) : null
-    return { ...r, effective_open: effOpen, total, invalid: total !== null && total < 0 }
+    return { ...r, effective_open: effOpen, total,
+      invalid:  total !== null && total < 0,
+      exceeded: total !== null && r.unit === 'Hrs' && total > SHIFT_MAX }
   }) : []
-  const anyReadingInvalid = computedReadings.some(r => r.invalid)
+  const anyReadingInvalid  = computedReadings.some(r => r.invalid)
+  const anyReadingExceeded = computedReadings.some(r => r.exceeded)
   const primaryTotal = computedReadings.find(r => r.unit === 'Hrs')?.total ?? computedReadings[0]?.total ?? null
 
   const timing  = effectiveShift ? checkEntryTiming(date, effectiveShift) : { allowed: true }
@@ -278,6 +281,8 @@ function ShiftRow({
       if (totalExceeded) { setErrorMsg('Total exceeds 12-hour shift limit'); return }
     } else if (anyReadingInvalid) {
       setErrorMsg('One or more readings have closing < opening value'); return
+    } else if (anyReadingExceeded) {
+      setErrorMsg('Total hours must not exceed 12 hrs per shift'); return
     }
 
     const breakdown = brkHrsToDecimal(form.breakdown_hrs, form.breakdown_min)
@@ -383,10 +388,11 @@ function ShiftRow({
                   style={{ width: 68 }}
                   className={`border rounded px-1 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-300 ${
                     readOnly ? 'bg-gray-50 text-gray-500 border-gray-100' :
-                    r.invalid ? 'border-red-400 bg-red-50' : 'border-gray-200'
+                    r.invalid ? 'border-red-400 bg-red-50' :
+                    r.exceeded ? 'border-amber-400 bg-amber-50' : 'border-gray-200'
                   }`}
                 />
-                <span className={`text-[10px] font-mono font-bold w-10 text-right flex-shrink-0 ${r.invalid ? 'text-red-600' : r.total !== null && r.total > 0 ? 'text-blue-700' : 'text-gray-300'}`}>
+                <span className={`text-[10px] font-mono font-bold w-10 text-right flex-shrink-0 ${r.invalid ? 'text-red-600' : r.exceeded ? 'text-amber-600' : r.total !== null && r.total > 0 ? 'text-blue-700' : 'text-gray-300'}`}>
                   {r.total !== null ? r.total.toFixed(1) : '—'}
                 </span>
               </div>
@@ -670,13 +676,16 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
   // Multi-reading computed values
   const computedReadings = isMultiReading ? (form.readings || []).map(r => {
     const total = r.open_value !== '' && r.close_value !== '' ? parseFloat(r.close_value) - parseFloat(r.open_value) : null
-    return { ...r, total, invalid: total !== null && total < 0, exceeded: total !== null && total > SHIFT_MAX }
+    return { ...r, total, invalid: total !== null && total < 0,
+      exceeded: total !== null && r.unit === 'Hrs' && total > SHIFT_MAX }
   }) : []
   const nComputedReadings = isMultiReading && isDual ? (form.n_readings || []).map(nr => {
     const cfg      = configs.find(c => c.reading_type_id === nr.reading_type_id)
     const dayClose = (form.readings || []).find(r => r.reading_type_id === nr.reading_type_id)?.close_value || ''
     const total    = dayClose !== '' && nr.close_value !== '' ? parseFloat(nr.close_value) - parseFloat(dayClose) : null
-    return { ...nr, code: cfg?.code, reading_name: cfg?.reading_name, unit: cfg?.unit, day_close: dayClose, total, invalid: total !== null && total < 0 }
+    return { ...nr, code: cfg?.code, reading_name: cfg?.reading_name, unit: cfg?.unit, day_close: dayClose, total,
+      invalid:  total !== null && total < 0,
+      exceeded: total !== null && cfg?.unit === 'Hrs' && total > SHIFT_MAX }
   }) : []
 
   // Legacy r1/r2 computed values
@@ -701,7 +710,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
   const nR1Invalid = !isMultiReading && nR1Total !== null && nR1Total < 0
   const nR2Invalid = !isMultiReading && nR2Total !== null && nR2Total < 0
   const dayExceeded   = isMultiReading ? computedReadings.some(r => r.exceeded) : dayWorkHrs > SHIFT_MAX
-  const nightExceeded = isDual && (isMultiReading ? nComputedReadings.some(r => r.total !== null && r.total > SHIFT_MAX) : nightWorkHrs > SHIFT_MAX)
+  const nightExceeded = isDual && (isMultiReading ? nComputedReadings.some(r => r.exceeded) : nightWorkHrs > SHIFT_MAX)
   const anyError      = isMultiReading
     ? (computedReadings.some(r => r.invalid) || nComputedReadings.some(r => r.invalid) || dayExceeded || nightExceeded)
     : (r1Invalid || r2Invalid || nR1Invalid || nR2Invalid || dayExceeded || nightExceeded)

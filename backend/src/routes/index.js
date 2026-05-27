@@ -18,6 +18,7 @@ router.use('/uom',             require('./uom'));
 router.use('/vendors',         require('./vendors'));
 router.use('/designations',    require('./designations'));
 router.use('/hire',            require('./hireWorkOrders'));
+router.use('/hire-billing',    require('./hireBilling'));
 router.use('/gst',             require('./gst'));
 router.use('/kala',            require('./kala'));
 router.use('/compliance',           require('./compliance'));

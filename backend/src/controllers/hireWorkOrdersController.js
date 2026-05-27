@@ -211,7 +211,7 @@ const createWorkOrder = async (req, res) => {
     await client.query('BEGIN');
     const {
       wo_date, indent_number, vendor_offer_no, vendor_id, project_id,
-      start_date, end_date, tenure_months, terms_conditions, items = []
+      start_date, end_date, tenure_months, terms_conditions, billing_rules, items = []
     } = req.body;
 
     if (!wo_date || !vendor_id || !project_id) {
@@ -226,11 +226,13 @@ const createWorkOrder = async (req, res) => {
     const woRes = await client.query(
       `INSERT INTO hire_work_orders
          (wo_number,wo_date,indent_number,vendor_offer_no,vendor_id,project_id,start_date,end_date,
-          tenure_months,total_value,terms_conditions,created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+          tenure_months,total_value,terms_conditions,billing_rules,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [wo_number, wo_date, indent_number||null, vendor_offer_no||null, vendor_id, project_id,
        start_date||null, end_date||null, tenure_months||null,
-       totalValue, terms_conditions||null, req.user.id]
+       totalValue, terms_conditions||null,
+       billing_rules ? JSON.stringify(billing_rules) : null,
+       req.user.id]
     );
     const wo = woRes.rows[0];
 
@@ -271,7 +273,7 @@ const updateWorkOrder = async (req, res) => {
 
     const {
       wo_date, indent_number, vendor_offer_no, vendor_id, project_id,
-      start_date, end_date, tenure_months, terms_conditions, items = []
+      start_date, end_date, tenure_months, terms_conditions, billing_rules, items = []
     } = req.body;
 
     const totalValue = items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
@@ -280,11 +282,13 @@ const updateWorkOrder = async (req, res) => {
       `UPDATE hire_work_orders SET
          wo_date=$1,indent_number=$2,vendor_offer_no=$3,vendor_id=$4,project_id=$5,
          start_date=$6,end_date=$7,tenure_months=$8,
-         total_value=$9,terms_conditions=$10,status='draft',updated_at=NOW()
-       WHERE id=$11`,
+         total_value=$9,terms_conditions=$10,billing_rules=$11,status='draft',updated_at=NOW()
+       WHERE id=$12`,
       [wo_date, indent_number||null, vendor_offer_no||null, vendor_id, project_id,
        start_date||null, end_date||null, tenure_months||null,
-       totalValue, terms_conditions||null, id]
+       totalValue, terms_conditions||null,
+       billing_rules ? JSON.stringify(billing_rules) : null,
+       id]
     );
 
     await client.query('DELETE FROM hire_wo_items WHERE wo_id=$1', [id]);

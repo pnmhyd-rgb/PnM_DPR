@@ -163,6 +163,7 @@ async function parseUploadFile(file) {
 export default function EquipmentTypes() {
   const [types,      setTypes]      = useState([])
   const [search,     setSearch]     = useState('')
+  const [loadError,  setLoadError]  = useState('')
 
   // Single add
   const [name,       setName]       = useState('')
@@ -194,7 +195,12 @@ export default function EquipmentTypes() {
   // Force-delete dialog
   const [forceConfirm, setForceConfirm] = useState(null)
 
-  const load = () => getEquipmentTypes().then(r => { setTypes(r.data.data); setSelected(new Set()) })
+  const load = () => {
+    setLoadError('')
+    getEquipmentTypes()
+      .then(r => { setTypes(r.data.data); setSelected(new Set()) })
+      .catch(err => setLoadError(err.response?.data?.error || err.message || 'Failed to load equipment types'))
+  }
   useEffect(() => { load() }, [])
   useEffect(() => { if (editId && editRef.current) editRef.current.focus() }, [editId])
 
@@ -313,6 +319,12 @@ export default function EquipmentTypes() {
           <List size={14} />{showBulk ? 'Single Add' : 'Bulk Upload'}
         </button>
       </div>
+
+      {loadError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">
+          Failed to load equipment types: {loadError}
+        </div>
+      )}
 
       {/* ── Single add ── */}
       {!showBulk && (

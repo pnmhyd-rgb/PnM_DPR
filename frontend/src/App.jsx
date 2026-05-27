@@ -18,6 +18,8 @@ import Machines from './pages/admin/Machines'
 import AdminEntries from './pages/admin/Entries'
 import Users from './pages/admin/Users'
 import EquipmentTypes from './pages/admin/EquipmentTypes'
+import UomTypes from './pages/admin/UomTypes'
+import Vendors from './pages/admin/Vendors'
 import ReadingMaster from './pages/admin/ReadingMaster'
 import ReadingMappings from './pages/admin/ReadingMappings'
 import OwnMeasurable from './pages/asset-register/OwnMeasurable'
@@ -25,6 +27,7 @@ import OwnNonMeasurable from './pages/asset-register/OwnNonMeasurable'
 import HireAssets from './pages/asset-register/HireAssets'
 import MyDashboard from './pages/MyDashboard'
 import HireWorkOrders from './pages/hire/HireWorkOrders'
+import HireBilling from './pages/hire/HireBilling'
 import Compliance from './pages/compliance/Compliance'
 
 function ProtectedLayout() {
@@ -56,6 +59,7 @@ export default function App() {
             <Route path="compliance"  element={<Compliance />} />
             <Route path="hire/work-orders" element={<HireWorkOrders defaultTab="wo" />} />
             <Route path="hire/vendors"     element={<HireWorkOrders defaultTab="vendors" />} />
+            <Route path="hire/billing"     element={<HireBilling />} />
             <Route path="service"     element={<ServiceEntries />} />
             <Route path="hr/operators"           element={<Operators />} />
             <Route path="hr/attendance"          element={<Attendance />} />
@@ -71,6 +75,8 @@ export default function App() {
               <Route path="entries"         element={<AdminEntries />} />
               <Route path="users"           element={<Users />} />
               <Route path="equipment-types"  element={<EquipmentTypes />} />
+              <Route path="uom-types"        element={<UomTypes />} />
+              <Route path="vendors"          element={<Vendors />} />
               <Route path="reading-master"   element={<ReadingMaster />} />
               <Route path="reading-mappings" element={<ReadingMappings />} />
             </Route>

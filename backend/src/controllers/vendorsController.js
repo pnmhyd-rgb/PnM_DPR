@@ -25,4 +25,15 @@ const upsert = async (req, res) => {
   }
 };
 
-module.exports = { getAll, upsert };
+const remove = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    await db.query('DELETE FROM vendors WHERE id = $1', [req.params.id]);
+    res.json({ message: 'Deleted' });
+  } catch (err) {
+    console.error('Delete vendor error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+module.exports = { getAll, upsert, remove };

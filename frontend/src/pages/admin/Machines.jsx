@@ -1,20 +1,32 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
-import { getProjects, getMachines, createMachine, bulkCreateMachines, updateMachine, deleteMachine, transferMachine, hardDeleteMachine, getEquipmentTypes } from '../../lib/api'
+import {
+  getProjects, getMachines, createMachine, bulkCreateMachines, updateMachine,
+  deleteMachine, transferMachine, hardDeleteMachine, getEquipmentTypes,
+  getUomTypes, getMachineReadingConfigs, toggleMachineReadingConfig, resetMachineReadingConfigs
+} from '../../lib/api'
 import {
   Plus, Edit2, Trash2, X, Search, ChevronUp, ChevronDown as ChevDown,
   RotateCcw, Filter, Upload, Download,
-  MoreVertical, ArrowRightLeft, PowerOff, AlertTriangle, ShieldAlert
+  MoreVertical, ArrowRightLeft, PowerOff, AlertTriangle, ShieldAlert,
+  Activity, RefreshCw, ToggleLeft, ToggleRight
 } from 'lucide-react'
 import MachineDownloadModal from './MachineDownloadModal'
 import { downloadAssetTemplate, parseAssetFile } from '../../lib/assetBulkTemplate'
 
 const SHIFT_OPTIONS = ['Single Shift', 'Dual Shift']
+const FUEL_TYPES    = ['Diesel', 'Petrol', 'EV', 'N/A']
+const ASSET_TYPES   = ['Measurable Asset', 'Non-Measurable Asset']
 
 const blank = {
-  project_id: '', asset_code: '', slno: '', eq_type: '', capacity: '', reg_no: '',
-  ownership: 'Own', vendor: '', rate: '', rate_monthly: '', reading1_basis: 'Hours',
-  reading2_basis: '', dual_reading: false, fuel_min: '', fuel_max: '',
-  fuel_min_km: '', fuel_max_km: '', planned_hours: '10', shift_type: ''
+  project_id: '', asset_code: '', slno: '', eq_type: '',
+  manufacturer: '', model: '', capacity: '', uom: '',
+  chassis_no: '', reg_no: '', fuel_type: 'Diesel',
+  ownership: 'Own', asset_type: 'Measurable Asset',
+  vendor: '', rate: '', rate_monthly: '',
+  reading1_basis: 'Hours', reading2_basis: '', dual_reading: false,
+  fuel_min: '', fuel_max: '', fuel_min_km: '', fuel_max_km: '',
+  planned_hours: '10', shift_type: '',
+  date_of_purchase: '', po_number: '', price: ''
 }
 
 function Modal({ title, onClose, children }) {
@@ -41,7 +53,19 @@ function SortIcon({ col, sortCol, sortDir }) {
 export default function Machines() {
   const [projects,      setProjects]      = useState([])
   const [eqTypes,       setEqTypes]       = useState([])
+  const [uomList,       setUomList]       = useState([])
   const [machines,      setMachines]      = useState([])
+  const [loadError,     setLoadError]     = useState('')
+
+  // Reading configs panel
+  const [readingConfigModal,    setReadingConfigModal]    = useState(null)  // { machine }
+  const [readingConfigs,        setReadingConfigs]        = useState([])
+  const [readingConfigLoading,  setReadingConfigLoading]  = useState(false)
+  const [readingConfigResetting, setReadingConfigResetting] = useState(false)
+  const [toggleLoading,         setToggleLoading]         = useState(null)  // config id being toggled
+
+  // Track eq_type at edit-open time so we know if it changed on save
+  const [originalEqType, setOriginalEqType] = useState('')
 
   // Filters
   const [filterProj,     setFilterProj]    = useState('')
@@ -98,13 +122,23 @@ export default function Machines() {
     const params = {}
     if (filterProj) params.project_code = filterProj
     if (showInactive) params.include_inactive = 'true'
-    getMachines(params).then(r => { setMachines(r.data.data); setSelected(new Set()) })
+    setLoadError('')
+    getMachines(params)
+      .then(r => { setMachines(r.data.data); setSelected(new Set()) })
+      .catch(err => setLoadError(err.response?.data?.error || err.message || 'Failed to load machines'))
   }
 
   useEffect(() => {
     getProjects().then(r => setProjects(r.data.data))
     getEquipmentTypes().then(r => setEqTypes(r.data.data))
   }, [])
+
+  // Lazy-load UOM list only when the add/edit modal is opened
+  const ensureUomList = () => {
+    if (uomList.length === 0) {
+      getUomTypes().then(r => setUomList(r.data.data)).catch(() => {})
+    }
+  }
 
   useEffect(() => { load() }, [filterProj, showInactive])
 
@@ -239,31 +273,63 @@ export default function Machines() {
 
   // ── Modal helpers ──────────────────────────────────────────────────────────
   const openAdd = () => {
+    ensureUomList()
     setForm({ ...blank, project_id: projects.find(p => p.code === filterProj)?.id?.toString() || '' })
     setError(''); setModal('add')
   }
   const openEdit = (m) => {
+    ensureUomList()
+    setOriginalEqType(m.eq_type)
     setForm({
       project_id: String(m.project_id), asset_code: m.asset_code || '', slno: m.slno,
-      eq_type: m.eq_type, capacity: m.capacity || '', reg_no: m.reg_no || '',
-      ownership: m.ownership, vendor: m.vendor || '', rate: m.rate || '', rate_monthly: m.rate_monthly || '',
+      eq_type: m.eq_type,
+      manufacturer: m.manufacturer || '', model: m.model || '',
+      capacity: m.capacity || '', uom: m.uom || '',
+      chassis_no: m.chassis_no || '', reg_no: m.reg_no || '',
+      fuel_type: m.fuel_type || 'Diesel',
+      ownership: m.ownership, asset_type: m.asset_type || 'Measurable Asset',
+      vendor: m.vendor || '', rate: m.rate || '', rate_monthly: m.rate_monthly || '',
       reading1_basis: m.reading1_basis, reading2_basis: m.reading2_basis || '',
       dual_reading: m.dual_reading, fuel_min: m.fuel_min || '', fuel_max: m.fuel_max || '',
       fuel_min_km: m.fuel_min_km || '', fuel_max_km: m.fuel_max_km || '',
       planned_hours: String(m.planned_hours || 10),
-      shift_type: m.shift_type || 'Single Shift'
+      shift_type: m.shift_type || 'Single Shift',
+      date_of_purchase: m.date_of_purchase ? m.date_of_purchase.slice(0, 10) : '',
+      po_number: m.po_number || '', price: m.price || ''
     })
     setError(''); setModal({ edit: m })
   }
-  const set = k => e => setForm(f => ({ ...f, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value }))
+  const set = k => e => {
+    const val = e.target.type === 'checkbox' ? e.target.checked : e.target.value
+    setForm(f => {
+      const next = { ...f, [k]: val }
+      if (k === 'eq_type') {
+        const et = eqTypes.find(t => t.name === val)
+        if (et?.asset_category) {
+          next.asset_type = et.asset_category === 'Measurable' ? 'Measurable Asset' : 'Non-Measurable Asset'
+        }
+      }
+      return next
+    })
+  }
 
   const save = async () => {
     setSaving(true); setError('')
     try {
+      const isEdit = modal !== 'add'
+      const eqTypeChanged = isEdit && form.eq_type !== originalEqType
+      const editId = isEdit ? modal.edit.id : null
+
       const payload = {
         ...form,
         project_id:    parseInt(form.project_id),
         asset_code:    form.asset_code || null,
+        manufacturer:  form.manufacturer || null,
+        model:         form.model || null,
+        chassis_no:    form.chassis_no || null,
+        uom:           form.uom || null,
+        fuel_type:     form.fuel_type || null,
+        asset_type:    form.asset_type || null,
         rate:          form.rate || null,
         rate_monthly:  form.rate_monthly || null,
         fuel_min:      form.fuel_min || null,
@@ -275,10 +341,18 @@ export default function Machines() {
         reg_no:        form.reg_no || null,
         reading2_basis: form.reading2_basis || null,
         planned_hours: parseFloat(form.planned_hours) || 10,
-        shift_type:    form.shift_type
+        shift_type:    form.shift_type,
+        date_of_purchase: form.date_of_purchase || null,
+        po_number:     form.po_number || null,
+        price:         form.price || null
       }
-      modal === 'add' ? await createMachine(payload) : await updateMachine(modal.edit.id, payload)
-      setModal(null); load()
+      modal === 'add' ? await createMachine(payload) : await updateMachine(editId, payload)
+      setModal(null)
+      // Fire-and-forget: reset reading configs in background if equipment type changed
+      if (eqTypeChanged && editId) {
+        resetMachineReadingConfigs(editId).catch(() => {})
+      }
+      load()
     } catch (err) {
       setError(err.response?.data?.error || 'Save failed')
     } finally { setSaving(false) }
@@ -365,6 +439,12 @@ export default function Machines() {
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">
+          Failed to load machines: {loadError}
+        </div>
+      )}
 
       {/* ── Filters ── */}
       <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
@@ -532,6 +612,20 @@ export default function Machines() {
                           <button onClick={() => openEdit(m)} title="Edit"
                             className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded transition-colors">
                             <Edit2 size={13} />
+                          </button>
+                          <button
+                            onClick={() => {
+                              setReadingConfigModal({ machine: m })
+                              setReadingConfigs([])
+                              setReadingConfigLoading(true)
+                              getMachineReadingConfigs(m.id)
+                                .then(r => setReadingConfigs(r.data.data))
+                                .catch(() => {})
+                                .finally(() => setReadingConfigLoading(false))
+                            }}
+                            title="Reading Configs"
+                            className="p-1.5 text-gray-400 hover:text-violet-600 hover:bg-violet-50 rounded transition-colors">
+                            <Activity size={13} />
                           </button>
                           <button
                             onClick={e => {
@@ -1045,6 +1139,9 @@ export default function Machines() {
       {modal && (
         <Modal title={modal === 'add' ? 'Add Machine' : 'Edit Machine'} onClose={() => setModal(null)}>
           <div className="space-y-4">
+
+            {/* Identification */}
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 pb-1">Identification</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={lbl}>Project *</label>
@@ -1061,29 +1158,59 @@ export default function Machines() {
                 </select>
               </div>
             </div>
-
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={lbl}>Manufacturer</label>
+                <input type="text" value={form.manufacturer} onChange={set('manufacturer')} className={inp} placeholder="e.g. Komatsu" />
+              </div>
+              <div>
+                <label className={lbl}>Model</label>
+                <input type="text" value={form.model} onChange={set('model')} className={inp} placeholder="e.g. PC200" />
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={lbl}>Asset Code</label>
                 <input type="text" value={form.asset_code} onChange={set('asset_code')} className={inp} placeholder="e.g. AST-001" />
+                <p className="text-xs text-gray-400 mt-0.5">Should be unique across all machines</p>
               </div>
               <div>
-                <label className={lbl}>SL# *</label>
+                <label className={lbl}>Machine SL# *</label>
                 <input type="text" value={form.slno} onChange={set('slno')} className={inp} placeholder="e.g. E6-EX-02" required />
               </div>
             </div>
-
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className={lbl}>Reg No</label>
+                <label className={lbl}>Registration No</label>
                 <input type="text" value={form.reg_no} onChange={set('reg_no')} className={inp} />
               </div>
               <div>
-                <label className={lbl}>Capacity</label>
-                <input type="text" value={form.capacity} onChange={set('capacity')} className={inp} placeholder="e.g. 20T" />
+                <label className={lbl}>Chassis No</label>
+                <input type="text" value={form.chassis_no} onChange={set('chassis_no')} className={inp} />
               </div>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={lbl}>Capacity</label>
+                <input type="text" value={form.capacity} onChange={set('capacity')} className={inp} placeholder="e.g. 20" />
+              </div>
+              <div>
+                <label className={lbl}>UOM</label>
+                <select value={form.uom} onChange={set('uom')} className={inp}>
+                  <option value="">— select —</option>
+                  {uomList.map(u => <option key={u.id} value={u.name}>{u.name}</option>)}
+                </select>
+              </div>
+            </div>
+            <div>
+              <label className={lbl}>Fuel Type</label>
+              <select value={form.fuel_type} onChange={set('fuel_type')} className={inp + ' max-w-xs'}>
+                {FUEL_TYPES.map(f => <option key={f}>{f}</option>)}
+              </select>
+            </div>
 
+            {/* Ownership */}
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 pb-1 pt-1">Ownership</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={lbl}>Ownership</label>
@@ -1100,6 +1227,20 @@ export default function Machines() {
               </div>
             </div>
 
+            {form.ownership === 'Own' && (
+              <div>
+                <label className={lbl}>
+                  Asset Classification
+                  {form.eq_type && eqTypes.find(t => t.name === form.eq_type)?.asset_category && (
+                    <span className="ml-2 font-normal text-emerald-600">(auto-filled)</span>
+                  )}
+                </label>
+                <select value={form.asset_type} onChange={set('asset_type')} className={inp}>
+                  {ASSET_TYPES.map(a => <option key={a}>{a}</option>)}
+                </select>
+              </div>
+            )}
+
             {form.ownership === 'Hire' && (
               <>
                 <div>
@@ -1113,6 +1254,29 @@ export default function Machines() {
               </>
             )}
 
+            {/* Purchase Details (Own only) */}
+            {form.ownership === 'Own' && (
+              <>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 pb-1 pt-1">Purchase Details</p>
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label className={lbl}>Date of Purchase *</label>
+                    <input type="date" value={form.date_of_purchase} onChange={set('date_of_purchase')} className={inp} />
+                  </div>
+                  <div>
+                    <label className={lbl}>PO Number</label>
+                    <input type="text" value={form.po_number} onChange={set('po_number')} className={inp} />
+                  </div>
+                  <div>
+                    <label className={lbl}>Purchase Price (₹)</label>
+                    <input type="number" value={form.price} onChange={set('price')} className={inp} />
+                  </div>
+                </div>
+              </>
+            )}
+
+            {/* Operational */}
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 pb-1 pt-1">Operational Settings</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={lbl}>Reading 1 Basis</label>
@@ -1125,7 +1289,6 @@ export default function Machines() {
                 <label htmlFor="dual" className="text-sm text-gray-700 select-none">Dual Reading</label>
               </div>
             </div>
-
             {form.dual_reading && (
               <div>
                 <label className={lbl}>Reading 2 Basis</label>
@@ -1134,7 +1297,6 @@ export default function Machines() {
                 </select>
               </div>
             )}
-
             <div className="grid grid-cols-2 gap-3">
               <div><label className={lbl}>Fuel Min (L/hr)</label><input type="number" step="0.1" value={form.fuel_min} onChange={set('fuel_min')} className={inp} placeholder="Hours-basis" /></div>
               <div><label className={lbl}>Fuel Max (L/hr)</label><input type="number" step="0.1" value={form.fuel_max} onChange={set('fuel_max')} className={inp} placeholder="Hours-basis" /></div>
@@ -1158,6 +1320,81 @@ export default function Machines() {
               <button onClick={() => setModal(null)}
                 className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors">
                 Cancel
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* ── Reading Configs modal ── */}
+      {readingConfigModal && (
+        <Modal
+          title={`Reading Configs — ${readingConfigModal.machine.slno}`}
+          onClose={() => { setReadingConfigModal(null); setReadingConfigs([]) }}
+        >
+          <div className="space-y-4">
+            {readingConfigLoading ? (
+              <p className="text-sm text-gray-400 text-center py-4">Loading…</p>
+            ) : readingConfigs.length === 0 ? (
+              <div className="text-center py-6 space-y-2">
+                <p className="text-sm text-gray-500">No reading configs found for this machine.</p>
+                <p className="text-xs text-gray-400">This equipment type may not have reading mappings defined yet.</p>
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100 rounded-lg border border-gray-200 overflow-hidden">
+                {readingConfigs.map(cfg => (
+                  <div key={cfg.id} className="flex items-center justify-between px-3 py-2.5 bg-white">
+                    <div className="min-w-0">
+                      <p className="text-sm font-semibold text-gray-800">{cfg.code}</p>
+                      <p className="text-xs text-gray-500">{cfg.reading_name} · {cfg.unit}</p>
+                    </div>
+                    <button
+                      onClick={async () => {
+                        if (toggleLoading === cfg.id) return
+                        setToggleLoading(cfg.id)
+                        try {
+                          await toggleMachineReadingConfig(cfg.id, { is_active: !cfg.is_active })
+                          setReadingConfigs(prev => prev.map(c => c.id === cfg.id ? { ...c, is_active: !c.is_active } : c))
+                        } catch (_) {}
+                        setToggleLoading(null)
+                      }}
+                      disabled={toggleLoading === cfg.id}
+                      className="flex-shrink-0 ml-3"
+                      title={cfg.is_active ? 'Disable' : 'Enable'}
+                    >
+                      {cfg.is_active
+                        ? <ToggleRight size={22} className="text-blue-600" />
+                        : <ToggleLeft  size={22} className="text-gray-300" />
+                      }
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="flex gap-3 pt-1">
+              <button
+                onClick={async () => {
+                  setReadingConfigResetting(true)
+                  try {
+                    await resetMachineReadingConfigs(readingConfigModal.machine.id)
+                    const r = await getMachineReadingConfigs(readingConfigModal.machine.id)
+                    setReadingConfigs(r.data.data)
+                    load()
+                  } catch (_) {}
+                  setReadingConfigResetting(false)
+                }}
+                disabled={readingConfigResetting}
+                className="flex items-center gap-2 px-4 py-2 border border-violet-300 text-violet-700 hover:bg-violet-50 rounded-lg text-sm font-medium transition-colors disabled:opacity-60"
+              >
+                <RefreshCw size={13} className={readingConfigResetting ? 'animate-spin' : ''} />
+                {readingConfigResetting ? 'Resetting…' : 'Reset to Defaults'}
+              </button>
+              <button
+                onClick={() => { setReadingConfigModal(null); setReadingConfigs([]) }}
+                className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm transition-colors"
+              >
+                Close
               </button>
             </div>
           </div>

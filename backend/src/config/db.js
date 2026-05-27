@@ -10,9 +10,9 @@ const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
   ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
 
-  max: 2,
+  max: 5,
   min: 0,
-  connectionTimeoutMillis: 20000,
+  connectionTimeoutMillis: 25000,
   idleTimeoutMillis:        7000,   // below Supabase PgBouncer's ~10 s server idle timeout
   statement_timeout:       30000,
 

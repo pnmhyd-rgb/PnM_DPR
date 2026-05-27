@@ -48,6 +48,7 @@ export const deleteUomType    = (id)          => client.delete(`/uom/${id}`)
 
 export const getVendors       = ()            => client.get('/vendors')
 export const upsertVendor     = (data)        => client.post('/vendors', data)
+export const deleteVendor     = (id)          => client.delete(`/vendors/${id}`)
 
 export const chatWithKala        = (data)        => client.post('/kala/chat', data)
 
@@ -123,6 +124,19 @@ export const approveHireWOFinal      = (id, data)    => client.patch(`/hire/${id
 export const rejectHireWorkOrder     = (id, data)    => client.patch(`/hire/${id}/reject`, data)
 export const renewHireWorkOrder      = (id, data)    => client.post(`/hire/${id}/renew`, data)
 
+// Hire Billing
+export const getHireBills           = (params)      => client.get('/hire-billing', { params })
+export const getHireBill            = (id)          => client.get(`/hire-billing/${id}`)
+export const fetchHireDprData       = (params)      => client.get('/hire-billing/fetch-dpr', { params })
+export const createHireBill         = (data)        => client.post('/hire-billing', data)
+export const updateHireBill         = (id, data)    => client.put(`/hire-billing/${id}`, data)
+export const deleteHireBill         = (id)          => client.delete(`/hire-billing/${id}`)
+export const submitHireBill         = (id)          => client.patch(`/hire-billing/${id}/submit`)
+export const approveHireBill        = (id, data)    => client.patch(`/hire-billing/${id}/approve`, data)
+export const rejectHireBill         = (id, data)    => client.patch(`/hire-billing/${id}/reject`, data)
+export const markHireBillPaid       = (id, data)    => client.patch(`/hire-billing/${id}/pay`, data)
+export const updateWoBillingRules   = (woId, data)  => client.patch(`/hire-billing/wo/${woId}/billing-rules`, data)
+
 // GST Verification (reusable for any entity)
 export const verifyGSTApi       = (gstin, excludeId = null) =>
   client.post('/gst/verify', { gstin, ...(excludeId ? { exclude_id: excludeId } : {}) })
@@ -159,6 +173,8 @@ export const deleteReadingMapping     = (id)         => client.delete(`/reading-
 export const bulkReplaceReadingMappings = (data)     => client.put('/reading-mappings/bulk-replace', data)
 
 // Machine Reading Configs
-export const getMachineReadingConfigs  = (machineId)  => client.get(`/machine-reading-configs/${machineId}`)
-export const setMachineReadingConfigs  = (machineId, data) => client.put(`/machine-reading-configs/${machineId}/set`, data)
-export const toggleMachineReadingConfig = (id, data)  => client.patch(`/machine-reading-configs/${id}/toggle`, data)
+export const getMachineReadingConfigs   = (machineId)       => client.get(`/machine-reading-configs/${machineId}`)
+export const setMachineReadingConfigs   = (machineId, data) => client.put(`/machine-reading-configs/${machineId}/set`, data)
+export const toggleMachineReadingConfig = (id, data)        => client.patch(`/machine-reading-configs/${id}/toggle`, data)
+export const resetMachineReadingConfigs    = (machineId)       => client.post(`/machines/${machineId}/reset-reading-configs`)
+export const propagateMachineReadingConfigs = (eqTypeName)    => client.post('/machines/propagate-reading-configs', { equipment_type_name: eqTypeName })
