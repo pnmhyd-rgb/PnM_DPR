@@ -327,13 +327,11 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
           : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
         : '—'
 
-      // Planned hrs per day → monthly and proportional to days with DPR
-      const daysWithDpr    = d.daysWorked + d.idleDays
-      const plannedPerDay  = parseFloat(m.planned_hours) || 10
-      const monthlyPlanned = plannedPerDay * d.totalDays
-      const actualPlanned  = plannedPerDay * daysWithDpr
+      // Utilization: planned_hours is monthly total; actual = monthly/calendarDays × payableDays
+      const monthlyPlanned = parseFloat(m.planned_hours) || 0
+      const actualPlanned  = d.totalDays > 0 ? (monthlyPlanned / d.totalDays) * d.payableDays : 0
       const workedVal      = isKmBasis ? s.totalR1 : s.workedTotal
-      const utilPctActual  = actualPlanned > 0 ? ((workedVal / actualPlanned) * 100).toFixed(1) : '—'
+      const utilPctActual  = actualPlanned > 0 ? ((workedVal / actualPlanned) * 100).toFixed(2) : '—'
       const unitLabel      = isKmBasis ? 'KMs' : 'Hrs'
 
       // Left column: Working Day Summary
@@ -349,11 +347,11 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
       // Right column: Utilization then Fuel
       const rightRows = []
       if (sections.utilization) {
-        rightRows.push([`Utilization (${unitLabel})`,          ''])
-        rightRows.push([`Planned ${unitLabel} (Monthly)`,      `${monthlyPlanned.toFixed(2)} ${unitLabel}`])
-        rightRows.push([`Actual Planned (${daysWithDpr} days)`, `${actualPlanned.toFixed(2)} ${unitLabel}`])
-        rightRows.push([`Worked ${unitLabel}`,                  `${workedVal.toFixed(2)} ${unitLabel}`])
-        rightRows.push(['Utilization %',                        utilPctActual === '—' ? '—' : `${utilPctActual} %`])
+        rightRows.push([`Utilization (${unitLabel})`,                       ''])
+        rightRows.push([`Planned ${unitLabel} (Monthly)`,                   monthlyPlanned > 0 ? `${monthlyPlanned.toFixed(2)} ${unitLabel}` : '—'])
+        rightRows.push([`Actual Planned (${d.payableDays.toFixed(2)} days)`, actualPlanned > 0  ? `${actualPlanned.toFixed(2)} ${unitLabel}`  : '—'])
+        rightRows.push([`Worked ${unitLabel}`,                              `${workedVal.toFixed(2)} ${unitLabel}`])
+        rightRows.push(['Utilization %',                                    utilPctActual === '—' ? '—' : `${utilPctActual} %`])
         rightRows.push(['', ''])
       }
       if (sections.fuel) {
@@ -569,13 +567,11 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
           : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
         : '—'
 
-      // Planned hrs per day → monthly and proportional to days with DPR
-      const daysWithDpr   = d.daysWorked + d.idleDays
-      const plannedPerDay = parseFloat(m.planned_hours) || 10
-      const monthlyPlanned = plannedPerDay * d.totalDays
-      const actualPlanned  = plannedPerDay * daysWithDpr
+      // Utilization: planned_hours is monthly total; actual = monthly/calendarDays × payableDays
+      const monthlyPlanned = parseFloat(m.planned_hours) || 0
+      const actualPlanned  = d.totalDays > 0 ? (monthlyPlanned / d.totalDays) * d.payableDays : 0
       const workedVal      = isKmBasis ? s.totalR1 : s.workedTotal
-      const utilPctActual  = actualPlanned > 0 ? ((workedVal / actualPlanned) * 100).toFixed(1) : '—'
+      const utilPctActual  = actualPlanned > 0 ? ((workedVal / actualPlanned) * 100).toFixed(2) : '—'
       const unitLabel      = isKmBasis ? 'KMs' : 'Hrs'
 
       // ── ERP-style bordered table renderer ──
@@ -646,10 +642,10 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
       // ── Right: Utilization ──
       if (sections.utilization) {
         rightBottom = drawTable(rx, y, rLabelW, rValueW, `Utilization (${unitLabel})`, [
-          [`Planned ${unitLabel} (Monthly)`,       `${monthlyPlanned.toFixed(2)} ${unitLabel}`],
-          [`Actual Planned (${daysWithDpr} days)`, `${actualPlanned.toFixed(2)} ${unitLabel}`],
-          [`Worked ${unitLabel}`,                  `${workedVal.toFixed(2)} ${unitLabel}`],
-          ['Utilization %',                        utilPctActual === '—' ? '—' : `${utilPctActual} %`],
+          [`Planned ${unitLabel} (Monthly)`,                   monthlyPlanned > 0 ? `${monthlyPlanned.toFixed(2)} ${unitLabel}` : '—'],
+          [`Actual Planned (${d.payableDays.toFixed(2)} days)`, actualPlanned > 0  ? `${actualPlanned.toFixed(2)} ${unitLabel}`  : '—'],
+          [`Worked ${unitLabel}`,                              `${workedVal.toFixed(2)} ${unitLabel}`],
+          ['Utilization %',                                    utilPctActual === '—' ? '—' : `${utilPctActual} %`],
         ])
         rightBottom += 2
       }
