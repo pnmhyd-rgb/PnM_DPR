@@ -20,10 +20,14 @@ const blank = {
   capacity: '', uom: '', ownership: 'Own', asset_type: 'Measurable Asset',
   vendor: '', rate: '', rate_monthly: '', fuel_type: 'Diesel',
   asset_code: '', slno: '', chassis_no: '', reg_no: '',
-  date_of_purchase: '', po_number: '', price: '',
+  date_of_purchase: '', po_number: '', price: '', yom: '',
   shift_type: 'Single Shift', reading1_basis: 'Hours',
   reading2_basis: '', dual_reading: false,
   fuel_min: '', fuel_max: '', fuel_min_km: '', fuel_max_km: '', planned_hours: '10',
+}
+
+function uniqueSorted(arr) {
+  return [...new Set(arr.filter(Boolean))].sort()
 }
 
 export default function AddAssetModal({ onClose, onSaved }) {
@@ -37,6 +41,10 @@ export default function AddAssetModal({ onClose, onSaved }) {
   const [eqTypes, setEqTypes]     = useState([])
   const [uomList, setUomList]     = useState([])
   const [vendors, setVendors]     = useState([])
+
+  // Cascading selection state (Asset Group → Asset Category → Asset Name)
+  const [selGroup, setSelGroup]   = useState('')
+  const [selCat,   setSelCat]     = useState('')
 
   // Quick-add UOM (admin)
   const [newUom, setNewUom]       = useState('')
@@ -65,9 +73,35 @@ export default function AddAssetModal({ onClose, onSaved }) {
         if (et?.asset_category) {
           next.asset_type = et.asset_category === 'Measurable' ? 'Measurable Asset' : 'Non-Measurable Asset'
         }
+        if (et?.fuel_type) {
+          next.fuel_type = et.fuel_type
+        }
       }
       return next
     })
+  }
+
+  // Cascading dropdown helpers
+  const allGroups = uniqueSorted(eqTypes.map(t => t.asset_group))
+  const filteredCats = uniqueSorted(
+    eqTypes
+      .filter(t => !selGroup || t.asset_group === selGroup)
+      .map(t => t.asset_cat)
+  )
+  const filteredNames = eqTypes.filter(t => {
+    if (selGroup && t.asset_group !== selGroup) return false
+    if (selCat   && t.asset_cat   !== selCat)   return false
+    return true
+  })
+
+  const handleGroupChange = e => {
+    setSelGroup(e.target.value)
+    setSelCat('')
+    setForm(f => ({ ...f, eq_type: '', asset_type: 'Measurable Asset' }))
+  }
+  const handleCatChange = e => {
+    setSelCat(e.target.value)
+    setForm(f => ({ ...f, eq_type: '', asset_type: 'Measurable Asset' }))
   }
 
   const handleAddUom = async () => {
@@ -86,7 +120,7 @@ export default function AddAssetModal({ onClose, onSaved }) {
   const handleSingle = async () => {
     setError('')
     if (!form.project_id) { setError('Project is required'); return }
-    if (!form.eq_type)    { setError('Equipment type is required'); return }
+    if (!form.eq_type)    { setError('Asset Name is required'); return }
     if (!form.slno)       { setError('Machine SL No is required'); return }
     if (!form.shift_type) { setError('Shift roster is required'); return }
     if (form.ownership === 'Own' && !form.date_of_purchase) {
@@ -171,26 +205,41 @@ export default function AddAssetModal({ onClose, onSaved }) {
           {tab === 'single' && (
             <div className="p-5 space-y-4">
               <p className={sec}>Basic Information</p>
-              <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className={lbl}>Project *</label>
+                <select value={form.project_id} onChange={set('project_id')} className={inp}>
+                  <option value="">— select —</option>
+                  {projects.map(p => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+                </select>
+                {isAdmin && <p className="text-xs text-blue-600 mt-1 cursor-pointer hover:underline" onClick={() => window.open('/admin/machines','_self')}>Manage projects in Admin</p>}
+              </div>
+
+              <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className={lbl}>Project *</label>
-                  <select value={form.project_id} onChange={set('project_id')} className={inp}>
-                    <option value="">— select —</option>
-                    {projects.map(p => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
+                  <label className={lbl}>Asset Group</label>
+                  <select value={selGroup} onChange={handleGroupChange} className={inp}>
+                    <option value="">— all groups —</option>
+                    {allGroups.map(g => <option key={g} value={g}>{g}</option>)}
                   </select>
-                  {isAdmin && <p className="text-xs text-blue-600 mt-1 cursor-pointer hover:underline" onClick={() => window.open('/admin/machines','_self')}>Manage projects in Admin</p>}
                 </div>
                 <div>
-                  <label className={lbl}>Equipment Type *</label>
+                  <label className={lbl}>Asset Category</label>
+                  <select value={selCat} onChange={handleCatChange} className={inp}>
+                    <option value="">— all categories —</option>
+                    {filteredCats.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={lbl}>Asset Name *</label>
                   <select value={form.eq_type} onChange={set('eq_type')} className={inp}>
                     <option value="">— select —</option>
-                    {eqTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+                    {filteredNames.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
                   </select>
-                  {isAdmin && <p className="text-xs text-blue-600 mt-1 cursor-pointer hover:underline" onClick={() => window.open('/admin/equipment-types','_self')}>Add types in Admin</p>}
+                  {isAdmin && <p className="text-xs text-blue-600 mt-1 cursor-pointer hover:underline" onClick={() => window.open('/admin/equipment-types','_self')}>Manage in Admin</p>}
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <div>
                   <label className={lbl}>Manufacturer</label>
                   <input type="text" value={form.manufacturer} onChange={set('manufacturer')} className={inp} placeholder="e.g. Komatsu" />
@@ -198,6 +247,10 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 <div>
                   <label className={lbl}>Model</label>
                   <input type="text" value={form.model} onChange={set('model')} className={inp} placeholder="e.g. PC200" />
+                </div>
+                <div>
+                  <label className={lbl}>Year of Manufacture</label>
+                  <input type="text" value={form.yom} onChange={set('yom')} className={inp} placeholder="e.g. 2023" maxLength={4} />
                 </div>
               </div>
 
@@ -272,7 +325,7 @@ export default function AddAssetModal({ onClose, onSaved }) {
                   <label className={lbl}>
                     Asset Classification *
                     {form.eq_type && eqTypes.find(t => t.name === form.eq_type)?.asset_category && (
-                      <span className="ml-2 text-xs font-normal text-emerald-600">(auto-filled from equipment type)</span>
+                      <span className="ml-2 text-xs font-normal text-emerald-600">(auto-filled from asset name)</span>
                     )}
                   </label>
                   <select value={form.asset_type} onChange={set('asset_type')} className={inp}>
@@ -381,7 +434,7 @@ export default function AddAssetModal({ onClose, onSaved }) {
               {eqTypes.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-3">
                   <p className="text-xs font-semibold text-amber-800 mb-1.5">
-                    Equipment Types (M = Measurable, NM = Non-Measurable) — also listed in the template's second sheet:
+                    Asset Names (M = Measurable, NM = Non-Measurable) — also listed in the template's second sheet:
                   </p>
                   <div className="flex flex-wrap gap-1.5">
                     {eqTypes.map(t => (
@@ -404,9 +457,9 @@ export default function AddAssetModal({ onClose, onSaved }) {
                 <div className="flex-1 space-y-2">
                   <p className="text-xs font-medium text-gray-700">Download the template, fill in your asset data, then re-upload.</p>
                   <p className="text-xs text-gray-500">
-                    Required: <strong>Project Code</strong>, <strong>Machine SL#</strong>, <strong>Equipment Type</strong>, <strong>Ownership</strong>, <strong>Shift Type</strong>.
+                    Required: <strong>Project Code</strong>, <strong>Machine SL#</strong>, <strong>Asset Name</strong>, <strong>Ownership</strong>, <strong>Shift Type</strong>.
                     Use <em>Fuel Min/Max (kms/ltr)</em> for KM-basis machines. <em>Hire Charges/Day</em> and <em>/Month</em> for Hire assets.
-                    The template includes an <em>Equipment Types Ref</em> sheet with all valid types.
+                    The template includes an <em>Asset Names Ref</em> sheet with all valid names.
                   </p>
                   <button onClick={() => downloadAssetTemplate(projects, eqTypes)}
                     className="flex items-center gap-2 px-3 py-1.5 border border-blue-400 text-blue-700 bg-white hover:bg-blue-50 text-xs font-medium rounded-lg transition-colors">
@@ -449,7 +502,7 @@ export default function AddAssetModal({ onClose, onSaved }) {
                         <table className="w-full text-xs">
                           <thead className="bg-gray-100 text-gray-600 sticky top-0">
                             <tr>
-                              {['#','Project','SL#','Equipment Type','Category','Own/Hire','Shift'].map(h => (
+                              {['#','Project','SL#','Asset Name','Category','Own/Hire','Shift'].map(h => (
                                 <th key={h} className="px-2 py-1 text-left font-medium whitespace-nowrap">{h}</th>
                               ))}
                             </tr>

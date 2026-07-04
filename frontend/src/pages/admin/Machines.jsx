@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo, useRef } from 'react'
+﻿import { useState, useEffect, useMemo, useRef } from 'react'
 import {
   getProjects, getMachines, createMachine, bulkCreateMachines, updateMachine,
   deleteMachine, transferMachine, hardDeleteMachine, getEquipmentTypes,
-  getUomTypes, getMachineReadingConfigs, toggleMachineReadingConfig, resetMachineReadingConfigs
+  getUomTypes, getMachineReadingConfigs, toggleMachineReadingConfig, resetMachineReadingConfigs,
+  regenerateMachineNicknames,
 } from '../../lib/api'
 import {
   Plus, Edit2, Trash2, X, Search, ChevronUp, ChevronDown as ChevDown,
@@ -12,6 +13,55 @@ import {
 } from 'lucide-react'
 import MachineDownloadModal from './MachineDownloadModal'
 import { downloadAssetTemplate, parseAssetFile } from '../../lib/assetBulkTemplate'
+import MachineDetailPanel from '../../components/MachineDetailPanel'
+
+function autoNickname({ eq_type, asset_code, slno, reg_no, capacity, uom, model }) {
+  const name = (eq_type || '').trim()
+  if (!name) return ''
+
+  // Tower cranes: name-Model-SL#
+  if (/tower\s*crane/i.test(name)) {
+    const modelPart = (model || '').toString().trim()
+    const slnoPart  = (slno  || '').toString().trim()
+    return [name, modelPart, slnoPart].filter(Boolean).join('-')
+  }
+
+  const reg = (reg_no || '').toString().trim()
+  if (reg) return `${name}-${reg}`
+
+  const codeParts = (asset_code || '').split('/')
+  const lastSeg   = codeParts.length > 1 ? codeParts[codeParts.length - 1].trim() : ''
+  const codeSeq   = /^\d{4}$/.test(lastSeg) ? '' : lastSeg
+
+  const WEIGHT_UOMS = new Set(['kg', 'kgs', 'lb', 'lbs'])
+  const capRaw = (capacity || '').toString().trim()
+  let capNum = '', capUnit = (uom || '').toString().trim()
+
+  if (/^\d+(\.\d+)?$/.test(capRaw)) {
+    capNum = capRaw
+  } else if (capRaw) {
+    const m = capRaw.match(/^(\d+(?:\.\d+)?)\s*([A-Za-z]+)$/)
+    if (m) { capNum = m[1]; capUnit = m[2] }
+  }
+
+  // Fallback: extract capacity from asset code (e.g. RVR/DG/2013/125/10 → "125")
+  if (!capNum) {
+    for (let i = 1; i < codeParts.length - 1; i++) {
+      const seg = codeParts[i].trim()
+      if (/^\d{4}$/.test(seg)) continue
+      const cm = seg.match(/^(\d+(?:\.\d+)?)\s*([A-Za-z]+)$/)
+      if (cm) { capNum = cm[1]; capUnit = cm[2]; break }
+      if (/^\d+(\.\d+)?$/.test(seg)) { capNum = seg; break }
+    }
+  }
+
+  const isWeight = WEIGHT_UOMS.has(capUnit.toLowerCase())
+  const fullName = (capNum && !isWeight)
+    ? (capUnit ? `${capNum} ${capUnit} ${name}` : `${capNum} ${name}`)
+    : name
+
+  return codeSeq ? `${fullName}-${codeSeq}` : fullName
+}
 
 const SHIFT_OPTIONS = ['Single Shift', 'Dual Shift']
 const FUEL_TYPES    = ['Diesel', 'Petrol', 'EV', 'N/A']
@@ -19,14 +69,14 @@ const ASSET_TYPES   = ['Measurable Asset', 'Non-Measurable Asset']
 
 const blank = {
   project_id: '', asset_code: '', slno: '', eq_type: '',
-  manufacturer: '', model: '', capacity: '', uom: '',
-  chassis_no: '', reg_no: '', fuel_type: 'Diesel',
+  manufacturer: '', model: '', yom: '', capacity: '', uom: '',
+  chassis_no: '', engine_no: '', reg_no: '', fuel_type: 'Diesel',
   ownership: 'Own', asset_type: 'Measurable Asset',
   vendor: '', rate: '', rate_monthly: '',
   reading1_basis: 'Hours', reading2_basis: '', dual_reading: false,
   fuel_min: '', fuel_max: '', fuel_min_km: '', fuel_max_km: '',
   planned_hours: '10', shift_type: '',
-  date_of_purchase: '', po_number: '', price: ''
+  date_of_purchase: '', po_number: '', price: '', nickname: ''
 }
 
 function Modal({ title, onClose, children }) {
@@ -56,6 +106,7 @@ export default function Machines() {
   const [uomList,       setUomList]       = useState([])
   const [machines,      setMachines]      = useState([])
   const [loadError,     setLoadError]     = useState('')
+  const [detailPanel,   setDetailPanel]   = useState(null)
 
   // Reading configs panel
   const [readingConfigModal,    setReadingConfigModal]    = useState(null)  // { machine }
@@ -91,6 +142,9 @@ export default function Machines() {
 
   // Download modal
   const [showDownloadModal, setShowDownloadModal] = useState(false)
+
+  // Nickname regeneration
+  const [regenLoading, setRegenLoading] = useState(false)
 
   // Bulk upload
   const [showBulkModal, setShowBulkModal] = useState(false)
@@ -152,11 +206,16 @@ export default function Machines() {
       const q = search.toLowerCase()
       list = list.filter(m =>
         m.slno?.toLowerCase().includes(q) ||
+        m.asset_code?.toLowerCase().includes(q) ||
+        m.nickname?.toLowerCase().includes(q) ||
         m.eq_type?.toLowerCase().includes(q) ||
         m.reg_no?.toLowerCase().includes(q) ||
+        m.chassis_no?.toLowerCase().includes(q) ||
+        m.engine_no?.toLowerCase().includes(q) ||
         m.project_code?.toLowerCase().includes(q) ||
         m.manufacturer?.toLowerCase().includes(q) ||
-        m.model?.toLowerCase().includes(q)
+        m.model?.toLowerCase().includes(q) ||
+        m.vendor?.toLowerCase().includes(q)
       )
     }
     list = [...list].sort((a, b) => {
@@ -194,6 +253,18 @@ export default function Machines() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
   const closeBulkModal = () => { setShowBulkModal(false); resetBulk() }
+
+  const handleRegenNicknames = async () => {
+    if (!confirm('Regenerate nicknames for ALL machines using current asset data? Existing nicknames will be overwritten.')) return
+    setRegenLoading(true)
+    try {
+      const res = await regenerateMachineNicknames()
+      alert(`Done — ${res.data.updated} machine nicknames updated.`)
+      load()
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to regenerate nicknames')
+    } finally { setRegenLoading(false) }
+  }
 
   const handleBulkFileChange = async (e) => {
     const file = e.target.files?.[0]
@@ -283,9 +354,9 @@ export default function Machines() {
     setForm({
       project_id: String(m.project_id), asset_code: m.asset_code || '', slno: m.slno,
       eq_type: m.eq_type,
-      manufacturer: m.manufacturer || '', model: m.model || '',
+      manufacturer: m.manufacturer || '', model: m.model || '', yom: m.yom || '',
       capacity: m.capacity || '', uom: m.uom || '',
-      chassis_no: m.chassis_no || '', reg_no: m.reg_no || '',
+      chassis_no: m.chassis_no || '', engine_no: m.engine_no || '', reg_no: m.reg_no || '',
       fuel_type: m.fuel_type || 'Diesel',
       ownership: m.ownership, asset_type: m.asset_type || 'Measurable Asset',
       vendor: m.vendor || '', rate: m.rate || '', rate_monthly: m.rate_monthly || '',
@@ -295,7 +366,8 @@ export default function Machines() {
       planned_hours: String(m.planned_hours || 10),
       shift_type: m.shift_type || 'Single Shift',
       date_of_purchase: m.date_of_purchase ? m.date_of_purchase.slice(0, 10) : '',
-      po_number: m.po_number || '', price: m.price || ''
+      po_number: m.po_number || '', price: m.price || '',
+      nickname: m.nickname || ''
     })
     setError(''); setModal({ edit: m })
   }
@@ -326,7 +398,9 @@ export default function Machines() {
         asset_code:    form.asset_code || null,
         manufacturer:  form.manufacturer || null,
         model:         form.model || null,
+        yom:           form.yom || null,
         chassis_no:    form.chassis_no || null,
+        engine_no:     form.engine_no || null,
         uom:           form.uom || null,
         fuel_type:     form.fuel_type || null,
         asset_type:    form.asset_type || null,
@@ -344,7 +418,8 @@ export default function Machines() {
         shift_type:    form.shift_type,
         date_of_purchase: form.date_of_purchase || null,
         po_number:     form.po_number || null,
-        price:         form.price || null
+        price:         form.price || null,
+        nickname:      form.nickname || null
       }
       modal === 'add' ? await createMachine(payload) : await updateMachine(editId, payload)
       setModal(null)
@@ -402,16 +477,29 @@ export default function Machines() {
   const thCls = col => `px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap cursor-pointer select-none hover:text-gray-700`
 
   const HEADERS = [
-    { label: 'Project',   col: 'project_code' },
-    { label: 'SL #',      col: 'slno' },
-    { label: 'Type',      col: 'eq_type' },
-    { label: 'Reg #',     col: 'reg_no' },
-    { label: 'Own/Hire',  col: 'ownership' },
-    { label: 'Shift',     col: 'shift_type' },
-    { label: 'Basis',     col: 'reading1_basis' },
-    { label: 'Fuel Min',  col: 'fuel_min' },
-    { label: 'Fuel Max',  col: 'fuel_max' },
-    { label: 'Planned',   col: 'planned_hours' },
+    { label: 'Project',       col: 'project_code' },
+    { label: 'Nickname',      col: 'nickname' },
+    { label: 'Asset Code',    col: 'asset_code' },
+    { label: 'Asset Group',   col: 'asset_group' },
+    { label: 'Category',      col: 'asset_cat' },
+    { label: 'Asset Name',    col: 'eq_type' },
+    { label: 'Measurability', col: 'asset_type' },
+    { label: 'Own/Hire',      col: 'ownership' },
+    { label: 'Owner Name',    col: 'vendor' },
+    { label: 'Manufacturer',  col: 'manufacturer' },
+    { label: 'Model',         col: 'model' },
+    { label: 'Year',          col: 'yom' },
+    { label: 'Capacity',      col: 'capacity' },
+    { label: 'Reg No',        col: 'reg_no' },
+    { label: 'Machine SL#',   col: 'slno' },
+    { label: 'Chassis No',    col: 'chassis_no' },
+    { label: 'Engine No',     col: 'engine_no' },
+    { label: 'Shift',         col: 'shift_type' },
+    { label: 'Fuel Min L/hr', col: 'fuel_min' },
+    { label: 'Fuel Max L/hr', col: 'fuel_max' },
+    { label: 'Fuel Min km',   col: 'fuel_min_km' },
+    { label: 'Fuel Max km',   col: 'fuel_max_km' },
+    { label: 'Planned',       col: 'planned_hours' },
   ]
 
   return (
@@ -433,6 +521,12 @@ export default function Machines() {
           <button onClick={() => setShowBulkModal(true)}
             className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors">
             <Upload size={14} />Bulk Upload
+          </button>
+          <button onClick={handleRegenNicknames} disabled={regenLoading}
+            title="Re-generate all machine nicknames from current asset data"
+            className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors">
+            <RefreshCw size={14} className={regenLoading ? 'animate-spin' : ''} />
+            {regenLoading ? 'Regenerating…' : 'Regen Nicknames'}
           </button>
           <button onClick={openAdd} className="flex items-center gap-2 px-3 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 transition-colors">
             <Plus size={15} />Add Machine
@@ -468,7 +562,7 @@ export default function Machines() {
 
           <select value={filterType} onChange={e => setFilterType(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-            <option value="">All Category</option>
+            <option value="">All Asset Name</option>
             {eqTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
           </select>
 
@@ -481,7 +575,7 @@ export default function Machines() {
 
           <select value={filterCategory} onChange={e => setFilterCategory(e.target.value)}
             className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-            <option value="">All Categories</option>
+            <option value="">Measurability</option>
             <option value="Measurable Asset">Measurable</option>
             <option value="Non-Measurable Asset">Non-Measurable</option>
           </select>
@@ -568,7 +662,7 @@ export default function Machines() {
             </thead>
             <tbody className="divide-y divide-gray-100">
               {displayed.length === 0 && (
-                <tr><td colSpan={12} className="px-4 py-10 text-center text-gray-400">
+                <tr><td colSpan={25} className="px-4 py-10 text-center text-gray-400">
                   {search || filterType || filterOwn || filterCategory ? 'No machines match the current filters' : 'No machines found'}
                 </td></tr>
               )}
@@ -580,31 +674,80 @@ export default function Machines() {
                     <input type="checkbox" checked={selected.has(m.id)} onChange={() => toggleOne(m.id)}
                       className="w-4 h-4 accent-blue-600" />
                   </td>
-                  <td className="px-3 py-2">
+                  {/* Project */}
+                  <td className="px-3 py-2 whitespace-nowrap">
                     <span className="bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded text-xs">{m.project_code}</span>
                   </td>
-                  <td className="px-3 py-2 font-semibold">
-                    {m.slno}
+                  {/* Nickname */}
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {m.nickname
+                      ? <button onClick={() => setDetailPanel(m)}
+                          className="text-blue-700 font-medium text-xs hover:text-blue-900 hover:underline text-left">
+                          {m.nickname}
+                        </button>
+                      : <span className="text-gray-300 text-xs">—</span>}
+                  </td>
+                  {/* Asset Code */}
+                  <td className="px-3 py-2 text-gray-700 whitespace-nowrap font-mono text-[11px]">{m.asset_code || '—'}</td>
+                  {/* Asset Group */}
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{m.asset_group || '—'}</td>
+                  {/* Asset Category */}
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{m.asset_cat || '—'}</td>
+                  {/* Asset Name */}
+                  <td className="px-3 py-2 whitespace-nowrap">{m.eq_type}</td>
+                  {/* Measurability */}
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {m.asset_type
+                      ? <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${m.asset_type === 'Measurable Asset' ? 'bg-blue-100 text-blue-700' : 'bg-violet-100 text-violet-700'}`}>{m.asset_type === 'Measurable Asset' ? 'Measurable' : 'Non-Measurable'}</span>
+                      : '—'}
+                  </td>
+                  {/* Own/Hire */}
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <span className={`text-xs font-medium ${m.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>{m.ownership}</span>
+                  </td>
+                  {/* Owner Name */}
+                  <td className="px-3 py-2 text-gray-600 whitespace-nowrap">
+                    {m.ownership === 'Own' ? 'RVR Projects Pvt Ltd' : (m.vendor || '—')}
+                  </td>
+                  {/* Manufacturer */}
+                  <td className="px-3 py-2 whitespace-nowrap">{m.manufacturer || '—'}</td>
+                  {/* Model */}
+                  <td className="px-3 py-2 whitespace-nowrap">{m.model || '—'}</td>
+                  {/* Year */}
+                  <td className="px-3 py-2 whitespace-nowrap tabular-nums">{m.yom || '—'}</td>
+                  {/* Capacity */}
+                  <td className="px-3 py-2 whitespace-nowrap tabular-nums">{m.capacity ? `${m.capacity}${m.uom ? ' ' + m.uom : ''}` : '—'}</td>
+                  {/* Reg No */}
+                  <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px]">{m.reg_no || '—'}</td>
+                  {/* Machine SL# */}
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <span className="text-gray-700 font-semibold text-xs font-mono">{m.slno}</span>
                     {!m.active && (
                       <span className="ml-1.5 text-xs bg-gray-200 text-gray-500 px-1.5 py-0.5 rounded">
                         {m.deactivation_reason || 'Inactive'}
                       </span>
                     )}
                   </td>
-                  <td className="px-3 py-2">{m.eq_type}</td>
-                  <td className="px-3 py-2">{m.reg_no || '—'}</td>
-                  <td className="px-3 py-2">
-                    <span className={`text-xs font-medium ${m.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>{m.ownership}</span>
-                  </td>
-                  <td className="px-3 py-2">
+                  {/* Chassis No */}
+                  <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px]">{m.chassis_no || '—'}</td>
+                  {/* Engine No */}
+                  <td className="px-3 py-2 whitespace-nowrap font-mono text-[11px]">{m.engine_no || '—'}</td>
+                  {/* Shift */}
+                  <td className="px-3 py-2 whitespace-nowrap">
                     <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
                       m.shift_type === 'Dual Shift' ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'
                     }`}>{m.shift_type || 'Single Shift'}</span>
                   </td>
-                  <td className="px-3 py-2">{m.reading1_basis}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{m.fuel_min ?? '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{m.fuel_max ?? '—'}</td>
-                  <td className="px-3 py-2 text-right tabular-nums">{m.planned_hours}</td>
+                  {/* Fuel Min L/hr */}
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{m.fuel_min ?? '—'}</td>
+                  {/* Fuel Max L/hr */}
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{m.fuel_max ?? '—'}</td>
+                  {/* Fuel Min km */}
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{m.fuel_min_km ?? '—'}</td>
+                  {/* Fuel Max km */}
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{m.fuel_max_km ?? '—'}</td>
+                  {/* Planned */}
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{m.planned_hours}</td>
                   <td className="px-3 py-2">
                     <div className="flex gap-1 items-center">
                       {m.active ? (
@@ -1158,7 +1301,7 @@ export default function Machines() {
                 </select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className={lbl}>Manufacturer</label>
                 <input type="text" value={form.manufacturer} onChange={set('manufacturer')} className={inp} placeholder="e.g. Komatsu" />
@@ -1166,6 +1309,10 @@ export default function Machines() {
               <div>
                 <label className={lbl}>Model</label>
                 <input type="text" value={form.model} onChange={set('model')} className={inp} placeholder="e.g. PC200" />
+              </div>
+              <div>
+                <label className={lbl}>Year of Manufacture</label>
+                <input type="text" value={form.yom} onChange={set('yom')} className={inp} placeholder="e.g. 2023" maxLength={4} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -1179,7 +1326,20 @@ export default function Machines() {
                 <input type="text" value={form.slno} onChange={set('slno')} className={inp} placeholder="e.g. E6-EX-02" required />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className={lbl + ' mb-0'}>Nickname</label>
+                <button type="button"
+                  onClick={() => setForm(f => ({ ...f, nickname: autoNickname(f) }))}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-medium px-2 py-0.5 rounded hover:bg-blue-50 transition-colors">
+                  ⚡ Auto-generate
+                </button>
+              </div>
+              <input type="text" value={form.nickname} onChange={set('nickname')} className={inp}
+                placeholder="e.g. 125 KVA Genset-10 or Tipper-TS076789" />
+              <p className="text-xs text-gray-400 mt-0.5">Short friendly label for easy identification. Click Auto-generate to fill from asset details.</p>
+            </div>
+            <div className="grid grid-cols-3 gap-3">
               <div>
                 <label className={lbl}>Registration No</label>
                 <input type="text" value={form.reg_no} onChange={set('reg_no')} className={inp} />
@@ -1187,6 +1347,10 @@ export default function Machines() {
               <div>
                 <label className={lbl}>Chassis No</label>
                 <input type="text" value={form.chassis_no} onChange={set('chassis_no')} className={inp} />
+              </div>
+              <div>
+                <label className={lbl}>Engine No</label>
+                <input type="text" value={form.engine_no} onChange={set('engine_no')} className={inp} />
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -1324,6 +1488,15 @@ export default function Machines() {
             </div>
           </div>
         </Modal>
+      )}
+
+      {/* ── Machine Detail Panel ── */}
+      {detailPanel && (
+        <MachineDetailPanel
+          machine={detailPanel}
+          onClose={() => setDetailPanel(null)}
+          onEdit={() => { openEdit(detailPanel); setDetailPanel(null) }}
+        />
       )}
 
       {/* ── Reading Configs modal ── */}

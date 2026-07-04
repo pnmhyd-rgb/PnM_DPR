@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { getProjects, getFleetSummary, getSummary, getComplianceSummary, getComplianceUpcoming } from '../lib/api'
+import { getProjects, getFleetSummary, getSummary, getComplianceSummary, getComplianceUpcoming, getFleetList } from '../lib/api'
 import { useAuth } from '../context/AuthContext'
 import { today } from '../lib/utils'
-import { ChevronDown, RefreshCw, PinOff, ShieldAlert, AlertTriangle, Clock, CheckCircle2 } from 'lucide-react'
+import { ChevronDown, RefreshCw, PinOff, ShieldAlert, AlertTriangle, Clock, CheckCircle2, X } from 'lucide-react'
+import MachineDetailPanel from '../components/MachineDetailPanel'
 
 /* ─── Status config ───────────────────────────────────────────── */
 const STATUSES = [
@@ -15,18 +16,19 @@ const STATUSES = [
 const COL_A = 'Measurable Asset'
 const COL_B = 'Non-Measurable Asset'
 
-/* ─── Stat card (matches screenshot style) ───────────────────── */
-function StatCard({ label, value, sub, borderColor, valueColor }) {
+/* ─── Clickable stat card ─────────────────────────────────────── */
+function StatCard({ label, value, sub, borderColor, valueColor, onClick }) {
   return (
     <div
-      className="bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-0.5 min-w-0"
+      onClick={onClick}
+      className={`bg-white rounded-xl border border-gray-200 shadow-sm p-4 flex flex-col gap-0.5 min-w-0 ${onClick ? 'cursor-pointer hover:shadow-md hover:border-gray-300 transition-all' : ''}`}
       style={{ borderLeft: `4px solid ${borderColor}` }}
     >
       <p className="text-[10px] font-bold tracking-widest text-gray-500 uppercase truncate">
         {label}
       </p>
       <p
-        className="text-[28px] font-extrabold tabular-nums leading-tight"
+        className={`text-[28px] font-extrabold tabular-nums leading-tight ${onClick ? 'underline decoration-dotted underline-offset-2' : ''}`}
         style={{ color: valueColor }}
       >
         {value}
@@ -193,6 +195,130 @@ function compCalcStatus(expiryDate) {
   return 'valid'
 }
 
+/* ─── Fleet drill-down drawer ─────────────────────────────────── */
+function FleetDrilldownPanel({ drilldown, date, projectCode, onClose }) {
+  const [machines, setMachines] = useState([])
+  const [loading, setLoading]   = useState(true)
+  const [detailPanel, setDetailPanel] = useState(null)
+
+  useEffect(() => {
+    if (!drilldown) return
+    setLoading(true)
+    const params = { date }
+    if (projectCode) params.project_code = projectCode
+    if (drilldown.ownership) params.ownership = drilldown.ownership
+    if (drilldown.fleet_status) params.fleet_status = drilldown.fleet_status
+    if (drilldown.asset_type) params.asset_type = drilldown.asset_type
+    getFleetList(params)
+      .then(r => setMachines(r.data.data))
+      .catch(() => setMachines([]))
+      .finally(() => setLoading(false))
+  }, [drilldown, date, projectCode])
+
+  const statusBadge = (m) => {
+    const colors = {
+      'Active':       'bg-green-100 text-green-700',
+      'Idle':         'bg-amber-100 text-amber-700',
+      'Breakdown':    'bg-red-100 text-red-700',
+      'Not Deployed': 'bg-gray-100 text-gray-600',
+    }
+    return (
+      <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${colors[m.fleet_status] || 'bg-gray-100 text-gray-600'}`}>
+        {m.fleet_status}
+      </span>
+    )
+  }
+
+  return (
+    <>
+      <div className="fixed inset-0 z-40 bg-black/25" onClick={onClose} />
+      <div className="fixed right-0 top-0 bottom-0 z-50 bg-white shadow-2xl flex flex-col border-l border-gray-200"
+        style={{ width: 'min(900px, 95vw)' }}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3.5 bg-white border-b border-gray-200 flex-shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-1 h-5 rounded-full" style={{ backgroundColor: drilldown.color || '#2980B9' }} />
+            <div>
+              <h2 className="text-base font-bold text-gray-900">{drilldown.label}</h2>
+              <p className="text-xs text-gray-400">{loading ? '…' : `${machines.length} asset${machines.length !== 1 ? 's' : ''}`}</p>
+            </div>
+          </div>
+          <button onClick={onClose}
+            className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        {/* Table */}
+        <div className="flex-1 overflow-auto">
+          {loading ? (
+            <div className="flex items-center justify-center h-40 text-sm text-gray-400">Loading…</div>
+          ) : machines.length === 0 ? (
+            <div className="flex items-center justify-center h-40 text-sm text-gray-400">No assets found</div>
+          ) : (
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 z-10">
+                <tr className="bg-gray-50 border-b border-gray-200">
+                  {['#', 'Project', 'SL No', 'Asset Group', 'Asset Category', 'Asset Name',
+                    'Manufacturer', 'Model', 'Capacity / UOM', 'Reg No', 'Fuel Type', 'Shift',
+                    drilldown.fleet_status ? '' : 'Status',
+                  ].filter(Boolean).map(h => (
+                    <th key={h} className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {machines.map((m, i) => (
+                  <tr key={m.id} className="hover:bg-blue-50/30 transition-colors">
+                    <td className="px-3 py-2 text-gray-400">{i + 1}</td>
+                    <td className="px-3 py-2">
+                      <span className={`font-semibold px-1.5 py-0.5 rounded text-xs ${m.ownership === 'Hire' ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'}`}>
+                        {m.project_code}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2">
+                      <button onClick={() => setDetailPanel(m)}
+                        className="text-blue-600 hover:text-blue-800 hover:underline font-semibold text-left">
+                        {m.slno}
+                      </button>
+                    </td>
+                    <td className="px-3 py-2 text-gray-600">{m.asset_group || '—'}</td>
+                    <td className="px-3 py-2 text-gray-600">{m.asset_cat   || '—'}</td>
+                    <td className="px-3 py-2 text-gray-800 font-medium whitespace-nowrap">{m.eq_type}</td>
+                    <td className="px-3 py-2 text-gray-600">{m.manufacturer || '—'}</td>
+                    <td className="px-3 py-2 text-gray-600">{m.model || '—'}</td>
+                    <td className="px-3 py-2 text-gray-600">{m.capacity ? `${m.capacity} ${m.uom || ''}`.trim() : '—'}</td>
+                    <td className="px-3 py-2 text-gray-600">{m.reg_no || '—'}</td>
+                    <td className="px-3 py-2 text-gray-600">{m.fuel_type || '—'}</td>
+                    <td className="px-3 py-2">
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${m.shift_type === 'Dual Shift' ? 'bg-amber-50 text-amber-700' : 'bg-green-50 text-green-700'}`}>
+                        {m.shift_type || '—'}
+                      </span>
+                    </td>
+                    {!drilldown.fleet_status && (
+                      <td className="px-3 py-2">{statusBadge(m)}</td>
+                    )}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex-shrink-0 px-5 py-3 bg-white border-t border-gray-100 text-xs text-gray-400">
+          {machines.length} asset{machines.length !== 1 ? 's' : ''} · Click SL No for full details
+        </div>
+      </div>
+
+      {detailPanel && (
+        <MachineDetailPanel machine={detailPanel} onClose={() => setDetailPanel(null)} />
+      )}
+    </>
+  )
+}
+
 /* ─── Main Page ───────────────────────────────────────────────── */
 export default function MyDashboard() {
   const navigate       = useNavigate()
@@ -207,6 +333,9 @@ export default function MyDashboard() {
   const [tick, setTick]               = useState(0)
   const [filters, setFilters]         = useState({ date: today(), project_code: '', asset_type: '' })
 
+  // Drill-down drawer
+  const [drilldown, setDrilldown] = useState(null)  // { label, color, ownership?, fleet_status? }
+
   // Compliance widget state
   const [compSummary,  setCompSummary]  = useState({ expired:0, critical:0, warning:0, valid:0, na:0, total:0 })
   const [compUpcoming, setCompUpcoming] = useState([])
@@ -215,7 +344,6 @@ export default function MyDashboard() {
     if (isAdmin) getProjects().then(r => setProjects(r.data?.data || [])).catch(() => {})
   }, [isAdmin])
 
-  // Fetch compliance summary once on mount
   useEffect(() => {
     getComplianceSummary().then(r => setCompSummary(r.data?.data || {})).catch(() => {})
     getComplianceUpcoming(30).then(r => setCompUpcoming(r.data?.data || [])).catch(() => {})
@@ -245,7 +373,6 @@ export default function MyDashboard() {
   useEffect(() => { fetchData() }, [fetchData])
 
   /* ── Aggregate summary stat cards ─────────────────────────── */
-  /* Admin can filter by site; non-admin backend already scoped their data */
   const filteredSummary = (isAdmin && filters.project_code)
     ? summaryRows.filter(r => r.project_code === filters.project_code)
     : summaryRows
@@ -272,7 +399,6 @@ export default function MyDashboard() {
     ? Math.round((totals.reported / totals.total) * 100)
     : 0
 
-  /* Colour thresholds */
   const dprColor  = dprPct  >= 80 ? '#27AE60' : dprPct  >= 50 ? '#F5A623' : '#E74C3C'
   const utilColor = parseFloat(avgUtil) >= 70 ? '#27AE60'
                   : parseFloat(avgUtil) >= 40 ? '#F5A623' : '#2980B9'
@@ -320,17 +446,22 @@ export default function MyDashboard() {
 
   const dash = loading ? '—' : undefined
 
+  /* ── Open drill-down helper ─────────────────────────────────── */
+  const openDrill = (config) => {
+    if (loading) return
+    setDrilldown(config)
+  }
+
   return (
     <div className="space-y-3">
 
-      {/* Error banner */}
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg px-4 py-2 text-sm text-red-600">
           {error}
         </div>
       )}
 
-      {/* ── Date picker (common control for both card rows) ───── */}
+      {/* Date picker */}
       <div className="flex items-center justify-between">
         <span className="text-xs text-gray-400">
           Data as of&nbsp;
@@ -373,7 +504,7 @@ export default function MyDashboard() {
         </div>
       </div>
 
-      {/* ── ROW 1 · Fleet composition ─────────────────────────── */}
+      {/* ROW 1 · Fleet composition */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <StatCard
           label="Total Own"
@@ -381,6 +512,7 @@ export default function MyDashboard() {
           sub={scopeLabel}
           borderColor="#E67E22"
           valueColor="#E67E22"
+          onClick={!loading && totals.own > 0 ? () => openDrill({ label: 'Own Assets', color: '#E67E22', ownership: 'Own' }) : undefined}
         />
         <StatCard
           label="Total Hire"
@@ -388,6 +520,7 @@ export default function MyDashboard() {
           sub={scopeLabel}
           borderColor="#8E44AD"
           valueColor="#8E44AD"
+          onClick={!loading && totals.hire > 0 ? () => openDrill({ label: 'Hire Assets', color: '#8E44AD', ownership: 'Hire' }) : undefined}
         />
         <StatCard
           label="Total Fleet"
@@ -395,6 +528,7 @@ export default function MyDashboard() {
           sub="Own + Hire combined"
           borderColor="#2980B9"
           valueColor="#2980B9"
+          onClick={!loading && totals.total > 0 ? () => openDrill({ label: 'All Fleet Assets', color: '#2980B9' }) : undefined}
         />
         <StatCard
           label="DPR Updated"
@@ -412,39 +546,22 @@ export default function MyDashboard() {
         />
       </div>
 
-      {/* ── ROW 2 · Machine status ────────────────────────────── */}
+      {/* ROW 2 · Machine status */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <StatCard
-          label="Active"
-          value={dash ?? statusCounts['Active'].toLocaleString()}
-          sub="Working today"
-          borderColor="#27AE60"
-          valueColor="#27AE60"
-        />
-        <StatCard
-          label="Idle"
-          value={dash ?? statusCounts['Idle'].toLocaleString()}
-          sub="On site, not working"
-          borderColor="#F5A623"
-          valueColor="#D68910"
-        />
-        <StatCard
-          label="Breakdown"
-          value={dash ?? statusCounts['Breakdown'].toLocaleString()}
-          sub="Under repair"
-          borderColor="#E74C3C"
-          valueColor="#E74C3C"
-        />
-        <StatCard
-          label="Not Deployed"
-          value={dash ?? statusCounts['Not Deployed'].toLocaleString()}
-          sub="Not on site"
-          borderColor="#95A5A6"
-          valueColor="#7F8C8D"
-        />
+        {STATUSES.map(s => (
+          <StatCard
+            key={s.key}
+            label={s.label}
+            value={dash ?? statusCounts[s.key].toLocaleString()}
+            sub={s.key === 'Active' ? 'Working today' : s.key === 'Idle' ? 'On site, not working' : s.key === 'Breakdown' ? 'Under repair' : 'Not on site'}
+            borderColor={s.color}
+            valueColor={s.color}
+            onClick={!loading && statusCounts[s.key] > 0 ? () => openDrill({ label: `${s.label} Assets`, color: s.color, fleet_status: s.key }) : undefined}
+          />
+        ))}
       </div>
 
-      {/* ── COMPLIANCE summary widget ─────────────────────────── */}
+      {/* COMPLIANCE summary widget */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
           <span className="text-base font-extrabold tracking-widest text-blue-600 uppercase flex items-center gap-2">
@@ -460,7 +577,6 @@ export default function MyDashboard() {
         </div>
 
         <div className="flex flex-col md:flex-row">
-          {/* Status counts */}
           <div className="p-4 flex-shrink-0">
             <div className="grid grid-cols-2 gap-2" style={{ minWidth: 260 }}>
               {COMP_STATUS.map(({ key, label, color, bg, icon: Icon }) => (
@@ -483,7 +599,6 @@ export default function MyDashboard() {
             <p className="text-[10px] text-gray-400 mt-2">{compSummary.total ?? 0} total document records</p>
           </div>
 
-          {/* Upcoming expiries list */}
           <div className="flex-1 border-t md:border-t-0 md:border-l border-gray-100 p-4">
             <p className="text-xs font-semibold text-gray-500 mb-2">Expiring within 30 days</p>
             {compUpcoming.length === 0 ? (
@@ -530,7 +645,6 @@ export default function MyDashboard() {
             )}
           </div>
 
-          {/* Mini pie chart */}
           <div className="flex-shrink-0 border-t md:border-t-0 md:border-l border-gray-100 flex items-center justify-center p-4">
             <div style={{ width: 200, height: 200 }}>
               <PieChart
@@ -542,10 +656,9 @@ export default function MyDashboard() {
         </div>
       </div>
 
-      {/* ── ASSETS detail card (status table + pie) ──────────── */}
+      {/* ASSETS detail card (status table + pie) */}
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm">
 
-        {/* Card header */}
         <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
           <span className="text-base font-extrabold tracking-widest text-teal-500 uppercase">
             Asset Breakdown
@@ -566,10 +679,8 @@ export default function MyDashboard() {
           </div>
         </div>
 
-        {/* Card body: table + pie */}
         <div className="flex flex-col md:flex-row">
 
-          {/* Status table */}
           <div className="p-4 flex-shrink-0">
             {loading ? (
               <div className="py-14 px-10 text-center text-sm text-gray-400">Loading…</div>
@@ -604,26 +715,42 @@ export default function MyDashboard() {
                             <span className="font-medium text-gray-800 text-xs">{s.label}</span>
                           </div>
                         </td>
-                        <td className="border border-gray-300 py-2 text-center font-semibold
-                            text-blue-600 tabular-nums text-xs">
-                          {pivot[s.key][COL_A].toLocaleString()}
+                        <td className="border border-gray-300 py-2 text-center tabular-nums text-xs">
+                          <button
+                            onClick={() => pivot[s.key][COL_A] > 0 && openDrill({ label: `${s.label} — Measurable`, color: s.color, fleet_status: s.key, asset_type: COL_A })}
+                            className={`font-semibold text-blue-600 ${pivot[s.key][COL_A] > 0 ? 'hover:underline cursor-pointer' : 'cursor-default'}`}
+                          >
+                            {pivot[s.key][COL_A].toLocaleString()}
+                          </button>
                         </td>
-                        <td className="border border-gray-300 py-2 text-center font-semibold
-                            text-blue-600 tabular-nums text-xs">
-                          {pivot[s.key][COL_B].toLocaleString()}
+                        <td className="border border-gray-300 py-2 text-center tabular-nums text-xs">
+                          <button
+                            onClick={() => pivot[s.key][COL_B] > 0 && openDrill({ label: `${s.label} — Non-Measurable`, color: s.color, fleet_status: s.key, asset_type: COL_B })}
+                            className={`font-semibold text-blue-600 ${pivot[s.key][COL_B] > 0 ? 'hover:underline cursor-pointer' : 'cursor-default'}`}
+                          >
+                            {pivot[s.key][COL_B].toLocaleString()}
+                          </button>
                         </td>
                       </tr>
                     ))}
                     <tr className="bg-gray-50">
                       <td className="border border-gray-300 py-2 text-center font-bold
                           text-gray-800 text-xs">Total</td>
-                      <td className="border border-gray-300 py-2 text-center font-bold
-                          text-blue-700 tabular-nums text-sm">
-                        {measTotal.toLocaleString()}
+                      <td className="border border-gray-300 py-2 text-center tabular-nums text-sm">
+                        <button
+                          onClick={() => measTotal > 0 && openDrill({ label: 'All Measurable Assets', color: '#2980B9', asset_type: COL_A })}
+                          className={`font-bold text-blue-700 ${measTotal > 0 ? 'hover:underline cursor-pointer' : ''}`}
+                        >
+                          {measTotal.toLocaleString()}
+                        </button>
                       </td>
-                      <td className="border border-gray-300 py-2 text-center font-bold
-                          text-blue-700 tabular-nums text-sm">
-                        {nonMeasTotal.toLocaleString()}
+                      <td className="border border-gray-300 py-2 text-center tabular-nums text-sm">
+                        <button
+                          onClick={() => nonMeasTotal > 0 && openDrill({ label: 'All Non-Measurable Assets', color: '#8E44AD', asset_type: COL_B })}
+                          className={`font-bold text-blue-700 ${nonMeasTotal > 0 ? 'hover:underline cursor-pointer' : ''}`}
+                        >
+                          {nonMeasTotal.toLocaleString()}
+                        </button>
                       </td>
                     </tr>
                   </tbody>
@@ -635,7 +762,6 @@ export default function MyDashboard() {
             )}
           </div>
 
-          {/* Pie chart */}
           <div className="flex-1 border-t md:border-t-0 md:border-l border-gray-100
               flex items-center justify-center">
             <div className="w-full" style={{ height: '290px' }}>
@@ -652,6 +778,16 @@ export default function MyDashboard() {
 
         </div>
       </div>
+
+      {/* Drill-down drawer */}
+      {drilldown && (
+        <FleetDrilldownPanel
+          drilldown={drilldown}
+          date={filters.date}
+          projectCode={filters.project_code}
+          onClose={() => setDrilldown(null)}
+        />
+      )}
 
     </div>
   )

@@ -13,8 +13,10 @@ const COLS = [
   { header: 'Project',         val: m => m.project_code || '' },
   { header: 'SL No',           val: m => m.slno || '' },
   { header: 'Ownership',       val: m => m.ownership || '' },
-  { header: 'Asset Type',      val: m => m.asset_type || '' },
-  { header: 'Equipment Type',  val: m => m.eq_type || '' },
+  { header: 'Asset Group',     val: m => m.asset_group || '' },
+  { header: 'Asset Category',  val: m => m.asset_cat   || '' },
+  { header: 'Asset Name',      val: m => m.eq_type || '' },
+  { header: 'Measurability',   val: m => m.asset_type || '' },
   { header: 'Manufacturer',    val: m => m.manufacturer || '' },
   { header: 'Model',           val: m => m.model || '' },
   { header: 'Capacity',        val: m => m.capacity || '' },
@@ -126,7 +128,8 @@ export default function AssetRegisterDownloadModal({ onClose, defaultProject = '
   const [projects,    setProjects]    = useState([])
   const [projectId,    setProjectId]   = useState(defaultProject)
   const [categories,   setCategories]  = useState({ own_measurable: true, own_non_measurable: true, hire: true })
-  const [eqTypeFilter, setEqTypeFilter] = useState('')   // '' = all types
+  const [groupFilter,  setGroupFilter]  = useState('')
+  const [eqTypeFilter, setEqTypeFilter] = useState('')
   const [eqTypes,      setEqTypes]     = useState([])
   const [format,       setFormat]      = useState('excel')
   const [downloading,  setDownloading] = useState(false)
@@ -148,16 +151,16 @@ export default function AssetRegisterDownloadModal({ onClose, defaultProject = '
       const res      = await getMachines(proj ? { project_code: proj.code } : {})
       const matchers = CATEGORIES.filter(c => categories[c.key]).map(c => c.match)
       let   filtered = res.data.data.filter(m => matchers.some(fn => fn(m)))
+      if (groupFilter)  filtered = filtered.filter(m => m.asset_group === groupFilter)
       if (eqTypeFilter) filtered = filtered.filter(m => m.eq_type === eqTypeFilter)
 
       if (filtered.length === 0) { setError('No assets found for the selected filters.'); setDownloading(false); return }
 
       const projName  = proj ? `${proj.name}${proj.code ? ` (${proj.code})` : ''}` : 'All Projects'
-      const eqLabel   = eqTypeFilter ? eqTypeFilter : 'All Equipment Types'
+      const eqLabel   = eqTypeFilter ? eqTypeFilter : groupFilter ? `${groupFilter} — All` : 'All Asset Names'
       const catLabels = `${selectedCount === 3 ? 'All Categories' : CATEGORIES.filter(c => categories[c.key]).map(c => c.label).join(', ')} | ${eqLabel}`
 
-      // Build filename with eq type slug
-      const eqSlug   = eqTypeFilter ? `_${eqTypeFilter.replace(/\s+/g, '-')}` : ''
+      const eqSlug   = eqTypeFilter ? `_${eqTypeFilter.replace(/\s+/g, '-')}` : groupFilter ? `_${groupFilter.replace(/\s+/g, '-')}` : ''
       const ext      = format === 'excel' ? 'xlsx' : format === 'pdf' ? 'pdf' : 'csv'
       const catLabel = selectedCount === 3 ? 'All' : CATEGORIES.filter(c => categories[c.key]).map(c => c.key).join('+')
       const projLabel = proj ? proj.code : 'AllProjects'
@@ -225,13 +228,22 @@ export default function AssetRegisterDownloadModal({ onClose, defaultProject = '
             </div>
           </div>
 
-          {/* Equipment Type */}
-          <div>
-            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Equipment Type</label>
+          {/* Asset Group + Asset Name filter */}
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide">Asset Filter</label>
+            <select value={groupFilter} onChange={e => { setGroupFilter(e.target.value); setEqTypeFilter('') }}
+              className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+              <option value="">All Asset Groups</option>
+              {[...new Set(eqTypes.map(t => t.asset_group).filter(Boolean))].sort().map(g => (
+                <option key={g} value={g}>{g}</option>
+              ))}
+            </select>
             <select value={eqTypeFilter} onChange={e => setEqTypeFilter(e.target.value)}
               className="border border-gray-300 rounded-lg px-3 py-2 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="">All Equipment Types</option>
-              {eqTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+              <option value="">All Asset Names</option>
+              {eqTypes
+                .filter(t => !groupFilter || t.asset_group === groupFilter)
+                .map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
             </select>
           </div>
 

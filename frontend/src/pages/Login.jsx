@@ -4,12 +4,12 @@ import { useAuth } from '../context/AuthContext'
 import { User, Lock, Eye, EyeOff, ArrowRight } from 'lucide-react'
 
 export default function Login() {
-  const { login }   = useAuth()
-  const navigate    = useNavigate()
-  const [form, setForm]       = useState({ username: '', password: '' })
-  const [error, setError]     = useState('')
+  const { login } = useAuth()
+  const navigate = useNavigate()
+  const [form, setForm] = useState({ username: '', password: '' })
+  const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [showPw, setShowPw]   = useState(false)
+  const [showPw, setShowPw] = useState(false)
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -26,160 +26,92 @@ export default function Login() {
   }
 
   return (
-    <div style={{
-      position: 'fixed', inset: 0,
-      backgroundImage: `
-        linear-gradient(to right,
-          transparent 0%,
-          transparent 40%,
-          rgba(8,18,42,0.98) 58%,
-          rgba(8,18,42,1.0) 100%
-        ),
-        url(/login-bg.png)
-      `,
-      backgroundSize: 'cover',
-      backgroundPosition: 'center',
-      fontFamily: 'inherit',
-    }}>
+    <div className="login-page">
+      {/* Construction background – fills left side */}
+      <div className="login-bg" />
+      <div className="login-bg-pattern" />
 
-      {/* ── Login Card ── */}
-      <div style={{
-        position: 'absolute',
-        top: '50%', right: 'max(40px, 6vw)',
-        transform: 'translateY(-50%)',
-        zIndex: 1,
-        width: 380,
-        maxHeight: '95vh',
-        overflowY: 'auto',
-        background: '#ffffff',
-        borderRadius: 20,
-        boxShadow: '0 20px 60px rgba(0,0,0,0.4)',
-        padding: '36px 32px 28px',
-      }}>
+      {/* ── Login Card – right-aligned, vertically centered ── */}
+      <div className="login-card">
 
-        {/* Logo */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 28 }}>
-          <img src="/rvr-logo.png" alt="RVR" style={{ height: 48, width: 'auto' }} />
-        </div>
-
-        {/* Heading */}
-        <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <h1 style={{ fontSize: 24, fontWeight: 800, color: '#111827', marginBottom: 6 }}>
-            Welcome Back!
-          </h1>
-          <p style={{ fontSize: 13.5, color: '#6b7280' }}>
-            Sign in to access your PNM system
+        {/* Brand header */}
+        <div className="login-header">
+          <img src="/rvr-logo-new.png" alt="RVR Projects" className="login-logo" />
+          <p className="login-division">
+            Plants &amp; Machinery Asset Management Division
           </p>
+          <h1 className="login-title">Welcome Back</h1>
+          <p className="login-subtitle">Access your PNM System</p>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="login-form">
 
           {/* Username */}
-          <div style={{ position: 'relative' }}>
-            <User size={15} style={{
-              position: 'absolute', left: 13, top: '50%',
-              transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none',
-            }} />
+          <div className="float-group">
+            <User size={17} className="float-icon" />
             <input
               type="text"
               value={form.username}
               onChange={e => setForm(f => ({ ...f, username: e.target.value }))}
-              placeholder="Username"
+              placeholder=" "
               required
               autoFocus
               autoCapitalize="none"
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                border: '1.5px solid #e5e7eb', borderRadius: 10,
-                padding: '11px 14px 11px 36px',
-                fontSize: 14, color: '#111827',
-                background: '#f9fafb', outline: 'none',
-                transition: 'border-color 0.15s',
-              }}
-              onFocus={e => (e.target.style.borderColor = '#2563eb')}
-              onBlur={e  => (e.target.style.borderColor = '#e5e7eb')}
+              className="float-input"
             />
+            <label className="float-label">Username</label>
           </div>
 
           {/* Password */}
-          <div style={{ position: 'relative' }}>
-            <Lock size={15} style={{
-              position: 'absolute', left: 13, top: '50%',
-              transform: 'translateY(-50%)', color: '#9ca3af', pointerEvents: 'none',
-            }} />
+          <div className="float-group">
+            <Lock size={17} className="float-icon" />
             <input
               type={showPw ? 'text' : 'password'}
               value={form.password}
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
-              placeholder="Password"
+              placeholder=" "
               required
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                border: '1.5px solid #e5e7eb', borderRadius: 10,
-                padding: '11px 42px 11px 36px',
-                fontSize: 14, color: '#111827',
-                background: '#f9fafb', outline: 'none',
-                transition: 'border-color 0.15s',
-              }}
-              onFocus={e => (e.target.style.borderColor = '#2563eb')}
-              onBlur={e  => (e.target.style.borderColor = '#e5e7eb')}
+              className="float-input float-input--pw"
             />
+            <label className="float-label">Password</label>
             <button
               type="button"
               onClick={() => setShowPw(v => !v)}
               tabIndex={-1}
-              style={{
-                position: 'absolute', right: 13, top: '50%',
-                transform: 'translateY(-50%)',
-                background: 'none', border: 'none', cursor: 'pointer',
-                color: '#9ca3af', display: 'flex', alignItems: 'center', padding: 0,
-              }}
+              className="pw-toggle"
+              aria-label={showPw ? 'Hide password' : 'Show password'}
             >
-              {showPw ? <EyeOff size={15} /> : <Eye size={15} />}
+              {showPw ? <EyeOff size={17} /> : <Eye size={17} />}
             </button>
           </div>
 
-          {/* Error */}
           {error && (
-            <div style={{
-              background: '#fef2f2', border: '1px solid #fecaca',
-              borderRadius: 8, padding: '9px 13px',
-              fontSize: 13, color: '#dc2626',
-            }}>
+            <div className="login-error" role="alert">
               {error}
             </div>
           )}
 
-          {/* Login button */}
           <button
             type="submit"
             disabled={loading}
-            style={{
-              width: '100%',
-              background: loading ? '#93c5fd' : 'linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)',
-              color: '#ffffff',
-              border: 'none',
-              borderRadius: 10,
-              padding: '12px 20px',
-              fontSize: 15,
-              fontWeight: 700,
-              cursor: loading ? 'not-allowed' : 'pointer',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              boxShadow: loading ? 'none' : '0 4px 16px rgba(37,99,235,0.38)',
-              transition: 'all 0.15s',
-              marginTop: 4,
-            }}
-            onMouseEnter={e => { if (!loading) e.currentTarget.style.boxShadow = '0 6px 22px rgba(37,99,235,0.5)' }}
-            onMouseLeave={e => { if (!loading) e.currentTarget.style.boxShadow = '0 4px 16px rgba(37,99,235,0.38)' }}
+            className="login-btn"
           >
-            {loading ? 'Signing in…' : (<>Login <ArrowRight size={16} /></>)}
+            {loading
+              ? 'Signing in…'
+              : <><span>Login</span><ArrowRight size={18} strokeWidth={2.5} /></>
+            }
           </button>
+
         </form>
 
-        {/* Footer */}
-        <p style={{ marginTop: 28, fontSize: 11.5, color: '#9ca3af', textAlign: 'center' }}>
-          © {new Date().getFullYear()} RVR Projects Pvt. Ltd.<br />All Rights Reserved
-        </p>
+        {/* Footer – divider + copyright, in normal flow */}
+        <div className="login-footer">
+          <p className="login-copyright">
+            © {new Date().getFullYear()} RVR Projects Pvt. Ltd.<br />All Rights Reserved
+          </p>
+        </div>
+
       </div>
     </div>
   )

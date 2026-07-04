@@ -3,30 +3,41 @@ import { X, Download, FileSpreadsheet, FileText, Loader2 } from 'lucide-react'
 
 const ALL_COLS = [
   // Basic Info
-  { key: 'idx',          h: '#',               group: 'Basic Info',  v: (m, i) => i + 1 },
-  { key: 'project',      h: 'Project',          group: 'Basic Info',  v: m => m.project_code || '' },
-  { key: 'slno',         h: 'SL#',              group: 'Basic Info',  v: m => m.slno || '' },
-  { key: 'asset_code',   h: 'Asset Code',       group: 'Basic Info',  v: m => m.asset_code || '' },
-  { key: 'eq_type',      h: 'Equipment Type',   group: 'Basic Info',  v: m => m.eq_type || '' },
-  { key: 'category',     h: 'Category',         group: 'Basic Info',  v: m => m.asset_type || '' },
-  { key: 'status',       h: 'Status',           group: 'Basic Info',  v: m => m.active ? 'Active' : (m.deactivation_reason || 'Inactive') },
-  // Ownership & Hire
-  { key: 'ownership',    h: 'Own/Hire',         group: 'Ownership',   v: m => m.ownership || '' },
-  { key: 'reg_no',       h: 'Reg No',           group: 'Ownership',   v: m => m.reg_no || '' },
-  { key: 'vendor',       h: 'Vendor',           group: 'Ownership',   v: m => m.vendor || '' },
-  { key: 'rate',         h: 'Hire/Day (₹)',     group: 'Ownership',   v: m => m.rate || '' },
-  { key: 'rate_monthly', h: 'Hire/Month (₹)',   group: 'Ownership',   v: m => m.rate_monthly || '' },
-  // Technical
-  { key: 'shift',        h: 'Shift',            group: 'Technical',   v: m => m.shift_type || '' },
-  { key: 'basis',        h: 'Reading Basis',    group: 'Technical',   v: m => m.reading1_basis || '' },
-  { key: 'fuel_min',     h: 'Fuel Min (L/hr)',  group: 'Technical',   v: m => m.fuel_min ?? '' },
-  { key: 'fuel_max',     h: 'Fuel Max (L/hr)',  group: 'Technical',   v: m => m.fuel_max ?? '' },
-  { key: 'fuel_min_km',  h: 'Fuel Min (km/L)',  group: 'Technical',   v: m => m.fuel_min_km ?? '' },
-  { key: 'fuel_max_km',  h: 'Fuel Max (km/L)',  group: 'Technical',   v: m => m.fuel_max_km ?? '' },
-  { key: 'planned',      h: 'Planned Hrs/Day',  group: 'Technical',   v: m => m.planned_hours ?? '' },
+  { key: 'idx',          h: 'Sl No',              group: 'Basic Info',     v: (m, i) => i + 1 },
+  { key: 'project',      h: 'Project Code',        group: 'Basic Info',     v: m => m.project_code || '' },
+  { key: 'asset_code',   h: 'Asset Code',          group: 'Basic Info',     v: m => m.asset_code || '' },
+  { key: 'nickname',     h: 'Nickname',            group: 'Basic Info',     v: m => m.nickname || '' },
+  { key: 'asset_group',  h: 'Asset Group',         group: 'Basic Info',     v: m => m.asset_group || '' },
+  { key: 'asset_cat',    h: 'Asset Category',      group: 'Basic Info',     v: m => m.asset_cat || '' },
+  { key: 'eq_type',      h: 'Asset Name',          group: 'Basic Info',     v: m => m.eq_type || '' },
+  { key: 'measurability',h: 'Measurability',       group: 'Basic Info',     v: m => m.asset_type || '' },
+  { key: 'status',       h: 'Status',              group: 'Basic Info',     v: m => m.active ? 'Active' : (m.deactivation_reason || 'Inactive') },
+  // Ownership
+  { key: 'ownership',    h: 'Ownership',           group: 'Ownership',      v: m => m.ownership || '' },
+  { key: 'owner_name',   h: 'Owner Name',          group: 'Ownership',      v: m => m.ownership === 'Own' ? 'RVR Projects Pvt Ltd' : (m.vendor || '') },
+  { key: 'rate',         h: 'Hire Charges/Day (₹)',group: 'Ownership',      v: m => m.rate || '' },
+  { key: 'rate_monthly', h: 'Hire Charges/Month (₹)',group: 'Ownership',    v: m => m.rate_monthly || '' },
+  // Specifications
+  { key: 'manufacturer', h: 'Manufacturer',        group: 'Specifications', v: m => m.manufacturer || '' },
+  { key: 'model',        h: 'Model',               group: 'Specifications', v: m => m.model || '' },
+  { key: 'yom',          h: 'Year of Manufacturing',group: 'Specifications',v: m => m.yom || '' },
+  { key: 'capacity',     h: 'Capacity',            group: 'Specifications', v: m => m.capacity || '' },
+  { key: 'uom',          h: 'UOM',                 group: 'Specifications', v: m => m.uom || '' },
+  // Identification
+  { key: 'reg_no',       h: 'Reg No',              group: 'Identification', v: m => m.reg_no || '' },
+  { key: 'slno',         h: 'Machine Sl no',       group: 'Identification', v: m => m.slno || '' },
+  { key: 'chassis_no',   h: 'Chassis No',          group: 'Identification', v: m => m.chassis_no || '' },
+  { key: 'engine_no',    h: 'Engine number',       group: 'Identification', v: m => m.engine_no || '' },
+  // Operational
+  { key: 'shift',        h: 'Shift Type',          group: 'Operational',    v: m => m.shift_type || '' },
+  { key: 'fuel_min',     h: 'Fuel Min (L/hr)',     group: 'Operational',    v: m => m.fuel_min ?? '' },
+  { key: 'fuel_max',     h: 'Fuel Max (L/hr)',     group: 'Operational',    v: m => m.fuel_max ?? '' },
+  { key: 'fuel_min_km',  h: 'Fuel Min (kms/ltr)',  group: 'Operational',    v: m => m.fuel_min_km ?? '' },
+  { key: 'fuel_max_km',  h: 'Fuel Max (kms/ltr)',  group: 'Operational',    v: m => m.fuel_max_km ?? '' },
+  { key: 'planned',      h: 'Planned Hrs/Day',     group: 'Operational',    v: m => m.planned_hours ?? '' },
 ]
 
-const GROUPS = ['Basic Info', 'Ownership', 'Technical']
+const GROUPS = ['Basic Info', 'Ownership', 'Specifications', 'Identification', 'Operational']
 
 function pageSettings(colCount) {
   if (colCount <= 7)  return { orientation: 'portrait',  format: 'a4', label: 'A4 Portrait' }

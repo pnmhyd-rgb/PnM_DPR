@@ -1,5 +1,56 @@
 const db = require('../config/db');
 
+// Shared nickname formula — keep in sync with frontend autoNickname() in Machines.jsx
+function buildNickname(eq_type, asset_code, reg_no, capacity, uom, model, slno) {
+  const name = (eq_type || '').trim();
+  if (!name) return null;
+
+  // Tower cranes: name-Model-SL#
+  if (/tower\s*crane/i.test(name)) {
+    const modelPart = (model || '').toString().trim();
+    const slnoPart  = (slno  || '').toString().trim();
+    return [name, modelPart, slnoPart].filter(Boolean).join('-');
+  }
+
+  const reg = (reg_no || '').toString().trim();
+  // Vehicles / registered assets: name-RegNo
+  if (reg) return `${name}-${reg}`;
+
+  const codeParts = (asset_code || '').split('/');
+  const lastSeg   = codeParts.length > 1 ? codeParts[codeParts.length - 1].trim() : '';
+  const codeSeq   = /^\d{4}$/.test(lastSeg) ? '' : lastSeg;
+
+  const WEIGHT_UOMS = new Set(['kg', 'kgs', 'lb', 'lbs']);
+  const capRaw = (capacity || '').toString().trim();
+  let capNum = '', capUnit = (uom || '').toString().trim();
+
+  // Try capacity field: plain number like "125" or combined "125 KVA"/"125KVA"
+  if (/^\d+(\.\d+)?$/.test(capRaw)) {
+    capNum = capRaw;
+  } else if (capRaw) {
+    const m = capRaw.match(/^(\d+(?:\.\d+)?)\s*([A-Za-z]+)$/);
+    if (m) { capNum = m[1]; capUnit = m[2]; }
+  }
+
+  // Fallback: extract numeric capacity from asset code segments (e.g. RVR/DG/2013/125/10 → "125")
+  if (!capNum) {
+    for (let i = 1; i < codeParts.length - 1; i++) {
+      const seg = codeParts[i].trim();
+      if (/^\d{4}$/.test(seg)) continue;
+      const cm = seg.match(/^(\d+(?:\.\d+)?)\s*([A-Za-z]+)$/);
+      if (cm) { capNum = cm[1]; capUnit = cm[2]; break; }
+      if (/^\d+(\.\d+)?$/.test(seg)) { capNum = seg; break; }
+    }
+  }
+
+  const isWeight = WEIGHT_UOMS.has(capUnit.toLowerCase());
+  const fullName = (capNum && !isWeight)
+    ? (capUnit ? `${capNum} ${capUnit} ${name}` : `${capNum} ${name}`)
+    : name;
+
+  return codeSeq ? `${fullName}-${codeSeq}` : fullName;
+}
+
 // Auto-create machine_reading_configs from equipment_reading_mappings for a given machine + eq_type
 async function autoCreateReadingConfigs(machineId, eqType) {
   const mappings = await db.query(
@@ -25,8 +76,12 @@ const getAll = async (req, res) => {
     // include_inactive=true → show ONLY deactivated machines; default → only active
     const activeFilter = include_inactive === 'true' ? 'false' : 'true';
     let query = `
-      SELECT m.*, p.code AS project_code, p.name AS project_name
-      FROM machines m JOIN projects p ON m.project_id = p.id WHERE m.active = ${activeFilter}`;
+      SELECT m.*, p.code AS project_code, p.name AS project_name,
+             et.asset_group, et.asset_cat
+      FROM machines m
+      JOIN projects p ON m.project_id = p.id
+      LEFT JOIN equipment_types et ON LOWER(et.name) = LOWER(m.eq_type)
+      WHERE m.active = ${activeFilter}`;
     const params = [];
 
     if (project_id) { params.push(project_id); query += ` AND m.project_id = $${params.length}`; }
@@ -54,10 +109,10 @@ const create = async (req, res) => {
 
     const {
       project_id, slno, asset_code, eq_type, manufacturer, model, capacity, uom,
-      reg_no, chassis_no, ownership, asset_type, vendor, rate, rate_monthly,
+      reg_no, chassis_no, engine_no, ownership, asset_type, vendor, rate, rate_monthly,
       fuel_type, reading1_basis, reading2_basis, dual_reading,
       fuel_min, fuel_max, fuel_min_km, fuel_max_km, planned_hours, shift_type,
-      date_of_purchase, po_number, price
+      date_of_purchase, po_number, price, yom, nickname
     } = req.body;
 
     if (!project_id || !slno || !eq_type) {
@@ -79,17 +134,17 @@ const create = async (req, res) => {
     const result = await db.query(
       `INSERT INTO machines
         (project_id, slno, asset_code, eq_type, manufacturer, model, capacity, uom,
-         reg_no, chassis_no, ownership, asset_type, vendor, rate, rate_monthly,
+         reg_no, chassis_no, engine_no, ownership, asset_type, vendor, rate, rate_monthly,
          fuel_type, reading1_basis, reading2_basis, dual_reading,
          fuel_min, fuel_max, fuel_min_km, fuel_max_km, planned_hours, shift_type,
-         date_of_purchase, po_number, price)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+         date_of_purchase, po_number, price, yom, nickname)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
        RETURNING *`,
       [
         project_id, slno.trim(), asset_code?.trim() || null, eq_type.trim(),
         manufacturer || null, model || null,
         capacity || null, uom || null,
-        reg_no || null, chassis_no || null,
+        reg_no || null, chassis_no || null, engine_no || null,
         ownership || 'Own', asset_type || null,
         vendor || null, rate || null, rate_monthly || null,
         fuel_type || null,
@@ -98,7 +153,7 @@ const create = async (req, res) => {
         fuel_min || null, fuel_max || null,
         fuel_min_km || null, fuel_max_km || null,
         planned_hours || 10, shift_type,
-        date_of_purchase || null, po_number || null, price || null
+        date_of_purchase || null, po_number || null, price || null, yom || null, nickname || null
       ]
     );
 
@@ -168,23 +223,29 @@ const bulkCreate = async (req, res) => {
         const isNew = existsRes.rows.length === 0;
         const wasInactive = existsRes.rows[0]?.active === false;
 
+        // Auto-generate nickname if not provided in the upload row
+        const bulkNickname = row.nickname?.toString().trim() ||
+          buildNickname(row.eq_type, row.asset_code || slnoTrimmed, row.reg_no, row.capacity, row.uom, row.model, slnoTrimmed);
+
         await db.query(
           `INSERT INTO machines
-            (project_id, slno, asset_code, eq_type, manufacturer, model, capacity, uom,
-             reg_no, chassis_no, ownership, asset_type, vendor, rate, rate_monthly,
+            (project_id, slno, asset_code, eq_type, manufacturer, model, yom, capacity, uom,
+             reg_no, chassis_no, engine_no, ownership, asset_type, vendor, rate, rate_monthly,
              fuel_type, reading1_basis, reading2_basis, dual_reading,
              fuel_min, fuel_max, fuel_min_km, fuel_max_km, planned_hours, shift_type,
-             date_of_purchase, po_number, price)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
+             date_of_purchase, po_number, price, nickname)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
            ON CONFLICT (project_id, slno) DO UPDATE SET
              asset_code       = EXCLUDED.asset_code,
              eq_type          = EXCLUDED.eq_type,
              manufacturer     = EXCLUDED.manufacturer,
              model            = EXCLUDED.model,
+             yom              = COALESCE(EXCLUDED.yom, machines.yom),
              capacity         = EXCLUDED.capacity,
              uom              = EXCLUDED.uom,
              reg_no           = EXCLUDED.reg_no,
              chassis_no       = EXCLUDED.chassis_no,
+             engine_no        = EXCLUDED.engine_no,
              ownership        = EXCLUDED.ownership,
              asset_type       = EXCLUDED.asset_type,
              vendor           = EXCLUDED.vendor,
@@ -198,20 +259,21 @@ const bulkCreate = async (req, res) => {
              fuel_max         = EXCLUDED.fuel_max,
              fuel_min_km      = EXCLUDED.fuel_min_km,
              fuel_max_km      = EXCLUDED.fuel_max_km,
-             planned_hours      = EXCLUDED.planned_hours,
-             shift_type         = EXCLUDED.shift_type,
-             date_of_purchase   = EXCLUDED.date_of_purchase,
-             po_number          = EXCLUDED.po_number,
-             price              = EXCLUDED.price,
-             active             = true,
+             planned_hours    = EXCLUDED.planned_hours,
+             shift_type       = EXCLUDED.shift_type,
+             date_of_purchase = EXCLUDED.date_of_purchase,
+             po_number        = EXCLUDED.po_number,
+             price            = EXCLUDED.price,
+             nickname         = EXCLUDED.nickname,
+             active           = true,
              deactivation_reason = NULL,
-             updated_at         = NOW()`,
+             updated_at       = NOW()`,
           [
             project_id, slnoTrimmed, row.asset_code?.toString().trim() || null,
             row.eq_type?.trim(),
-            row.manufacturer || null, row.model || null,
+            row.manufacturer || null, row.model || null, row.yom || null,
             row.capacity || null, row.uom || null,
-            row.reg_no || null, row.chassis_no || null,
+            row.reg_no || null, row.chassis_no || null, row.engine_no || null,
             row.ownership || 'Own', row.asset_type || null,
             row.vendor || null, row.rate || null, row.rate_monthly || null,
             row.fuel_type || null,
@@ -220,7 +282,8 @@ const bulkCreate = async (req, res) => {
             row.fuel_min || null, row.fuel_max || null,
             row.fuel_min_km || null, row.fuel_max_km || null,
             row.planned_hours || 10, shift,
-            row.date_of_purchase || null, row.po_number || null, row.price || null
+            row.date_of_purchase || null, row.po_number || null, row.price || null,
+            bulkNickname || null
           ]
         );
         if (row.ownership === 'Hire' && row.vendor?.trim()) {
@@ -254,10 +317,10 @@ const update = async (req, res) => {
     const { id } = req.params;
     const {
       slno, asset_code, eq_type, manufacturer, model, capacity, uom,
-      reg_no, chassis_no, ownership, asset_type, vendor, rate, rate_monthly,
+      reg_no, chassis_no, engine_no, ownership, asset_type, vendor, rate, rate_monthly,
       fuel_type, reading1_basis, reading2_basis, dual_reading,
       fuel_min, fuel_max, fuel_min_km, fuel_max_km, planned_hours, shift_type, active,
-      date_of_purchase, po_number, price
+      date_of_purchase, po_number, price, yom, nickname
     } = req.body;
 
     if (shift_type && !['Single Shift', 'Dual Shift'].includes(shift_type)) {
@@ -275,33 +338,36 @@ const update = async (req, res) => {
         uom              = COALESCE($7,  uom),
         reg_no           = COALESCE($8,  reg_no),
         chassis_no       = COALESCE($9,  chassis_no),
-        ownership        = COALESCE($10, ownership),
-        asset_type       = COALESCE($11, asset_type),
-        vendor           = COALESCE($12, vendor),
-        rate             = COALESCE($13, rate),
-        rate_monthly     = COALESCE($14, rate_monthly),
-        fuel_type        = COALESCE($15, fuel_type),
-        reading1_basis   = COALESCE($16, reading1_basis),
-        reading2_basis   = COALESCE($17, reading2_basis),
-        dual_reading     = COALESCE($18, dual_reading),
-        fuel_min         = COALESCE($19, fuel_min),
-        fuel_max         = COALESCE($20, fuel_max),
-        fuel_min_km      = COALESCE($21, fuel_min_km),
-        fuel_max_km      = COALESCE($22, fuel_max_km),
-        planned_hours    = COALESCE($23, planned_hours),
-        shift_type       = COALESCE($24, shift_type),
-        active           = COALESCE($25, active),
-        date_of_purchase = COALESCE($26, date_of_purchase),
-        po_number        = COALESCE($27, po_number),
-        price            = COALESCE($28, price),
+        engine_no        = COALESCE($10, engine_no),
+        ownership        = COALESCE($11, ownership),
+        asset_type       = COALESCE($12, asset_type),
+        vendor           = COALESCE($13, vendor),
+        rate             = COALESCE($14, rate),
+        rate_monthly     = COALESCE($15, rate_monthly),
+        fuel_type        = COALESCE($16, fuel_type),
+        reading1_basis   = COALESCE($17, reading1_basis),
+        reading2_basis   = COALESCE($18, reading2_basis),
+        dual_reading     = COALESCE($19, dual_reading),
+        fuel_min         = COALESCE($20, fuel_min),
+        fuel_max         = COALESCE($21, fuel_max),
+        fuel_min_km      = COALESCE($22, fuel_min_km),
+        fuel_max_km      = COALESCE($23, fuel_max_km),
+        planned_hours    = COALESCE($24, planned_hours),
+        shift_type       = COALESCE($25, shift_type),
+        active           = COALESCE($26, active),
+        date_of_purchase = COALESCE($27, date_of_purchase),
+        po_number        = COALESCE($28, po_number),
+        price            = COALESCE($29, price),
+        yom              = COALESCE($30, yom),
+        nickname         = COALESCE($31, nickname),
         updated_at       = NOW()
-       WHERE id = $29
+       WHERE id = $32
        RETURNING *`,
       [
         slno || null, asset_code || null, eq_type || null,
         manufacturer || null, model || null,
         capacity || null, uom || null,
-        reg_no || null, chassis_no || null,
+        reg_no || null, chassis_no || null, engine_no || null,
         ownership || null, asset_type || null,
         vendor || null, rate || null, rate_monthly || null,
         fuel_type || null,
@@ -311,7 +377,8 @@ const update = async (req, res) => {
         fuel_min_km || null, fuel_max_km || null,
         planned_hours || null, shift_type || null,
         active !== undefined ? active : null,
-        date_of_purchase || null, po_number || null, price || null,
+        date_of_purchase || null, po_number || null, price || null, yom || null,
+        nickname !== undefined ? (nickname || null) : null,
         id
       ]
     );
@@ -372,6 +439,77 @@ const hardDelete = async (req, res) => {
     res.json({ message: 'Machine permanently deleted' });
   } catch (err) {
     console.error('Hard delete machine error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const fleetList = async (req, res) => {
+  try {
+    const { date, project_code, ownership, fleet_status, asset_type } = req.query;
+    const targetDate = date || new Date().toISOString().slice(0, 10);
+
+    const params = [targetDate];
+    let extraFilters = '';
+
+    if (project_code) {
+      params.push(project_code);
+      extraFilters += ` AND p.code = $${params.length}`;
+    }
+    if (req.user.role !== 'admin' && req.user.project_codes.length > 0) {
+      params.push(req.user.project_codes);
+      extraFilters += ` AND p.code = ANY($${params.length})`;
+    }
+    if (ownership) {
+      params.push(ownership);
+      extraFilters += ` AND m.ownership = $${params.length}`;
+    }
+    if (asset_type) {
+      params.push(asset_type);
+      extraFilters += ` AND m.asset_type = $${params.length}`;
+    }
+
+    // fleet_status filter applied after the subquery
+    params.push(fleet_status || null);
+    const statusParam = `$${params.length}`;
+
+    const result = await db.query(`
+      SELECT * FROM (
+        SELECT m.id, m.slno, m.eq_type, m.ownership, m.asset_type,
+               m.project_id,
+               m.asset_code, m.manufacturer, m.model, m.yom,
+               m.capacity, m.uom, m.reg_no, m.chassis_no, m.fuel_type,
+               m.shift_type, m.reading1_basis, m.reading2_basis, m.dual_reading,
+               m.fuel_min, m.fuel_max, m.fuel_min_km, m.fuel_max_km, m.planned_hours,
+               m.date_of_purchase, m.price, m.po_number,
+               m.vendor, m.rate, m.rate_monthly,
+               m.active, m.deactivation_reason,
+               m.created_at, m.updated_at,
+               p.code AS project_code, p.name AS project_name,
+               et.asset_group, et.asset_cat,
+               CASE
+                 WHEN e.id IS NULL                         THEN 'Not Deployed'
+                 WHEN COALESCE(e.breakdown, 0) > 0         THEN 'Breakdown'
+                 WHEN COALESCE(e.working_hours, 0) > 0     THEN 'Active'
+                 ELSE 'Idle'
+               END AS fleet_status
+        FROM machines m
+        JOIN projects p ON m.project_id = p.id
+        LEFT JOIN equipment_types et ON LOWER(et.name) = LOWER(m.eq_type)
+        LEFT JOIN (
+          SELECT DISTINCT ON (machine_id) id, machine_id, breakdown, working_hours
+          FROM dpr_entries
+          WHERE entry_date = $1
+          ORDER BY machine_id, id DESC
+        ) e ON e.machine_id = m.id
+        WHERE m.active = true ${extraFilters}
+      ) AS sub
+      WHERE (${statusParam}::text IS NULL OR fleet_status = ${statusParam})
+      ORDER BY slno
+    `, params);
+
+    res.json({ data: result.rows, date: targetDate });
+  } catch (err) {
+    console.error('Fleet list error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 };
@@ -463,4 +601,28 @@ const resetReadingConfigs = async (req, res) => {
   }
 };
 
-module.exports = { getAll, create, update, remove, transfer, hardDelete, bulkCreate, fleetSummary, resetReadingConfigs, propagateReadingConfigs };
+const regenerateNicknames = async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+    const machines = await db.query(
+      `SELECT id, eq_type, asset_code, slno, reg_no, capacity, uom, model FROM machines`
+    );
+    let updated = 0;
+    for (const m of machines.rows) {
+      const nickname = buildNickname(m.eq_type, m.asset_code, m.reg_no, m.capacity, m.uom, m.model, m.slno);
+      if (nickname) {
+        await db.query(
+          'UPDATE machines SET nickname = $1, updated_at = NOW() WHERE id = $2',
+          [nickname, m.id]
+        );
+        updated++;
+      }
+    }
+    res.json({ updated });
+  } catch (err) {
+    console.error('Regenerate nicknames error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+module.exports = { getAll, create, update, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames };

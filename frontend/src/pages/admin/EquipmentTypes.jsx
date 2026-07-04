@@ -1,20 +1,29 @@
 import { useState, useEffect, useRef } from 'react'
 import {
   getEquipmentTypes, createEquipmentType, bulkCreateEquipmentTypes,
-  updateEquipmentType, deleteEquipmentType
+  updateEquipmentType, deleteEquipmentType,
+  getFuelTypeOptions, createFuelTypeOption, deleteFuelTypeOption,
 } from '../../lib/api'
+import { useAuth } from '../../context/AuthContext'
 import {
   Plus, Trash2, Pencil, Check, X, Search, List,
-  AlertTriangle, FileSpreadsheet, FileText, Download, Upload
+  AlertTriangle, FileSpreadsheet, FileText, Download, Upload, Fuel,
 } from 'lucide-react'
 
-const CATEGORIES = ['Measurable', 'Non-Measurable']
+const CATEGORIES   = ['Measurable', 'Non-Measurable']
+
+/* ── Unique sorted list helpers ───────────────────────────────────────────── */
+function uniqueSorted(arr) {
+  return [...new Set(arr.filter(Boolean))].sort()
+}
 
 /* ── Export helpers ───────────────────────────────────────────────────────── */
 const COLS = [
   { header: 'Sl No',           val: (t, i) => i + 1 },
-  { header: 'Equipment Type',  val: t => t.name },
-  { header: 'Category',        val: t => t.asset_category || '—' },
+  { header: 'Asset Group',     val: t => t.asset_group || '—' },
+  { header: 'Asset Category',  val: t => t.asset_cat   || '—' },
+  { header: 'Asset Name',      val: t => t.name },
+  { header: 'Measurability',   val: t => t.asset_category || '—' },
   { header: 'Own (Working)',   val: t => parseInt(t.own_count)   || 0 },
   { header: 'Hire (Working)',  val: t => parseInt(t.hire_count)  || 0 },
   { header: 'Total Machines',  val: t => parseInt(t.usage_count) || 0 },
@@ -27,10 +36,10 @@ async function exportExcel(rows) {
   const totalOwn  = rows.reduce((s, t) => s + (parseInt(t.own_count)   || 0), 0)
   const totalHire = rows.reduce((s, t) => s + (parseInt(t.hire_count)  || 0), 0)
   const totalAll  = rows.reduce((s, t) => s + (parseInt(t.usage_count) || 0), 0)
-  const totalsRow = ['', 'GRAND TOTAL', '', totalOwn, totalHire, totalAll]
+  const totalsRow = ['', '', '', 'GRAND TOTAL', '', totalOwn, totalHire, totalAll]
 
   const ws = XLSX.utils.aoa_to_sheet([
-    ['Equipment Types'],
+    ['Asset Names (Equipment Types)'],
     [`Generated: ${new Date().toLocaleString('en-IN')}`],
     [],
     COLS.map(c => c.header),
@@ -38,20 +47,9 @@ async function exportExcel(rows) {
     [],
     totalsRow,
   ])
-  ws['!cols'] = [{ wch: 8 }, { wch: 36 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }]
-
-  COLS.forEach((_, ci) => {
-    const ref = XLSX.utils.encode_cell({ r: 3, c: ci })
-    if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'DCDCDC' } } }
-  })
-  const totalsR = 4 + rows.length + 1
-  totalsRow.forEach((_, ci) => {
-    const ref = XLSX.utils.encode_cell({ r: totalsR, c: ci })
-    if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0E0FF' } } }
-  })
-
-  XLSX.utils.book_append_sheet(wb, ws, 'Equipment Types')
-  XLSX.writeFile(wb, `EquipmentTypes_${new Date().toISOString().slice(0, 10)}.xlsx`)
+  ws['!cols'] = [{ wch: 6 }, { wch: 30 }, { wch: 32 }, { wch: 36 }, { wch: 18 }, { wch: 14 }, { wch: 14 }, { wch: 14 }]
+  XLSX.utils.book_append_sheet(wb, ws, 'Asset Names')
+  XLSX.writeFile(wb, `AssetNames_${new Date().toISOString().slice(0, 10)}.xlsx`)
 }
 
 async function exportPDF(rows) {
@@ -64,7 +62,7 @@ async function exportPDF(rows) {
   const totalAll  = rows.reduce((s, t) => s + (parseInt(t.usage_count) || 0), 0)
 
   doc.setFontSize(13); doc.setFont('helvetica', 'bold')
-  doc.text('Equipment Types', 14, 12)
+  doc.text('Asset Names (Equipment Types)', 14, 12)
   doc.setFontSize(8); doc.setFont('helvetica', 'normal'); doc.setTextColor(100)
   doc.text(
     `${rows.length} types  |  Own: ${totalOwn}  Hire: ${totalHire}  Total Machines: ${totalAll}  |  Generated: ${new Date().toLocaleString('en-IN')}`,
@@ -77,17 +75,17 @@ async function exportPDF(rows) {
     head: [COLS.map(c => c.header)],
     body: [
       ...rows.map((t, i) => COLS.map(c => String(c.val(t, i)))),
-      ['', 'GRAND TOTAL', '', String(totalOwn), String(totalHire), String(totalAll)],
+      ['', '', '', 'GRAND TOTAL', '', String(totalOwn), String(totalHire), String(totalAll)],
     ],
-    styles: { fontSize: 9, cellPadding: 2 },
+    styles: { fontSize: 8, cellPadding: 2 },
     headStyles: { fillColor: [248, 248, 248], textColor: 0, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [248, 249, 250] },
     columnStyles: {
-      0: { cellWidth: 14 },
-      2: { cellWidth: 28 },
-      3: { cellWidth: 26, halign: 'center' },
-      4: { cellWidth: 26, halign: 'center' },
-      5: { cellWidth: 26, halign: 'center' },
+      0: { cellWidth: 10 },
+      4: { cellWidth: 24 },
+      5: { cellWidth: 22, halign: 'center' },
+      6: { cellWidth: 22, halign: 'center' },
+      7: { cellWidth: 22, halign: 'center' },
     },
     didParseCell: d => {
       if (d.row.index === rows.length) {
@@ -101,7 +99,7 @@ async function exportPDF(rows) {
       doc.text(`Page ${d.pageNumber}`, doc.internal.pageSize.getWidth() - 20, doc.internal.pageSize.getHeight() - 6)
     }
   })
-  doc.save(`EquipmentTypes_${new Date().toISOString().slice(0, 10)}.pdf`)
+  doc.save(`AssetNames_${new Date().toISOString().slice(0, 10)}.pdf`)
 }
 
 /* ── Bulk upload helpers ──────────────────────────────────────────────────── */
@@ -109,20 +107,20 @@ async function downloadTemplate() {
   const XLSX = await import('xlsx')
   const wb = XLSX.utils.book_new()
   const ws = XLSX.utils.aoa_to_sheet([
-    ['Equipment Types Bulk Upload Template'],
-    ['Fill in Equipment Type (required) and Category (Measurable or Non-Measurable). Do not edit the header row (row 4).'],
+    ['Asset Names Bulk Upload Template'],
+    ['Fill in Asset Group, Asset Category, Asset Name (required) and Measurability. Do not edit the header row (row 4).'],
     [],
-    ['Sl No', 'Equipment Type', 'Category'],
-    [1, 'Excavator', 'Measurable'],
-    [2, 'Generator', 'Measurable'],
-    [3, 'Safety Helmet', 'Non-Measurable'],
+    ['Sl No', 'Asset Group', 'Asset Category', 'Asset Name', 'Measurability'],
+    [1, 'Earthmoving Equipment', 'Excavation Equipment', 'Excavator', 'Measurable'],
+    [2, 'Air, Power & Pump Equipment', 'Power Equipment', 'Diesel Generator', 'Measurable'],
+    [3, 'Industrial Equipment', 'Steel Processing Equipment', 'Bar Bending Machine', 'Non-Measurable'],
   ])
-  ws['!cols'] = [{ wch: 8 }, { wch: 30 }, { wch: 22 }]
-  ;['A4', 'B4', 'C4'].forEach(ref => {
+  ws['!cols'] = [{ wch: 8 }, { wch: 30 }, { wch: 32 }, { wch: 34 }, { wch: 20 }]
+  ;['A4', 'B4', 'C4', 'D4', 'E4'].forEach(ref => {
     if (ws[ref]) ws[ref].s = { font: { bold: true }, fill: { fgColor: { rgb: 'D0D8E8' } } }
   })
   XLSX.utils.book_append_sheet(wb, ws, 'Template')
-  XLSX.writeFile(wb, 'EquipmentTypes_Template.xlsx')
+  XLSX.writeFile(wb, 'AssetNames_Template.xlsx')
 }
 
 async function parseUploadFile(file) {
@@ -132,79 +130,132 @@ async function parseUploadFile(file) {
   const ws   = wb.Sheets[wb.SheetNames[0]]
   const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
 
-  // Find header row by locating "equipment type"
   let headerRow = -1
   for (let i = 0; i < rows.length; i++) {
     const lower = rows[i].map(c => String(c).trim().toLowerCase())
-    if (lower.includes('equipment type')) { headerRow = i; break }
+    if (lower.includes('asset name') || lower.includes('equipment type')) { headerRow = i; break }
   }
   if (headerRow === -1)
-    return { error: 'Could not find a header row with an "Equipment Type" column.' }
+    return { error: 'Could not find a header row with an "Asset Name" column.' }
 
-  const headers  = rows[headerRow].map(c => String(c).trim().toLowerCase())
-  const nameCol  = headers.findIndex(h => h === 'equipment type')
-  const catCol   = headers.findIndex(h => h === 'category')
+  const headers   = rows[headerRow].map(c => String(c).trim().toLowerCase())
+  const groupCol  = headers.findIndex(h => h === 'asset group')
+  const catCol    = headers.findIndex(h => h === 'asset category')
+  const nameCol   = headers.findIndex(h => h === 'asset name' || h === 'equipment type')
+  const measCol   = headers.findIndex(h => h === 'measurability' || h === 'category')
 
   const items = []
   for (let i = headerRow + 1; i < rows.length; i++) {
     const row  = rows[i]
     const name = String(row[nameCol] ?? '').trim()
     if (!name) continue
-    const catRaw       = catCol >= 0 ? String(row[catCol] ?? '').trim() : ''
+    const catRaw       = measCol >= 0 ? String(row[measCol] ?? '').trim() : ''
     const asset_category = CATEGORIES.includes(catRaw) ? catRaw : null
-    items.push({ name, asset_category })
+    items.push({
+      name,
+      asset_group:    groupCol >= 0 ? String(row[groupCol] ?? '').trim() || null : null,
+      asset_cat:      catCol   >= 0 ? String(row[catCol]   ?? '').trim() || null : null,
+      asset_category,
+    })
   }
   if (items.length === 0)
-    return { error: 'No equipment type rows found in the file.' }
+    return { error: 'No asset name rows found in the file.' }
   return { items }
 }
 
 /* ── Component ────────────────────────────────────────────────────────────── */
 export default function EquipmentTypes() {
+  const { isAdmin } = useAuth()
+
   const [types,      setTypes]      = useState([])
   const [search,     setSearch]     = useState('')
   const [loadError,  setLoadError]  = useState('')
 
+  // Fuel type options (global list)
+  const [fuelOptions,    setFuelOptions]    = useState([])
+  const [newFuelOpt,     setNewFuelOpt]     = useState('')
+  const [addingFuel,     setAddingFuel]     = useState(false)
+  const [fuelOptError,   setFuelOptError]   = useState('')
+
   // Single add
   const [name,       setName]       = useState('')
+  const [assetGroup, setAssetGroup] = useState('')
+  const [assetCat,   setAssetCat]   = useState('')
   const [category,   setCategory]   = useState('')
+  const [fuelType,   setFuelType]   = useState('')
   const [saving,     setSaving]     = useState(false)
   const [addError,   setAddError]   = useState('')
 
   // Bulk upload
   const [showBulk,      setShowBulk]      = useState(false)
   const [bulkFile,      setBulkFile]      = useState(null)
-  const [bulkPreview,   setBulkPreview]   = useState(null)   // { items } | { error }
+  const [bulkPreview,   setBulkPreview]   = useState(null)
   const [bulkSaving,    setBulkSaving]    = useState(false)
   const [bulkResult,    setBulkResult]    = useState(null)
   const fileInputRef = useRef()
 
-  // Selection (shared for delete + download)
+  // Selection
   const [selected,   setSelected]   = useState(new Set())
   const [deleting,   setDeleting]   = useState(false)
   const [downloading,setDownloading] = useState(false)
 
   // Inline edit
-  const [editId,     setEditId]     = useState(null)
-  const [editVal,    setEditVal]    = useState('')
-  const [editCat,    setEditCat]    = useState('')
-  const [editSaving, setEditSaving] = useState(false)
-  const [editError,  setEditError]  = useState('')
+  const [editId,       setEditId]       = useState(null)
+  const [editVal,      setEditVal]      = useState('')
+  const [editGroup,    setEditGroup]    = useState('')
+  const [editCatVal,   setEditCatVal]   = useState('')
+  const [editCat,      setEditCat]      = useState('')
+  const [editFuelType, setEditFuelType] = useState('')
+  const [editSaving,   setEditSaving]   = useState(false)
+  const [editError,    setEditError]    = useState('')
   const editRef = useRef()
 
   // Force-delete dialog
   const [forceConfirm, setForceConfirm] = useState(null)
 
+  const loadFuelOptions = () =>
+    getFuelTypeOptions().then(r => setFuelOptions(r.data.data)).catch(() => {})
+
   const load = () => {
     setLoadError('')
     getEquipmentTypes()
       .then(r => { setTypes(r.data.data); setSelected(new Set()) })
-      .catch(err => setLoadError(err.response?.data?.error || err.message || 'Failed to load equipment types'))
+      .catch(err => setLoadError(err.response?.data?.error || err.message || 'Failed to load asset names'))
   }
-  useEffect(() => { load() }, [])
+  useEffect(() => { load(); loadFuelOptions() }, [])
   useEffect(() => { if (editId && editRef.current) editRef.current.focus() }, [editId])
 
-  const filtered = types.filter(t => t.name.toLowerCase().includes(search.toLowerCase()))
+  const filtered = types.filter(t =>
+    t.name.toLowerCase().includes(search.toLowerCase()) ||
+    (t.asset_group || '').toLowerCase().includes(search.toLowerCase()) ||
+    (t.asset_cat   || '').toLowerCase().includes(search.toLowerCase())
+  )
+
+  // Unique groups / cats derived from all loaded types (for datalist suggestions)
+  const allGroups = uniqueSorted(types.map(t => t.asset_group))
+  const allCats   = uniqueSorted(types.map(t => t.asset_cat))
+
+  /* ── Fuel type options management ───────────────────────────────────────── */
+  const handleAddFuelOpt = async () => {
+    if (!newFuelOpt.trim()) return
+    setAddingFuel(true); setFuelOptError('')
+    try {
+      await createFuelTypeOption({ name: newFuelOpt.trim() })
+      setNewFuelOpt('')
+      loadFuelOptions()
+    } catch (err) {
+      setFuelOptError(err.response?.data?.error || 'Failed to add')
+    } finally { setAddingFuel(false) }
+  }
+
+  const handleDeleteFuelOpt = async (id) => {
+    try {
+      await deleteFuelTypeOption(id)
+      loadFuelOptions()
+    } catch (err) {
+      setFuelOptError(err.response?.data?.error || 'Failed to delete')
+    }
+  }
 
   /* ── Add ─────────────────────────────────────────────────────────────────── */
   const handleAdd = async (e) => {
@@ -212,8 +263,15 @@ export default function EquipmentTypes() {
     if (!name.trim()) return
     setSaving(true); setAddError('')
     try {
-      await createEquipmentType({ name: name.trim(), asset_category: category || null })
-      setName(''); setCategory(''); load()
+      await createEquipmentType({
+        name: name.trim(),
+        asset_group:    assetGroup.trim() || null,
+        asset_cat:      assetCat.trim()   || null,
+        asset_category: category   || null,
+        fuel_type:      fuelType   || null,
+      })
+      setName(''); setAssetGroup(''); setAssetCat(''); setCategory(''); setFuelType('')
+      load()
     } catch (err) {
       setAddError(err.response?.data?.error || 'Failed to add')
     } finally { setSaving(false) }
@@ -246,13 +304,27 @@ export default function EquipmentTypes() {
   }
 
   /* ── Inline edit ─────────────────────────────────────────────────────────── */
-  const startEdit   = t => { setEditId(t.id); setEditVal(t.name); setEditCat(t.asset_category || ''); setEditError('') }
-  const cancelEdit  = ()  => { setEditId(null); setEditVal(''); setEditCat(''); setEditError('') }
+  const startEdit   = t => {
+    setEditId(t.id); setEditVal(t.name)
+    setEditGroup(t.asset_group || ''); setEditCatVal(t.asset_cat || '')
+    setEditCat(t.asset_category || ''); setEditFuelType(t.fuel_type || '')
+    setEditError('')
+  }
+  const cancelEdit  = () => {
+    setEditId(null); setEditVal(''); setEditGroup('')
+    setEditCatVal(''); setEditCat(''); setEditFuelType(''); setEditError('')
+  }
   const saveEdit    = async id => {
     if (!editVal.trim()) return
     setEditSaving(true); setEditError('')
     try {
-      await updateEquipmentType(id, { name: editVal.trim(), asset_category: editCat || null })
+      await updateEquipmentType(id, {
+        name:           editVal.trim(),
+        asset_group:    editGroup.trim()  || null,
+        asset_cat:      editCatVal.trim() || null,
+        asset_category: editCat      || null,
+        fuel_type:      editFuelType || null,
+      })
       cancelEdit(); load()
     } catch (err) {
       setEditError(err.response?.data?.error || 'Failed to save')
@@ -288,7 +360,7 @@ export default function EquipmentTypes() {
     const inUse  = ids.filter(id => parseInt(types.find(t => t.id === id)?.usage_count) > 0)
     const msg    = inUse.length > 0
       ? `${inUse.length} type(s) are in use by machines and will be force-deleted.\n\nContinue?`
-      : `Delete ${ids.length} equipment type${ids.length > 1 ? 's' : ''}?`
+      : `Delete ${ids.length} asset name${ids.length > 1 ? 's' : ''}?`
     if (!confirm(msg)) return
     setDeleting(true)
     try { await Promise.all(ids.map(id => deleteEquipmentType(id, true))); load() }
@@ -304,13 +376,15 @@ export default function EquipmentTypes() {
     } finally { setDownloading(false) }
   }
 
+  const inp = 'border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white'
+
   return (
     <div className="space-y-4">
       {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Equipment Types</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{types.length} type{types.length !== 1 ? 's' : ''} defined</p>
+          <h1 className="text-xl font-bold text-gray-900">Asset Names</h1>
+          <p className="text-sm text-gray-500 mt-0.5">{types.length} asset name{types.length !== 1 ? 's' : ''} defined — grouped by Asset Group › Asset Category</p>
         </div>
         <button
           onClick={() => { setShowBulk(v => !v); resetBulk() }}
@@ -322,30 +396,102 @@ export default function EquipmentTypes() {
 
       {loadError && (
         <div className="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-3 rounded-lg">
-          Failed to load equipment types: {loadError}
+          Failed to load asset names: {loadError}
+        </div>
+      )}
+
+      {/* ── Fuel Type Options Manager ── */}
+      {isAdmin && (
+        <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Fuel size={14} className="text-amber-600" />
+            <p className="text-xs font-semibold text-gray-600 uppercase tracking-wide">Fuel Type Options</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {fuelOptions.map(opt => (
+              <span key={opt.id} className="flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium px-2.5 py-1 rounded-full">
+                {opt.name}
+                <button
+                  onClick={() => handleDeleteFuelOpt(opt.id)}
+                  className="ml-0.5 text-amber-500 hover:text-red-600 transition-colors"
+                  title={`Remove ${opt.name}`}
+                >
+                  <X size={11} />
+                </button>
+              </span>
+            ))}
+            <div className="flex items-center gap-1">
+              <input
+                type="text"
+                value={newFuelOpt}
+                onChange={e => setNewFuelOpt(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAddFuelOpt()}
+                placeholder="Add option…"
+                className="border border-dashed border-gray-300 rounded-full px-2.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-amber-400 w-28"
+              />
+              <button
+                onClick={handleAddFuelOpt}
+                disabled={addingFuel || !newFuelOpt.trim()}
+                className="flex items-center gap-1 px-2.5 py-1 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs rounded-full transition-colors"
+              >
+                <Plus size={11} />{addingFuel ? '…' : 'Add'}
+              </button>
+            </div>
+          </div>
+          {fuelOptError && <p className="text-xs text-red-600 mt-1">{fuelOptError}</p>}
         </div>
       )}
 
       {/* ── Single add ── */}
       {!showBulk && (
         <form onSubmit={handleAdd} className="bg-white rounded-xl border border-gray-200 p-4 space-y-3">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Add Asset Name</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Asset Group</label>
+              <input type="text" value={assetGroup} onChange={e => setAssetGroup(e.target.value)}
+                placeholder="e.g. Earthmoving Equipment"
+                list="add-groups-list"
+                className={inp + ' w-full'}
+              />
+              <datalist id="add-groups-list">
+                {allGroups.map(g => <option key={g} value={g} />)}
+              </datalist>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-gray-500 mb-1">Asset Category</label>
+              <input type="text" value={assetCat} onChange={e => setAssetCat(e.target.value)}
+                placeholder="e.g. Excavation Equipment"
+                list="add-cats-list"
+                className={inp + ' w-full'}
+              />
+              <datalist id="add-cats-list">
+                {allCats.map(c => <option key={c} value={c} />)}
+              </datalist>
+            </div>
+          </div>
           <div className="flex gap-3">
             <input type="text" value={name} onChange={e => setName(e.target.value)}
-              placeholder="e.g. Excavator, Genset, Backhoe Loader…"
-              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="Asset Name * — e.g. Excavator, Diesel Generator…"
+              className={inp + ' flex-1'}
               required
             />
             <select value={category} onChange={e => setCategory(e.target.value)}
-              className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white flex-shrink-0">
-              <option value="">— Category —</option>
+              className={inp + ' flex-shrink-0 w-44'}>
+              <option value="">— Measurability —</option>
               {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <select value={fuelType} onChange={e => setFuelType(e.target.value)}
+              className={inp + ' flex-shrink-0 w-36'}>
+              <option value="">— Fuel Type —</option>
+              {fuelOptions.map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
             </select>
             <button type="submit" disabled={saving}
               className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-60 transition-colors flex-shrink-0">
               <Plus size={15} />{saving ? 'Adding…' : 'Add'}
             </button>
           </div>
-          <p className="text-xs text-gray-400">Category (Measurable / Non-Measurable) will auto-fill in the asset register when this type is selected.</p>
+          <p className="text-xs text-gray-400">Measurability and Fuel Type auto-fill in the asset register when this name is selected.</p>
           {addError && <p className="text-xs text-red-600">{addError}</p>}
         </form>
       )}
@@ -353,14 +499,13 @@ export default function EquipmentTypes() {
       {/* ── Bulk upload ── */}
       {showBulk && (
         <div className="bg-white rounded-xl border border-gray-200 p-4 space-y-4">
-          <p className="text-sm font-semibold text-gray-700">Bulk Upload Equipment Types</p>
+          <p className="text-sm font-semibold text-gray-700">Bulk Upload Asset Names</p>
 
-          {/* Step 1 — download template */}
           <div className="flex items-start gap-3 p-3 bg-blue-50 rounded-lg border border-blue-100">
             <span className="w-5 h-5 flex-shrink-0 rounded-full bg-blue-600 text-white text-xs flex items-center justify-center font-bold mt-0.5">1</span>
             <div className="flex-1 space-y-2">
               <p className="text-xs font-medium text-gray-700">Download the template, fill in your data, then re-upload.</p>
-              <p className="text-xs text-gray-500">Columns: <strong>Sl No</strong>, <strong>Equipment Type</strong> (required), <strong>Category</strong> — must be <em>Measurable</em> or <em>Non-Measurable</em>.</p>
+              <p className="text-xs text-gray-500">Columns: <strong>Asset Group</strong>, <strong>Asset Category</strong>, <strong>Asset Name</strong> (required), <strong>Measurability</strong> — must be <em>Measurable</em> or <em>Non-Measurable</em>.</p>
               <button onClick={downloadTemplate}
                 className="flex items-center gap-2 px-3 py-1.5 border border-blue-400 text-blue-700 bg-white hover:bg-blue-50 text-xs font-medium rounded-lg transition-colors">
                 <Download size={13} />Download Template (.xlsx)
@@ -368,7 +513,6 @@ export default function EquipmentTypes() {
             </div>
           </div>
 
-          {/* Step 2 — upload file */}
           <div className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
             <span className="w-5 h-5 flex-shrink-0 rounded-full bg-gray-500 text-white text-xs flex items-center justify-center font-bold mt-0.5">2</span>
             <div className="flex-1 space-y-2">
@@ -379,28 +523,30 @@ export default function EquipmentTypes() {
                 <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleFileChange} />
               </label>
 
-              {/* Parse preview */}
               {bulkPreview?.error && (
                 <p className="text-xs text-red-600">{bulkPreview.error}</p>
               )}
               {bulkPreview?.items && (
                 <div className="space-y-2">
                   <p className="text-xs text-green-700 font-medium">{bulkPreview.items.length} row{bulkPreview.items.length !== 1 ? 's' : ''} ready to upload</p>
-                  {/* Mini preview table — first 5 rows */}
                   <div className="overflow-x-auto rounded border border-gray-200">
                     <table className="w-full text-xs">
                       <thead className="bg-gray-100 text-gray-600">
                         <tr>
                           <th className="px-2 py-1 text-left font-medium w-8">#</th>
-                          <th className="px-2 py-1 text-left font-medium">Equipment Type</th>
-                          <th className="px-2 py-1 text-left font-medium">Category</th>
+                          <th className="px-2 py-1 text-left font-medium">Asset Group</th>
+                          <th className="px-2 py-1 text-left font-medium">Asset Category</th>
+                          <th className="px-2 py-1 text-left font-medium">Asset Name</th>
+                          <th className="px-2 py-1 text-left font-medium">Measurability</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-gray-100">
                         {bulkPreview.items.slice(0, 5).map((item, i) => (
                           <tr key={i} className="bg-white">
                             <td className="px-2 py-1 text-gray-400">{i + 1}</td>
-                            <td className="px-2 py-1 text-gray-800">{item.name}</td>
+                            <td className="px-2 py-1 text-gray-600">{item.asset_group || '—'}</td>
+                            <td className="px-2 py-1 text-gray-600">{item.asset_cat   || '—'}</td>
+                            <td className="px-2 py-1 text-gray-800 font-medium">{item.name}</td>
                             <td className="px-2 py-1">
                               {item.asset_category
                                 ? <span className={`px-1.5 py-0.5 rounded-full font-medium ${
@@ -422,7 +568,7 @@ export default function EquipmentTypes() {
                   <div className="flex items-center gap-3 pt-1">
                     <button onClick={handleBulkUpload} disabled={bulkSaving}
                       className="flex items-center gap-2 px-4 py-2 bg-blue-700 text-white text-sm rounded-lg hover:bg-blue-800 disabled:opacity-60 transition-colors">
-                      <Upload size={14} />{bulkSaving ? 'Uploading…' : `Upload ${bulkPreview.items.length} Type${bulkPreview.items.length !== 1 ? 's' : ''}`}
+                      <Upload size={14} />{bulkSaving ? 'Uploading…' : `Upload ${bulkPreview.items.length} Name${bulkPreview.items.length !== 1 ? 's' : ''}`}
                     </button>
                     <button onClick={resetBulk} className="text-xs text-gray-400 hover:text-gray-600 transition-colors">Clear</button>
                   </div>
@@ -431,7 +577,6 @@ export default function EquipmentTypes() {
             </div>
           </div>
 
-          {/* Result */}
           {bulkResult && (
             <div className={`rounded-lg p-3 text-xs space-y-1 ${bulkResult.error ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-800'}`}>
               {bulkResult.error
@@ -453,15 +598,14 @@ export default function EquipmentTypes() {
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input type="text" value={search} onChange={e => setSearch(e.target.value)}
-              placeholder="Search equipment types…"
+              placeholder="Search by asset name, group or category…"
               className="w-full pl-8 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-gray-50"
             />
           </div>
 
-          {/* Toolbar */}
           <div className="flex items-center justify-between gap-2 flex-wrap">
             <span className="text-xs font-medium text-gray-500">
-              {selectedCount > 0 ? `${selectedCount} selected` : `${filtered.length} type${filtered.length !== 1 ? 's' : ''}${search ? ' found' : ''}`}
+              {selectedCount > 0 ? `${selectedCount} selected` : `${filtered.length} asset name${filtered.length !== 1 ? 's' : ''}${search ? ' found' : ''}`}
             </span>
 
             <div className="flex items-center gap-2">
@@ -499,19 +643,22 @@ export default function EquipmentTypes() {
                   />
                 </th>
                 <th className="px-4 py-2.5 text-left font-semibold text-gray-500 w-10">#</th>
-                <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Equipment Type</th>
-                <th className="px-4 py-2.5 text-left font-semibold text-gray-500 w-44">Category</th>
-                <th className="px-4 py-2.5 text-center font-semibold text-gray-500 w-28">Own (Working)</th>
-                <th className="px-4 py-2.5 text-center font-semibold text-gray-500 w-28">Hire (Working)</th>
-                <th className="px-4 py-2.5 text-center font-semibold text-gray-500 w-28">Total Machines</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Asset Group</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Asset Category</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-gray-500">Asset Name</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-gray-500 w-36">Measurability</th>
+                <th className="px-4 py-2.5 text-left font-semibold text-gray-500 w-28">Fuel Type</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-500 w-24">Own</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-500 w-24">Hire</th>
+                <th className="px-4 py-2.5 text-center font-semibold text-gray-500 w-24">Total</th>
                 <th className="px-4 py-2.5 w-20"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-gray-400">
-                    {search ? 'No types match your search' : 'No equipment types yet'}
+                  <td colSpan={11} className="px-4 py-10 text-center text-sm text-gray-400">
+                    {search ? 'No asset names match your search' : 'No asset names yet'}
                   </td>
                 </tr>
               )}
@@ -527,8 +674,29 @@ export default function EquipmentTypes() {
                   {editId === t.id ? (
                     <>
                       <td className="px-4 py-2">
+                        <input value={editGroup} onChange={e => setEditGroup(e.target.value)}
+                          list="edit-groups-list"
+                          placeholder="Asset Group"
+                          className="w-full border border-blue-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <datalist id="edit-groups-list">
+                          {allGroups.map(g => <option key={g} value={g} />)}
+                        </datalist>
+                      </td>
+                      <td className="px-4 py-2">
+                        <input value={editCatVal} onChange={e => setEditCatVal(e.target.value)}
+                          list="edit-cats-list"
+                          placeholder="Asset Category"
+                          className="w-full border border-blue-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        />
+                        <datalist id="edit-cats-list">
+                          {allCats.map(c => <option key={c} value={c} />)}
+                        </datalist>
+                      </td>
+                      <td className="px-4 py-2">
                         <input ref={editRef} value={editVal} onChange={e => setEditVal(e.target.value)}
                           onKeyDown={e => { if (e.key === 'Enter') saveEdit(t.id); if (e.key === 'Escape') cancelEdit() }}
+                          placeholder="Asset Name *"
                           className="w-full border border-blue-400 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                         />
                         {editError && <p className="text-xs text-red-600 mt-1">{editError}</p>}
@@ -536,8 +704,15 @@ export default function EquipmentTypes() {
                       <td className="px-4 py-2">
                         <select value={editCat} onChange={e => setEditCat(e.target.value)}
                           className="w-full border border-blue-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
-                          <option value="">— Category —</option>
+                          <option value="">— Measurability —</option>
                           {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </td>
+                      <td className="px-4 py-2">
+                        <select value={editFuelType} onChange={e => setEditFuelType(e.target.value)}
+                          className="w-full border border-blue-300 rounded px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+                          <option value="">— Fuel Type —</option>
+                          {fuelOptions.map(o => <option key={o.id} value={o.name}>{o.name}</option>)}
                         </select>
                       </td>
                       <td colSpan={3} />
@@ -556,6 +731,16 @@ export default function EquipmentTypes() {
                     </>
                   ) : (
                     <>
+                      <td className="px-4 py-2.5 text-gray-600">
+                        {t.asset_group
+                          ? <span className="bg-blue-50 text-blue-700 px-1.5 py-0.5 rounded text-xs font-medium">{t.asset_group}</span>
+                          : <span className="text-gray-300">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5 text-gray-600">
+                        {t.asset_cat
+                          ? <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-xs">{t.asset_cat}</span>
+                          : <span className="text-gray-300">—</span>}
+                      </td>
                       <td className="px-4 py-2.5 text-sm text-gray-800 font-medium">{t.name}</td>
                       <td className="px-4 py-2.5">
                         {t.asset_category ? (
@@ -567,6 +752,11 @@ export default function EquipmentTypes() {
                             {t.asset_category}
                           </span>
                         ) : <span className="text-gray-400">—</span>}
+                      </td>
+                      <td className="px-4 py-2.5">
+                        {t.fuel_type
+                          ? <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">{t.fuel_type}</span>
+                          : <span className="text-gray-300">—</span>}
                       </td>
                       <td className="px-4 py-2.5 text-center">
                         {parseInt(t.own_count) > 0
@@ -603,8 +793,8 @@ export default function EquipmentTypes() {
             {filtered.length > 0 && (
               <tfoot>
                 <tr className="border-t border-gray-200 bg-gray-50">
-                  <td colSpan={4} className="px-4 py-2 text-xs text-gray-400">
-                    {filtered.length} of {types.length} type{types.length !== 1 ? 's' : ''}
+                  <td colSpan={7} className="px-4 py-2 text-xs text-gray-400">
+                    {filtered.length} of {types.length} asset name{types.length !== 1 ? 's' : ''}
                   </td>
                   <td className="px-4 py-2 text-center text-xs font-semibold text-gray-600">
                     {types.reduce((s, t) => s + (parseInt(t.own_count) || 0), 0)}
@@ -630,11 +820,11 @@ export default function EquipmentTypes() {
             <div className="flex items-start gap-3">
               <AlertTriangle className="text-amber-500 flex-shrink-0 mt-0.5" size={20} />
               <div>
-                <p className="font-semibold text-gray-900 text-sm">Type is in use</p>
+                <p className="font-semibold text-gray-900 text-sm">Asset name is in use</p>
                 <p className="text-sm text-gray-600 mt-1">
                   <strong>"{forceConfirm.name}"</strong> is assigned to{' '}
                   <strong>{forceConfirm.count} active machine{forceConfirm.count > 1 ? 's' : ''}</strong>.
-                  Deleting it won't remove those machines — their type field will just no longer match a known type.
+                  Deleting it won't remove those machines — their type field will just no longer match a known name.
                 </p>
               </div>
             </div>

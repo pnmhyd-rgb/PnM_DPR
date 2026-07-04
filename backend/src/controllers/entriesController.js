@@ -1,5 +1,7 @@
 const db = require('../config/db');
 
+db.query('ALTER TABLE dpr_entries ADD COLUMN IF NOT EXISTS is_idle BOOLEAN NOT NULL DEFAULT FALSE').catch(() => {})
+
 const getAll = async (req, res) => {
   try {
     const { project_id, project_code, date, from, to, ownership, machine_id } = req.query;
@@ -83,18 +85,29 @@ const SHIFT_MAX_HOURS = { 'Day Shift': 12, 'Night Shift': 12, 'Dual Shift': 24 }
 
 const getPreviousClosing = async (req, res) => {
   try {
-    const { machine_id, entry_date, shift } = req.query;
+    const { machine_id, entry_date, shift, machine_shift_type } = req.query;
     if (!machine_id || !entry_date || !shift) {
       return res.status(400).json({ error: 'machine_id, entry_date, and shift are required' });
     }
 
     let entryQuery, params;
 
-    if (shift === 'Night Shift') {
+    if (machine_shift_type === 'Single Shift') {
+      // Single shift: most recent entry (any shift), excluding the current shift being entered on the same date
+      entryQuery = `SELECT id, r1_close, r2_close FROM dpr_entries
+                    WHERE machine_id = $1
+                      AND NOT (entry_date = $2::date AND shift = $3)
+                    ORDER BY entry_date DESC,
+                             CASE shift WHEN 'Night Shift' THEN 2 WHEN 'Day Shift' THEN 1 ELSE 0 END DESC
+                    LIMIT 1`;
+      params = [machine_id, entry_date, shift];
+    } else if (shift === 'Night Shift') {
+      // Dual shift night: same-day Day Shift closing
       entryQuery = `SELECT id, r1_close, r2_close FROM dpr_entries
                     WHERE machine_id = $1 AND entry_date = $2 AND shift = 'Day Shift'`;
       params = [machine_id, entry_date];
     } else {
+      // Dual shift day: previous day's most recent entry
       entryQuery = `SELECT id, r1_close, r2_close FROM dpr_entries
                     WHERE machine_id = $1 AND entry_date = $2::date - INTERVAL '1 day'
                     ORDER BY CASE shift WHEN 'Night Shift' THEN 1 WHEN 'Dual Shift' THEN 2 ELSE 3 END
@@ -167,7 +180,7 @@ const create = async (req, res) => {
       machine_id, project_id, entry_date, shift,
       r1_open, r1_close, r2_open, r2_close,
       readings, // multi-reading: [{reading_type_id, open_value, close_value}]
-      hsd, breakdown, qty, work_done, remarks
+      hsd, breakdown, qty, work_done, remarks, is_idle
     } = req.body;
 
     if (!machine_id || !project_id || !entry_date) {
@@ -293,6 +306,14 @@ const create = async (req, res) => {
       });
     }
 
+    // When readings are same (zero work), breakdown must equal full shift or not be set at all
+    const brkVal = parseFloat(breakdown) || 0;
+    if (workingHours === 0 && brkVal > 0 && Math.abs(brkVal - maxHours) > 0.01) {
+      return res.status(400).json({
+        error: `When working hours are zero, breakdown must be the full shift (${maxHours} hrs).`
+      });
+    }
+
     const plannedHours = parseFloat(machine.planned_hours) || 10;
     const utilPct = plannedHours > 0 ? Math.round((workingHours / plannedHours) * 100) : 0;
     const fuelAvg = workingHours > 0 && hsd
@@ -304,11 +325,11 @@ const create = async (req, res) => {
         slno, eq_type, capacity, reg_no, ownership, dual_reading, planned_hours,
         r1_open, r1_close, r1_total, r2_open, r2_close, r2_total,
         working_hours, util_pct, hsd, fuel_avg,
-        breakdown, qty, work_done, remarks, submitted_by
+        breakdown, qty, work_done, remarks, submitted_by, is_idle
       ) VALUES (
         $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,
         $13,$14,$15,$16,$17,$18,$19,$20,$21,$22,
-        $23,$24,$25,$26,$27
+        $23,$24,$25,$26,$27,$28
       ) RETURNING *`,
       [
         machine_id, project_id, entry_date, shift, 'submitted',
@@ -319,7 +340,7 @@ const create = async (req, res) => {
         workingHours, utilPct,
         hsd ?? null, fuelAvg,
         breakdown ?? 0, qty ?? null, work_done ?? null, remarks ?? null,
-        req.user.id
+        req.user.id, is_idle ?? false
       ]
     );
 
@@ -347,7 +368,7 @@ const create = async (req, res) => {
 const update = async (req, res) => {
   try {
     const { id } = req.params;
-    const { shift, r1_open, r1_close, r2_open, r2_close, readings, hsd, breakdown, qty, work_done, remarks } = req.body;
+    const { shift, r1_open, r1_close, r2_open, r2_close, readings, hsd, breakdown, qty, work_done, remarks, is_idle } = req.body;
 
     const entryResult = await db.query('SELECT * FROM dpr_entries WHERE id = $1', [id]);
     if (entryResult.rows.length === 0) {
@@ -412,6 +433,13 @@ const update = async (req, res) => {
       });
     }
 
+    const brkValU = breakdown !== undefined ? (parseFloat(breakdown) || 0) : (parseFloat(entry.breakdown) || 0);
+    if (workingHours === 0 && brkValU > 0 && Math.abs(brkValU - maxHours) > 0.01) {
+      return res.status(400).json({
+        error: `When working hours are zero, breakdown must be the full shift (${maxHours} hrs).`
+      });
+    }
+
     const plannedHours = parseFloat(entry.planned_hours) || 10;
     const utilPct = plannedHours > 0 ? Math.round((workingHours / plannedHours) * 100) : 0;
     const fuelAvg = workingHours > 0 && newHsd
@@ -427,8 +455,9 @@ const update = async (req, res) => {
         qty        = COALESCE($13, qty),
         work_done  = COALESCE($14, work_done),
         remarks    = COALESCE($15, remarks),
+        is_idle    = COALESCE($16, is_idle),
         updated_at = NOW()
-       WHERE id = $16
+       WHERE id = $17
        RETURNING *`,
       [
         activeShift,
@@ -439,6 +468,7 @@ const update = async (req, res) => {
         qty       !== undefined ? qty       : null,
         work_done !== undefined ? work_done : null,
         remarks   !== undefined ? remarks   : null,
+        is_idle   !== undefined ? is_idle   : null,
         id
       ]
     );
@@ -511,7 +541,8 @@ const getDprStatus = async (req, res) => {
     }
 
     const machinesResult = await db.query(
-      `SELECT m.id, m.slno, m.eq_type, m.capacity, m.reg_no,
+      `SELECT m.id, m.slno, m.nickname, m.asset_code, m.vendor,
+              m.eq_type, m.capacity, m.reg_no,
               m.shift_type, m.ownership, m.dual_reading, m.planned_hours,
               m.reading1_basis, m.reading2_basis, m.fuel_min, m.fuel_max,
               m.project_id,

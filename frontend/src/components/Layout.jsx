@@ -447,6 +447,9 @@ export default function Layout({ children }) {
           </button>
           {hireOpen && (
             <div className="ml-7 mt-1 space-y-0.5">
+              <NavLink to="/hire/indents" className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                Indents
+              </NavLink>
               <NavLink to="/hire/work-orders" className={subLinkCls} onClick={() => setMobileOpen(false)}>
                 Work Orders
               </NavLink>

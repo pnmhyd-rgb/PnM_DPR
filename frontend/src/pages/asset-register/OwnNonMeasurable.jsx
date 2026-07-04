@@ -4,6 +4,7 @@ import { useAuth } from '../../context/AuthContext'
 import { Plus, Download } from 'lucide-react'
 import AddAssetModal from './AddAssetModal'
 import AssetRegisterDownloadModal from './AssetRegisterDownloadModal'
+import MachineDetailPanel from '../../components/MachineDetailPanel'
 
 export default function OwnNonMeasurable() {
   const { isAdmin, user }         = useAuth()
@@ -14,6 +15,7 @@ export default function OwnNonMeasurable() {
   const [loading, setLoading]     = useState(true)
   const [showAdd, setShowAdd]     = useState(false)
   const [showDownload, setShowDownload] = useState(false)
+  const [detailPanel, setDetailPanel] = useState(null)
 
   useEffect(() => {
     getProjects().then(r => setProjects(r.data.data))
@@ -23,7 +25,7 @@ export default function OwnNonMeasurable() {
     setLoading(true)
     getMachines(filterProj ? { project_code: filterProj } : {})
       .then(r => {
-        setMachines(r.data.data.filter(m => m.ownership === 'Own' && !m.reading1_basis))
+        setMachines(r.data.data.filter(m => m.ownership === 'Own' && m.asset_type === 'Non-Measurable Asset'))
       })
       .finally(() => setLoading(false))
   }
@@ -64,20 +66,26 @@ export default function OwnNonMeasurable() {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                {['#','Project','SL No','Type','Manufacturer','Model','Capacity / UOM','Reg No','Chassis No','Shift','Purchase Date','PO No','Price (₹)'].map(h => (
+                {['#','Project','SL No','Asset Group','Asset Category','Asset Name','Manufacturer','Model','Capacity / UOM','Reg No','Chassis No','Shift','Purchase Date','PO No','Price (₹)'].map(h => (
                   <th key={h} className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {loading && <tr><td colSpan={13} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>}
-              {!loading && machines.length === 0 && <tr><td colSpan={13} className="px-4 py-10 text-center text-gray-400">No non-measurable own assets found</td></tr>}
+              {loading && <tr><td colSpan={15} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>}
+              {!loading && machines.length === 0 && <tr><td colSpan={15} className="px-4 py-10 text-center text-gray-400">No non-measurable own assets found</td></tr>}
               {!loading && machines.map((m, i) => (
                 <tr key={m.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-3 py-2 text-gray-400">{i + 1}</td>
                   <td className="px-3 py-2"><span className="bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded text-xs">{m.project_code}</span></td>
-                  <td className="px-3 py-2 font-semibold text-gray-900">{m.slno}</td>
-                  <td className="px-3 py-2 text-gray-800">{m.eq_type}</td>
+                  <td className="px-3 py-2">
+                    <button onClick={() => setDetailPanel(m)} className="text-blue-600 hover:text-blue-800 hover:underline font-semibold text-left">
+                      {m.slno}
+                    </button>
+                  </td>
+                  <td className="px-3 py-2 text-gray-600">{m.asset_group || '—'}</td>
+                  <td className="px-3 py-2 text-gray-600">{m.asset_cat   || '—'}</td>
+                  <td className="px-3 py-2 text-gray-800 font-medium">{m.eq_type}</td>
                   <td className="px-3 py-2 text-gray-600">{m.manufacturer || '—'}</td>
                   <td className="px-3 py-2 text-gray-600">{m.model || '—'}</td>
                   <td className="px-3 py-2 text-gray-600">{m.capacity ? `${m.capacity} ${m.uom || ''}`.trim() : '—'}</td>
@@ -101,6 +109,7 @@ export default function OwnNonMeasurable() {
 
       {showAdd && <AddAssetModal onClose={() => setShowAdd(false)} onSaved={load} />}
       {showDownload && <AssetRegisterDownloadModal onClose={() => setShowDownload(false)} />}
+      {detailPanel && <MachineDetailPanel machine={detailPanel} onClose={() => setDetailPanel(null)} />}
     </div>
   )
 }

@@ -5,3 +5,389 @@
 @layer base {
   body { @apply bg-gray-50 text-gray-900 antialiased; }
 }
+
+/* ═══════════════════════════════════════════════════════════
+   LOGIN PAGE  ·  split-screen  ·  card anchored to right side
+   Inspired by: Microsoft Azure · Oracle Primavera · SAP Fiori · Procore
+   ═══════════════════════════════════════════════════════════ */
+
+.login-page {
+  position: fixed;
+  inset: 0;
+  font-family: inherit;
+  overflow: hidden;
+}
+
+/* Full-screen construction/tunneling background photo */
+.login-bg {
+  position: absolute;
+  inset: 0;
+  background-image: url(/login-bg.png);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  z-index: 0;
+}
+
+/* Blueprint grid overlay – very subtle engineering aesthetic */
+.login-bg-pattern {
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 48px 48px;
+  z-index: 0;
+}
+
+/* ─────────────────────────────────────────────────────────
+   CARD  –  right side, vertically centered
+   ───────────────────────────────────────────────────────── */
+.login-card {
+  position: absolute;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
+  z-index: 1;
+
+  width: 390px;
+  max-width: calc(100vw - 80px);
+
+  /* Glass effect – premium white panel */
+  background: rgba(255, 255, 255, 0.96);
+  backdrop-filter: blur(28px) saturate(1.2);
+  -webkit-backdrop-filter: blur(28px) saturate(1.2);
+
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.80);
+
+  /* Multi-layer premium shadow with RVR navy tint */
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.60) inset,
+    0 1px 3px rgba(15, 76, 151, 0.08),
+    0 8px 32px rgba(15, 76, 151, 0.16),
+    0 28px 64px rgba(0, 0, 0, 0.18);
+
+  padding: 24px 30px 24px;
+}
+
+/* ─────────────────────────────────────────────────────────
+   BRAND HEADER
+   Order: Logo → Division text → Welcome Back → Subtitle
+   ───────────────────────────────────────────────────────── */
+.login-header {
+  text-align: center;
+  /* No bottom margin – spacing to form is on login-form itself */
+}
+
+/* Primary brand element – ~40×30 mm at 96 dpi */
+.login-logo {
+  width: 150px;
+  height: 113px;
+  display: block;
+  margin: 0 auto;
+  object-fit: contain;
+  /* merges logo background with card colour; only letters remain visible */
+  mix-blend-mode: multiply;
+}
+
+/* "Plants & Machinery Asset Management Division" */
+.login-division {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  font-weight: 500;
+  color: #0F4C97;
+  line-height: 1.35;
+  letter-spacing: -0.1px;
+  white-space: nowrap;
+}
+
+/* "Welcome Back" */
+.login-title {
+  margin: 16px 0 5px;
+  font-size: 26px;
+  font-weight: 700;
+  color: #111827;
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+/* "Access your PNM System" */
+.login-subtitle {
+  margin: 0;
+  font-size: 13.5px;
+  color: #6B7280;
+  line-height: 1.4;
+}
+
+/* ─────────────────────────────────────────────────────────
+   FORM
+   ───────────────────────────────────────────────────────── */
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+/* ── Floating-label input groups ── */
+.float-group {
+  position: relative;
+}
+
+.float-icon {
+  position: absolute;
+  left: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: #9ca3af;
+  pointer-events: none;
+  z-index: 1;
+  transition: color 0.2s ease;
+}
+
+/* Icon inherits focus state from parent */
+.float-group:focus-within .float-icon {
+  color: #2563eb;
+}
+
+.float-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 50px;
+  padding: 18px 14px 5px 44px;
+  border: 1.5px solid #e2e8f0;
+  border-radius: 12px;
+  font-size: 14px;
+  color: #111827;
+  background: #f8fafc;
+  outline: none;
+  transition:
+    border-color 0.2s ease,
+    background-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.float-input:hover {
+  border-color: #cbd5e1;
+  background: #f1f5f9;
+}
+
+.float-input:focus {
+  border-color: #2563eb;
+  background: #ffffff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.10);
+}
+
+/* Eye-toggle needs extra right padding */
+.float-input--pw {
+  padding-right: 44px;
+}
+
+/* Label starts vertically centered (default / placeholder state) */
+.float-label {
+  position: absolute;
+  left: 44px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 14px;
+  color: #9ca3af;
+  pointer-events: none;
+  line-height: 1;
+  transition:
+    top 0.18s ease,
+    transform 0.18s ease,
+    font-size 0.18s ease,
+    color 0.18s ease;
+}
+
+/* Float up on focus or when the field has a value */
+.float-input:focus + .float-label,
+.float-input:not(:placeholder-shown) + .float-label {
+  top: 8px;
+  transform: translateY(0);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.25px;
+  color: #2563eb;
+}
+
+/* Blurred but has a value → neutral slate */
+.float-input:not(:focus):not(:placeholder-shown) + .float-label {
+  color: #64748b;
+}
+
+/* Password show/hide toggle */
+.pw-toggle {
+  position: absolute;
+  right: 15px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: #9ca3af;
+  display: flex;
+  align-items: center;
+  padding: 0;
+  transition: color 0.15s ease;
+  z-index: 1;
+}
+
+.pw-toggle:hover {
+  color: #6b7280;
+}
+
+/* ─────────────────────────────────────────────────────────
+   LOGIN BUTTON
+   ───────────────────────────────────────────────────────── */
+.login-btn {
+  width: 100%;
+  height: 50px;
+  background: linear-gradient(135deg, #0F4C97 0%, #2563eb 100%);
+  color: #ffffff;
+  border: none;
+  border-radius: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.15) inset,
+    0 4px 16px rgba(15, 76, 151, 0.38);
+  margin-top: 4px;
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease;
+}
+
+.login-btn:hover:not(:disabled) {
+  transform: translateY(-2px);
+  background: linear-gradient(135deg, #1a5fb0 0%, #3b82f6 100%);
+  box-shadow:
+    0 1px 0 rgba(255, 255, 255, 0.15) inset,
+    0 8px 30px rgba(15, 76, 151, 0.50);
+}
+
+.login-btn:active:not(:disabled) {
+  transform: translateY(0);
+  box-shadow: 0 2px 10px rgba(15, 76, 151, 0.30);
+}
+
+.login-btn:disabled {
+  background: #93c5fd;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+
+/* ─────────────────────────────────────────────────────────
+   ERROR ALERT
+   ───────────────────────────────────────────────────────── */
+.login-error {
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+  border-radius: 10px;
+  padding: 11px 15px;
+  font-size: 13.5px;
+  color: #dc2626;
+  line-height: 1.4;
+}
+
+/* ─────────────────────────────────────────────────────────
+   FOOTER  –  divider + copyright, in normal document flow
+   24px spacing from button (form's last child)
+   ───────────────────────────────────────────────────────── */
+.login-footer {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
+  text-align: center;
+}
+
+.login-copyright {
+  margin: 0;
+  font-size: 11.5px;
+  color: #9ca3af;
+  line-height: 1.7;
+}
+
+/* ─────────────────────────────────────────────────────────
+   RESPONSIVE  –  card stays on the right at all breakpoints
+   ───────────────────────────────────────────────────────── */
+
+/* Tighten right margin on medium screens */
+@media (max-width: 960px) {
+  .login-card {
+    right: 16px;
+    width: 360px;
+  }
+}
+
+/* On narrow / tablet screens */
+@media (max-width: 680px) {
+  .login-card {
+    right: 16px;
+    left: 16px;
+    width: auto;
+    max-width: 100%;
+    padding: 20px 22px 20px;
+  }
+
+  .login-logo {
+    width: 140px;
+  }
+
+  .login-division {
+    font-size: 12px;
+    margin-top: 7px;
+  }
+
+  .login-title {
+    font-size: 22px;
+    margin: 12px 0 4px;
+  }
+
+  .login-subtitle {
+    font-size: 12.5px;
+  }
+
+  .login-form {
+    margin-top: 14px;
+    gap: 10px;
+  }
+
+  .login-btn {
+    height: 46px;
+    font-size: 14px;
+  }
+}
+
+/* Very small phones */
+@media (max-width: 400px) {
+  .login-card {
+    padding: 18px 18px 18px;
+  }
+
+  .login-logo {
+    width: 130px;
+  }
+
+  .login-title {
+    font-size: 20px;
+    margin: 10px 0 4px;
+  }
+
+  .float-input {
+    height: 52px;
+  }
+
+  .login-btn {
+    height: 50px;
+  }
+}

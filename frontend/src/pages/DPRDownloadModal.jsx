@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { X, Download, Loader2, FileSpreadsheet, FileText, Search, ChevronDown } from 'lucide-react'
-import { getProjects, getMachines, getEntries } from '../lib/api'
+import { getProjects, getMachines, getEntries, getFuelRecord, getMeterResets } from '../lib/api'
 
 function SearchableSelect({ options, value, onChange, placeholder, disabled }) {
   const [query,  setQuery]  = useState('')
@@ -114,6 +114,13 @@ function getMachineCols(machine, activeCols) {
 }
 
 function cellValForCol(e, col, idx) {
+  if (e._placeholder) {
+    if (col.key === 'sno')    return idx + 1
+    if (col.key === 'date')   return fmtDate(e.entry_date)
+    if (col.key === 'shift')  return e.shift || '—'
+    if (col.key === 'status') return 'DPR Not Submitted'
+    return ''
+  }
   if (col.rtId !== undefined) {
     const log = (e.reading_logs || []).find(l => l.reading_type_id === col.rtId)
     if (!log) return ''
@@ -125,8 +132,9 @@ function cellValForCol(e, col, idx) {
 }
 
 const SECTIONS = [
-  { key: 'header',      label: 'Machine Header'      },
-  { key: 'log',         label: 'Daily Log Table'      },
+  { key: 'header',      label: 'Machine Header'       },
+  { key: 'log',         label: 'Daily Log Table'       },
+  { key: 'days',        label: 'Working Day Summary'  },
   { key: 'utilization', label: 'Utilization Summary'  },
   { key: 'fuel',        label: 'Fuel Summary'         },
 ]
@@ -134,6 +142,39 @@ const SECTIONS = [
 function fmtDate(d) {
   if (!d) return ''
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric' })
+}
+
+function fmtDateTime(dt) {
+  if (!dt) return '—'
+  return new Date(dt).toLocaleString('en-IN', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Asia/Kolkata' })
+}
+
+function generateDateRange(from, to) {
+  const dates = []
+  const d = new Date(from)
+  const end = new Date(to)
+  while (d <= end) {
+    dates.push(d.toISOString().slice(0, 10))
+    d.setDate(d.getDate() + 1)
+  }
+  return dates
+}
+
+function fillMissingDates(entries, machine, from, to) {
+  const isDual = machine.shift_type === 'Dual Shift'
+  const result = []
+  for (const date of generateDateRange(from, to)) {
+    const dayEntries = entries.filter(e => (e.entry_date || '').slice(0, 10) === date)
+    if (dayEntries.length > 0) {
+      result.push(...dayEntries)
+    } else if (isDual) {
+      result.push({ entry_date: date, shift: 'Day Shift', _placeholder: true })
+      result.push({ entry_date: date, shift: 'Night Shift', _placeholder: true })
+    } else {
+      result.push({ entry_date: date, shift: '—', _placeholder: true })
+    }
+  }
+  return result
 }
 
 function getStatus(e) {
@@ -146,14 +187,21 @@ function getStatus(e) {
 }
 
 function cellVal(e, key, idx) {
+  if (e._placeholder) {
+    if (key === 'sno')    return idx + 1
+    if (key === 'date')   return fmtDate(e.entry_date)
+    if (key === 'shift')  return e.shift || '—'
+    if (key === 'status') return 'DPR Not Submitted'
+    return ''
+  }
   switch (key) {
     case 'sno':          return idx + 1
     case 'date':         return fmtDate(e.entry_date)
     case 'shift':        return e.shift || ''
     case 'r1_open':      return e.r1_open ?? ''
     case 'r1_close':     return e.r1_close ?? ''
-    case 'r1_total':     return e.r1_total != null ? Number(e.r1_total).toFixed(2) : ''
-    case 'hsd':          return e.hsd ?? ''
+    case 'r1_total':     { const v = parseFloat(e.r1_total); return isNaN(v) ? '' : v.toFixed(2) }
+    case 'hsd':          { const v = parseFloat(e.hsd);      return isNaN(v) ? '' : v.toFixed(2) }
     case 'breakdown':    return e.breakdown ?? 0
     case 'status':       return getStatus(e)
     case 'work_done':    return e.work_done || ''
@@ -168,26 +216,63 @@ function calcSummary(entries) {
   const plannedTotal = entries.reduce((s, e) => s + (parseFloat(e.planned_hours) || 0), 0)
   const workedTotal  = entries.reduce((s, e) => s + (parseFloat(e.working_hours) || 0), 0)
   const hsdTotal     = entries.reduce((s, e) => s + (parseFloat(e.hsd) || 0), 0)
+  const totalR1      = entries.reduce((s, e) => s + (parseFloat(e.r1_total)      || 0), 0)
   const utilPct      = plannedTotal > 0 ? ((workedTotal / plannedTotal) * 100).toFixed(1) : '—'
-  const fuelAvg      = workedTotal > 0 ? (hsdTotal / workedTotal).toFixed(2) : '—'
-  return { plannedTotal, workedTotal, hsdTotal, utilPct, fuelAvg }
+  return { plannedTotal, workedTotal, hsdTotal, totalR1, utilPct }
 }
 
-async function buildExcel(machines, entriesMap, from, to, activeCols, sections, projName) {
+function calcDaysSummary(entries, machine, from, to) {
+  const isDual       = machine.shift_type === 'Dual Shift'
+  const totalDays    = generateDateRange(from, to).length
+  const brkDivisor   = isDual ? 24 : 12
+
+  let daysWorked = 0
+  if (isDual) {
+    // Day Shift = 0.5 days, Night Shift = 0.5 days; both on same date = 1 day
+    const dateMap = {}
+    for (const e of entries) {
+      const d = (e.entry_date || '').slice(0, 10)
+      if (!dateMap[d]) dateMap[d] = new Set()
+      dateMap[d].add(e.shift)
+    }
+    for (const shifts of Object.values(dateMap)) {
+      daysWorked += (shifts.has('Day Shift') ? 0.5 : 0) + (shifts.has('Night Shift') ? 0.5 : 0)
+    }
+  } else {
+    // Single shift: each unique date with an entry = 1 day
+    daysWorked = new Set(entries.map(e => (e.entry_date || '').slice(0, 10))).size
+  }
+
+  const totalBrkHrs  = entries.reduce((s, e) => s + (parseFloat(e.breakdown) || 0), 0)
+  const brkDays      = totalBrkHrs / brkDivisor
+  const idleDays     = Math.max(0, totalDays - daysWorked)
+  const netWorkDays  = Math.max(0, daysWorked - brkDays)
+  const payableDays  = idleDays + netWorkDays           // idle + effective working (excludes breakdown)
+  const utilPct      = totalDays > 0 ? ((netWorkDays / totalDays) * 100).toFixed(1) : '0.0'
+  const daysWorkedFmt = Number.isInteger(daysWorked) ? String(daysWorked) : daysWorked.toFixed(2)
+
+  return { totalDays, daysWorked, daysWorkedFmt, idleDays, totalBrkHrs, brkDays, netWorkDays, payableDays, utilPct }
+}
+
+async function buildExcel(machines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap = {}, meterResetsMap = {}) {
   const XLSX = await import('xlsx')
   const wb   = XLSX.utils.book_new()
 
   for (const m of machines) {
-    const entries   = entriesMap[m.id] || []
-    const sheetName = (m.slno || `M${m.id}`).slice(0, 31).replace(/[:\\/?*[\]]/g, '_')
+    const entries     = entriesMap[m.id] || []
+    const allRows     = fillMissingDates(entries, m, from, to)
+    const sheetName   = (m.slno || `M${m.id}`).slice(0, 31).replace(/[:\\/?*[\]]/g, '_')
     const machineCols = getMachineCols(m, activeCols)
-    const wsData    = []
+    const wsData      = []
+    const placeholderRowIndices = []
 
     if (sections.header) {
+      const ownerLabel = m.ownership === 'Own' ? 'Own Asset (RVR Projects)' : (m.vendor || '—')
       wsData.push([`Daily Progress Report — RVR Projects Pvt Ltd`])
-      wsData.push([`Project:`, projName, '', `Ownership:`, m.ownership || ''])
-      wsData.push([`Machine:`, m.slno || '', `Type:`, m.eq_type || '', `Reg No:`, m.reg_no || ''])
-      wsData.push([`Report Period:`, `${fmtDate(from)}  to  ${fmtDate(to)}`])
+      // Equipment row
+      wsData.push([`Sl#`, m.slno || '—', `Nickname`, m.nickname || '—', `Asset Code`, m.asset_code || '—', `Type`, m.eq_type || '—', `Reg No`, m.reg_no || '—'])
+      // Ownership / period row
+      wsData.push([`Ownership`, m.ownership || '—', `Owner/Vendor`, ownerLabel, `Project`, projName, `Shift`, m.shift_type || '—', `Period`, `${fmtDate(from)} – ${fmtDate(to)}`])
       wsData.push([])
     }
 
@@ -195,70 +280,155 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
 
     if (sections.log) {
       wsData.push(machineCols.map(c => c.label))
-      if (entries.length > 0) {
-        entries.forEach((e, i) => wsData.push(machineCols.map(c => cellValForCol(e, c, i))))
-        // Total row
-        const totRow = machineCols.map(c => {
-          if (c.key === 'sno')       return 'Total'
-          if (c.key === 'r1_total')  return entries.reduce((s, e) => s + (parseFloat(e.r1_total) || 0), 0).toFixed(2)
-          if (c.key === 'hsd')       return entries.reduce((s, e) => s + (parseFloat(e.hsd) || 0), 0).toFixed(2)
-          if (c.key === 'breakdown') return entries.reduce((s, e) => s + (parseFloat(e.breakdown) || 0), 0).toFixed(2)
-          if (c.rtId !== undefined && c.field === 'total') {
-            return entries.reduce((s, e) => {
-              const log = (e.reading_logs || []).find(l => l.reading_type_id === c.rtId)
-              return s + (parseFloat(log?.total) || 0)
-            }, 0).toFixed(2)
-          }
-          return ''
-        })
-        wsData.push(totRow)
-      } else {
-        wsData.push(['No entries found for this period.'])
+      allRows.forEach((e, i) => {
+        if (e._placeholder) placeholderRowIndices.push(logStartRow + 1 + i)
+        wsData.push(machineCols.map(c => cellValForCol(e, c, i)))
+      })
+      // Total row (only actual entries)
+      const totRow = machineCols.map(c => {
+        if (c.key === 'sno')       return 'Total'
+        if (c.key === 'r1_total')  return entries.reduce((s, e) => s + (parseFloat(e.r1_total) || 0), 0).toFixed(2)
+        if (c.key === 'hsd')       return entries.reduce((s, e) => s + (parseFloat(e.hsd) || 0), 0).toFixed(2)
+        if (c.key === 'breakdown') return entries.reduce((s, e) => s + (parseFloat(e.breakdown) || 0), 0).toFixed(2)
+        if (c.rtId !== undefined && c.field === 'total') {
+          return entries.reduce((s, e) => {
+            const log = (e.reading_logs || []).find(l => l.reading_type_id === c.rtId)
+            return s + (parseFloat(log?.total) || 0)
+          }, 0).toFixed(2)
+        }
+        return ''
+      })
+      wsData.push(totRow)
+      wsData.push([])
+    }
+
+    if (sections.days || sections.utilization || sections.fuel) {
+      const d   = calcDaysSummary(entries, m, from, to)
+      const s   = calcSummary(entries)
+      const approvedRange = (m.fuel_min && m.fuel_max)
+        ? `${m.fuel_min} – ${m.fuel_max}`
+        : m.fuel_min ? `≥ ${m.fuel_min}` : '—'
+      const fr  = fuelRecordsMap[m.id] || null
+      const ob  = fr ? parseFloat(fr.opening_balance) : null
+      const cb  = fr ? parseFloat(fr.closing_balance) : null
+      // Consumed = Opening + Total Issued (DPR) - Closing
+      const consumed     = ob !== null && cb !== null ? ob + s.hsdTotal - cb : null
+      const isKmBasis    = /km/i.test(m.reading1_basis || '')
+      const actualAvg    = consumed != null && consumed > 0
+        ? isKmBasis
+          ? `${(s.totalR1 / consumed).toFixed(2)} km/ltr`
+          : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
+        : '—'
+
+      // Left column: Working Day Summary
+      const leftRows = sections.days ? [
+        ['WORKING DAY SUMMARY',          ''],
+        ['Report Range days',            `${d.totalDays} Days`],
+        ['No of Breakdown days',         `${d.brkDays.toFixed(2)} Days`],
+        ['No of Idle days',              `${d.idleDays.toFixed(2)} Days`],
+        ['No of Effective Working days', `${d.netWorkDays.toFixed(2)} Days`],
+        ['No of Payable days',           `${d.payableDays.toFixed(2)} Days`],
+      ] : []
+
+      // Right column: Utilization then Fuel
+      const rightRows = []
+      if (sections.utilization) {
+        rightRows.push(['Utilization (Hrs)',  ''])
+        rightRows.push(['Planned Hrs',        `${s.plannedTotal.toFixed(2)} Hrs`])
+        rightRows.push(['Worked Hrs',         `${s.workedTotal.toFixed(2)} Hrs`])
+        rightRows.push(['Utilization',        `${s.utilPct} %`])
+        rightRows.push(['', ''])
+      }
+      if (sections.fuel) {
+        rightRows.push(['Fuel Summary',          ''])
+        rightRows.push(['Opening Fuel Balance',   ob !== null ? `${ob.toFixed(2)} Ltr` : '—'])
+        rightRows.push(['Total Issued (DPR)',     `${s.hsdTotal.toFixed(2)} Ltr`])
+        rightRows.push(['Closing Balance',        cb !== null ? `${cb.toFixed(2)} Ltr` : '—'])
+        rightRows.push(['Consumed',               consumed !== null ? `${consumed.toFixed(2)} Ltr` : '—'])
+        rightRows.push(['Actual Average',         actualAvg])
+        rightRows.push(['Approved Range',         approvedRange])
+      }
+
+      const maxLen = Math.max(leftRows.length, rightRows.length)
+      for (let i = 0; i < maxLen; i++) {
+        const l = leftRows[i]  || ['', '']
+        const r = rightRows[i] || ['', '']
+        wsData.push([l[0], l[1], '', r[0], r[1]])
       }
       wsData.push([])
     }
 
-    if (sections.utilization || sections.fuel) {
-      const s = calcSummary(entries)
-      const utilRows = []
-      const fuelRows = []
-
-      if (sections.utilization) {
-        utilRows.push(['Utilization', ''])
-        utilRows.push(['Planned Hrs',  `${s.plannedTotal.toFixed(2)}`])
-        utilRows.push(['Worked Hrs',   `${s.workedTotal.toFixed(2)}`])
-        utilRows.push(['Utilization',  `${s.utilPct} %`])
-      }
-      if (sections.fuel) {
-        fuelRows.push(['Fuel Summary', ''])
-        fuelRows.push(['Total HSD',    `${s.hsdTotal.toFixed(2)} Ltrs`])
-        fuelRows.push(['Fuel Average', `${s.fuelAvg} Ltrs/Hr`])
-      }
-
-      const maxLen = Math.max(utilRows.length, fuelRows.length)
-      for (let i = 0; i < maxLen; i++) {
-        const uRow = utilRows[i] || ['', '']
-        const fRow = fuelRows[i] || ['', '']
-        wsData.push([...uRow, '', ...fRow])
-      }
+    const resets = meterResetsMap[m.id] || []
+    if (resets.length > 0) {
+      wsData.push([])
+      wsData.push(['METER / COUNTER RESET LOG'])
+      wsData.push(['Date', 'Shift', 'Reading Type', 'New Starting Reading', 'Reset At', 'Reset By'])
+      resets.forEach(r => {
+        wsData.push([
+          fmtDate((r.entry_date || '').slice(0, 10)),
+          r.shift || '—',
+          r.reading_code || '—',
+          r.new_reading != null ? Number(r.new_reading).toFixed(2) : '—',
+          fmtDateTime(r.reset_at),
+          r.reset_by_name || '—',
+        ])
+      })
+      wsData.push([])
     }
 
     const ws = XLSX.utils.aoa_to_sheet(wsData)
 
-    // Style header row of log table
+    // Bold the title and label cells in the compact header rows
+    if (sections.header) {
+      const titleRef = XLSX.utils.encode_cell({ r: 0, c: 0 })
+      if (ws[titleRef]) ws[titleRef].s = { font: { bold: true, sz: 11 } }
+      // rows 1 and 2: label cols are 0, 2, 4, 6, 8
+      for (let r = 1; r <= 2; r++) {
+        [0, 2, 4, 6, 8].forEach(c => {
+          const ref = XLSX.utils.encode_cell({ r, c })
+          if (ws[ref]) ws[ref].s = { font: { bold: true } }
+        })
+      }
+    }
+
     if (sections.log) {
+      // Bold column header row, no fill
       machineCols.forEach((_, ci) => {
         const ref = XLSX.utils.encode_cell({ r: logStartRow, c: ci })
         if (!ws[ref]) return
-        ws[ref].s = {
-          font: { bold: true, color: { rgb: 'FFFFFF' } },
-          fill: { fgColor: { rgb: '1E3A5F' } },
-          alignment: { horizontal: 'center' },
-        }
+        ws[ref].s = { font: { bold: true }, alignment: { horizontal: 'center' } }
+      })
+      // Italic note for placeholder rows, no color
+      placeholderRowIndices.forEach(ri => {
+        machineCols.forEach((_, ci) => {
+          const ref = XLSX.utils.encode_cell({ r: ri, c: ci })
+          if (!ws[ref]) ws[ref] = { t: 's', v: '' }
+          ws[ref].s = { font: { italic: true } }
+        })
       })
     }
 
-    ws['!cols'] = machineCols.map(c => ({ wch: Math.max(c.label.length + 2, 14) }))
+    // Bold summary section label cells (col 0 and col 3) and section headers
+    if (sections.days || sections.utilization || sections.fuel) {
+      const summaryStart = logStartRow
+      const totalRows = wsData.length
+      for (let r = summaryStart; r < totalRows; r++) {
+        [0, 3].forEach(c => {
+          const ref = XLSX.utils.encode_cell({ r, c })
+          if (ws[ref] && ws[ref].v) ws[ref].s = { font: { bold: true } }
+        })
+      }
+    }
+
+    // Col widths: [leftLabel, leftValue, gap, rightLabel, rightValue]
+    const summaryColWidths = [30, 16, 2, 26, 16]
+    const logColWidths = machineCols.map(c => ({ wch: Math.max(c.label.length + 2, 12) }))
+    ws['!cols'] = logColWidths.map((lc, i) => ({
+      wch: Math.max(lc.wch, summaryColWidths[i] || 0)
+    }))
+    for (let i = logColWidths.length; i < summaryColWidths.length; i++) {
+      ws['!cols'].push({ wch: summaryColWidths[i] })
+    }
     XLSX.utils.book_append_sheet(wb, ws, sheetName)
   }
 
@@ -266,7 +436,7 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
   XLSX.writeFile(wb, `DPR_${projName}_${date}.xlsx`)
 }
 
-async function buildPDF(machines, entriesMap, from, to, activeCols, sections, projName) {
+async function buildPDF(machines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap = {}, meterResetsMap = {}) {
   const { jsPDF }             = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
 
@@ -280,47 +450,78 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
     isFirst = false
 
     const entries     = entriesMap[m.id] || []
+    const allRows     = fillMissingDates(entries, m, from, to)
     const machineCols = getMachineCols(m, activeCols)
     let y = 10
 
     if (sections.header) {
-      doc.setFillColor(30, 58, 95)
-      doc.rect(0, 0, pw, 8, 'F')
+      const ownerLabel = m.ownership === 'Own' ? 'Own Asset (RVR Projects)' : (m.vendor || '—')
+
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(10)
-      doc.setTextColor(255, 255, 255)
-      doc.text('RVR Projects Pvt Ltd — Daily Progress Report', pw / 2, 5.5, { align: 'center' })
-      y = 13
+      doc.setTextColor(0, 0, 0)
+      doc.text('RVR Projects Pvt Ltd — Daily Progress Report', 10, y)
+      y += 5
 
+      doc.setFontSize(7.5)
+      const sep = '   |   '
+
+      // Equipment line
+      const eqLine = [
+        `Sl#: ${m.slno || '—'}`,
+        `Nickname: ${m.nickname || '—'}`,
+        `Asset Code: ${m.asset_code || '—'}`,
+        `Type: ${m.eq_type || '—'}`,
+        `Reg No: ${m.reg_no || '—'}`,
+      ].join(sep)
       doc.setFont('helvetica', 'normal')
-      doc.setFontSize(8)
-      doc.setTextColor(30, 30, 30)
-      doc.text(`Project: ${projName}`, 10, y)
-      doc.text(`Ownership: ${m.ownership || '—'}`, pw / 2, y)
-      y += 5
-      doc.text(`Machine: ${m.slno || '—'}   |   Type: ${m.eq_type || '—'}   |   Reg No: ${m.reg_no || '—'}`, 10, y)
-      y += 5
-      doc.text(`Report Period: ${fmtDate(from)}  to  ${fmtDate(to)}   |   Generated: ${new Date().toLocaleString('en-IN')}`, 10, y)
+      doc.text(eqLine, 10, y)
+      y += 4.5
+
+      // Ownership / period line
+      const owLine = [
+        `Ownership: ${m.ownership || '—'}`,
+        `Owner/Vendor: ${ownerLabel}`,
+        `Project: ${projName}`,
+        `Shift: ${m.shift_type || '—'}`,
+        `Period: ${fmtDate(from)} – ${fmtDate(to)}`,
+      ].join(sep)
+      doc.text(owLine, 10, y)
       y += 6
     }
 
     if (sections.log) {
-      const body = entries.length > 0
-        ? entries.map((e, i) => machineCols.map(c => String(cellValForCol(e, c, i))))
-        : [['No entries found for this period.']]
+      const body    = allRows.map((e, i) => machineCols.map(c => String(cellValForCol(e, c, i))))
+      const totFoot = machineCols.map(c => {
+        if (c.key === 'sno')       return 'Total'
+        if (c.key === 'r1_total')  return entries.reduce((s, e) => s + (parseFloat(e.r1_total) || 0), 0).toFixed(2)
+        if (c.key === 'hsd')       return entries.reduce((s, e) => s + (parseFloat(e.hsd) || 0), 0).toFixed(2)
+        if (c.key === 'breakdown') return entries.reduce((s, e) => s + (parseFloat(e.breakdown) || 0), 0).toFixed(2)
+        if (c.rtId !== undefined && c.field === 'total') {
+          return entries.reduce((s, e) => {
+            const log = (e.reading_logs || []).find(l => l.reading_type_id === c.rtId)
+            return s + (parseFloat(log?.total) || 0)
+          }, 0).toFixed(2)
+        }
+        return ''
+      })
 
       autoTable(doc, {
         startY: y,
         head: [machineCols.map(c => c.label)],
         body,
-        styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak' },
-        headStyles: { fillColor: [30, 58, 95], textColor: 255, fontStyle: 'bold', fontSize: 7.5 },
-        alternateRowStyles: { fillColor: [245, 247, 250] },
+        foot: [totFoot],
+        showFoot: 'lastPage',
+        styles: { fontSize: 7, cellPadding: 1.5, overflow: 'linebreak', textColor: 0, fillColor: false },
+        headStyles: { fontStyle: 'bold', textColor: 0, fillColor: false, lineWidth: 0.2, lineColor: 0 },
+        bodyStyles: { lineWidth: 0.1, lineColor: 180 },
+        footStyles: { fontStyle: 'bold', textColor: 0, fillColor: false, lineWidth: 0.2, lineColor: 0 },
+        alternateRowStyles: {},
         columnStyles: { 0: { cellWidth: 10 }, 1: { cellWidth: 20 }, 2: { cellWidth: 22 } },
         margin: { left: 8, right: 8 },
         didDrawPage: ({ pageNumber }) => {
           doc.setFontSize(6.5)
-          doc.setTextColor(160)
+          doc.setTextColor(0)
           doc.text(`Page ${pageNumber}`, pw - 18, ph - 5)
           doc.text('RVR Projects Pvt Ltd — DPR', 10, ph - 5)
         },
@@ -328,33 +529,173 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
       y = doc.lastAutoTable.finalY + 8
     }
 
-    if (sections.utilization || sections.fuel) {
+    const addPageIfNeeded = (needed) => {
+      if (y + needed > ph - 12) { doc.addPage(); y = 12 }
+    }
+
+    if (sections.days || sections.utilization || sections.fuel) {
+      const d   = calcDaysSummary(entries, m, from, to)
       const s   = calcSummary(entries)
-      const col2 = pw / 2
+      const approvedRange = (m.fuel_min && m.fuel_max)
+        ? `${m.fuel_min} – ${m.fuel_max}`
+        : m.fuel_min ? `≥ ${m.fuel_min}` : '—'
+      const fr  = fuelRecordsMap[m.id] || null
+      const ob  = fr ? parseFloat(fr.opening_balance) : null
+      const cb  = fr ? parseFloat(fr.closing_balance) : null
+      // Consumed = Opening Balance + Total Issued (from DPR) - Closing Balance
+      const consumed  = ob !== null && cb !== null ? ob + s.hsdTotal - cb : null
+      const isKmBasis = /km/i.test(m.reading1_basis || '')
+      const actualAvg = consumed != null && consumed > 0
+        ? isKmBasis
+          ? `${(s.totalR1 / consumed).toFixed(2)} km/ltr`
+          : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
+        : '—'
 
-      doc.setFontSize(8)
-      doc.setTextColor(0)
+      // ── ERP-style bordered table renderer ──
+      const rowH   = 5.5    // row height in mm
+      const padL   = 2      // left text padding
+      const padR   = 2      // right text padding from cell right edge
 
+      // draws one bordered table: header row + data rows, returns bottom y
+      const drawTable = (tx, ty, labelW, valueW, header, rows) => {
+        const tw = labelW + valueW
+        doc.setFontSize(7.5)
+
+        // header row — shaded
+        doc.setFillColor(220, 228, 240)
+        doc.setDrawColor(140, 140, 160)
+        doc.rect(tx, ty, tw, rowH, 'FD')
+        doc.setFont('helvetica', 'bold')
+        doc.setTextColor(30, 30, 80)
+        doc.text(header, tx + padL, ty + rowH - 1.4)
+
+        // data rows
+        doc.setFont('helvetica', 'normal')
+        doc.setTextColor(0)
+        rows.forEach(([label, value], i) => {
+          const ry2 = ty + rowH * (i + 1)
+          // alternating light fill
+          if (i % 2 === 1) {
+            doc.setFillColor(248, 249, 252)
+            doc.rect(tx, ry2, tw, rowH, 'F')
+          }
+          doc.setDrawColor(190, 190, 200)
+          doc.rect(tx,           ry2, labelW, rowH, 'S')
+          doc.rect(tx + labelW,  ry2, valueW, rowH, 'S')
+          doc.setFontSize(7.5)
+          doc.setTextColor(40, 40, 40)
+          doc.text(String(label), tx + padL, ry2 + rowH - 1.4)
+          doc.setTextColor(20, 20, 20)
+          doc.text(String(value), tx + tw - padR, ry2 + rowH - 1.4, { align: 'right' })
+        })
+
+        return ty + rowH * (rows.length + 1)
+      }
+
+      // estimate total height needed
+      const leftRows  = sections.days ? 5 : 0
+      const rightRows = (sections.utilization ? 4 : 0) + (sections.fuel ? 7 : 0) + (sections.utilization && sections.fuel ? 1 : 0)
+      const neededH   = Math.max(leftRows, rightRows) * rowH + rowH + 4
+      addPageIfNeeded(neededH)
+
+      // layout: left table x=10, width=95; right table x=110, width=85
+      const lx = 10;  const lLabelW = 68; const lValueW = 27
+      const rx = 110; const rLabelW = 55; const rValueW = 30
+
+      let leftBottom = y
+      let rightBottom = y
+
+      // ── Left: Working Day Summary ──
+      if (sections.days) {
+        leftBottom = drawTable(lx, y, lLabelW, lValueW, 'Working Day Summary', [
+          ['Report Range days',            `${d.totalDays} Days`],
+          ['No of Breakdown days',         `${d.brkDays.toFixed(2)} Days`],
+          ['No of Idle days',              `${d.idleDays.toFixed(2)} Days`],
+          ['No of Effective Working days', `${d.netWorkDays.toFixed(2)} Days`],
+          ['No of Payable days',           `${d.payableDays.toFixed(2)} Days`],
+        ])
+      }
+
+      // ── Right: Utilization ──
       if (sections.utilization) {
-        doc.setFont('helvetica', 'bold')
-        doc.text('Utilization', 10, y)
-        doc.setFont('helvetica', 'normal')
-        doc.text(`Planned Hrs :  ${s.plannedTotal.toFixed(2)} Hrs`,  10, y + 5)
-        doc.text(`Worked Hrs  :  ${s.workedTotal.toFixed(2)} Hrs`,   10, y + 10)
-        doc.text(`Utilization :  ${s.utilPct} %`,                    10, y + 15)
+        rightBottom = drawTable(rx, y, rLabelW, rValueW, 'Utilization (Hrs)', [
+          ['Planned Hrs', `${s.plannedTotal.toFixed(2)} Hrs`],
+          ['Worked Hrs',  `${s.workedTotal.toFixed(2)} Hrs`],
+          ['Utilization', `${s.utilPct} %`],
+        ])
+        rightBottom += 2
       }
+
+      // ── Right: Fuel Summary ──
       if (sections.fuel) {
-        doc.setFont('helvetica', 'bold')
-        doc.text('Fuel Summary', col2, y)
-        doc.setFont('helvetica', 'normal')
-        doc.text(`Total HSD    :  ${s.hsdTotal.toFixed(2)} Ltrs`,    col2, y + 5)
-        doc.text(`Fuel Average :  ${s.fuelAvg} Ltrs/Hr`,             col2, y + 10)
+        rightBottom = drawTable(rx, rightBottom, rLabelW, rValueW, 'Fuel Summary', [
+          ['Opening Fuel Balance', ob !== null ? `${ob.toFixed(2)} Ltr` : '—'],
+          ['Total Issued (DPR)',   `${s.hsdTotal.toFixed(2)} Ltr`],
+          ['Closing Balance',      cb !== null ? `${cb.toFixed(2)} Ltr` : '—'],
+          ['Consumed',             consumed !== null ? `${consumed.toFixed(2)} Ltr` : '—'],
+          ['Actual Average',       actualAvg],
+          ['Approved Range',       approvedRange],
+        ])
       }
+
+      y = Math.max(leftBottom, rightBottom) + 4
+    }
+
+    const resets = meterResetsMap[m.id] || []
+    if (resets.length > 0) {
+      addPageIfNeeded(16 + resets.length * 6)
+      doc.setFontSize(7.5)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(180, 80, 0)
+      doc.text('Meter / Counter Reset Log', 8, y)
+      y += 3
+      autoTable(doc, {
+        startY: y,
+        head: [['Date', 'Shift', 'Reading Type', 'New Starting Reading', 'Reset At (IST)', 'Reset By']],
+        body: resets.map(r => [
+          fmtDate((r.entry_date || '').slice(0, 10)),
+          r.shift || '—',
+          r.reading_code || '—',
+          r.new_reading != null ? `${Number(r.new_reading).toFixed(2)}` : '—',
+          fmtDateTime(r.reset_at),
+          r.reset_by_name || '—',
+        ]),
+        styles: { fontSize: 7, cellPadding: 1.5, textColor: 0, fillColor: false },
+        headStyles: { fontStyle: 'bold', textColor: [180, 80, 0], fillColor: [255, 240, 220], lineWidth: 0.2, lineColor: 0 },
+        bodyStyles: { lineWidth: 0.1, lineColor: 180 },
+        margin: { left: 8, right: 8 },
+      })
+      y = doc.lastAutoTable.finalY + 6
     }
   }
 
   const date = new Date().toISOString().slice(0, 10)
   doc.save(`DPR_${projName}_${date}.pdf`)
+}
+
+export async function downloadDPRForMachine(machine, entries, from, to, projName, format, fuelRecord = null) {
+  const activeCols     = [...FIXED_COLS, ...TOGGLE_COLS.filter(c => c.def)]
+  const sections       = { header: true, log: true, days: true, utilization: true, fuel: true }
+  const shiftOrder     = { 'Day Shift': 0, 'Night Shift': 1, 'Dual Shift': 2 }
+  const sorted         = [...entries].sort((a, b) => {
+    const dd = new Date(a.entry_date) - new Date(b.entry_date)
+    if (dd !== 0) return dd
+    return (shiftOrder[a.shift] ?? 9) - (shiftOrder[b.shift] ?? 9)
+  })
+  const entriesMap     = { [machine.id]: sorted }
+  const fuelRecordsMap = fuelRecord ? { [machine.id]: fuelRecord } : {}
+
+  let meterResetsMap = {}
+  try {
+    const rr = await getMeterResets({ machine_id: machine.id, from, to })
+    if (rr.data.data?.length) meterResetsMap = { [machine.id]: rr.data.data }
+  } catch {}
+
+  if (format === 'excel') {
+    await buildExcel([machine], entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap)
+  } else {
+    await buildPDF([machine], entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap)
+  }
 }
 
 export default function DPRDownloadModal({ onClose }) {
@@ -367,7 +708,7 @@ export default function DPRDownloadModal({ onClose }) {
   const [machineId,  setMachineId] = useState('')
   const [from,       setFrom]      = useState(firstOfMonth)
   const [to,         setTo]        = useState(today)
-  const [sections,   setSections]  = useState({ header: true, log: true, utilization: true, fuel: true })
+  const [sections,   setSections]  = useState({ header: true, log: true, days: true, utilization: true, fuel: true })
   const [cols,       setCols]      = useState(
     () => Object.fromEntries(TOGGLE_COLS.map(c => [c.key, c.def]))
   )
@@ -424,10 +765,23 @@ export default function DPRDownloadModal({ onClose }) {
           })
       }
 
+      const fuelRecordsMap = {}
+      const meterResetsMap = {}
+      await Promise.all(targetMachines.map(async m => {
+        try {
+          const fr = await getFuelRecord({ machine_id: m.id, period_from: from, period_to: to })
+          if (fr.data.data) fuelRecordsMap[m.id] = fr.data.data
+        } catch {}
+        try {
+          const rr = await getMeterResets({ machine_id: m.id, from, to })
+          if (rr.data.data?.length) meterResetsMap[m.id] = rr.data.data
+        } catch {}
+      }))
+
       if (format === 'excel') {
-        await buildExcel(targetMachines, entriesMap, from, to, activeCols, sections, projName)
+        await buildExcel(targetMachines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap)
       } else {
-        await buildPDF(targetMachines, entriesMap, from, to, activeCols, sections, projName)
+        await buildPDF(targetMachines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap)
       }
 
       onClose()

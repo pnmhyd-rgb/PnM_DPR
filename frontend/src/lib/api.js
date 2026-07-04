@@ -31,8 +31,10 @@ export const deleteProject    = (id)          => client.delete(`/projects/${id}`
 
 export const getMachines        = (params)      => client.get('/machines', { params })
 export const getFleetSummary    = (params)      => client.get('/machines/fleet-summary', { params })
+export const getFleetList       = (params)      => client.get('/machines/fleet-list',    { params })
 export const createMachine      = (data)        => client.post('/machines', data)
-export const bulkCreateMachines = (rows)        => client.post('/machines/bulk', { rows })
+export const bulkCreateMachines         = (rows) => client.post('/machines/bulk', { rows })
+export const regenerateMachineNicknames = ()     => client.post('/machines/regenerate-nicknames')
 export const updateMachine      = (id, data)    => client.put(`/machines/${id}`, data)
 export const deleteMachine      = (id, data)    => client.delete(`/machines/${id}`, data ? { data } : undefined)
 export const transferMachine    = (id, data)    => client.put(`/machines/${id}/transfer`, data)
@@ -45,6 +47,10 @@ export const deleteDesignation   = (id)       => client.delete(`/designations/${
 export const getUomTypes      = ()            => client.get('/uom')
 export const createUomType    = (data)        => client.post('/uom', data)
 export const deleteUomType    = (id)          => client.delete(`/uom/${id}`)
+
+export const getFuelTypeOptions    = ()       => client.get('/fuel-type-options')
+export const createFuelTypeOption  = (data)   => client.post('/fuel-type-options', data)
+export const deleteFuelTypeOption  = (id)     => client.delete(`/fuel-type-options/${id}`)
 
 export const getVendors       = ()            => client.get('/vendors')
 export const upsertVendor     = (data)        => client.post('/vendors', data)
@@ -90,6 +96,13 @@ export const getFuelEntries    = (params)     => client.get('/fuel', { params })
 export const createFuelEntry   = (data)       => client.post('/fuel', data)
 export const deleteFuelEntry   = (id)         => client.delete(`/fuel/${id}`)
 
+export const getFuelRecord     = (params)     => client.get('/fuel-records', { params })
+export const upsertFuelRecord  = (data)       => client.post('/fuel-records', data)
+
+export const getMeterResets    = (params)     => client.get('/meter-resets', { params })
+export const createMeterReset  = (data)       => client.post('/meter-resets', data)
+export const deleteMeterReset  = (id)         => client.delete(`/meter-resets/${id}`)
+
 export const getServiceEntries  = (params)   => client.get('/service', { params })
 export const createServiceEntry = (data)     => client.post('/service', data)
 export const deleteServiceEntry = (id)       => client.delete(`/service/${id}`)
@@ -124,6 +137,36 @@ export const approveHireWOFinal      = (id, data)    => client.patch(`/hire/${id
 export const rejectHireWorkOrder     = (id, data)    => client.patch(`/hire/${id}/reject`, data)
 export const renewHireWorkOrder      = (id, data)    => client.post(`/hire/${id}/renew`, data)
 
+export const getTermsLibrary         = ()            => client.get('/hire/terms-library')
+export const createTermsLibraryItem  = (data)        => client.post('/hire/terms-library', data)
+export const updateTermsLibraryItem  = (id, data)    => client.put(`/hire/terms-library/${id}`, data)
+export const deleteTermsLibraryItem  = (id)          => client.delete(`/hire/terms-library/${id}`)
+
+export const getTermsCategories      = ()            => client.get('/hire/terms-categories')
+export const createTermsCategory     = (data)        => client.post('/hire/terms-categories', data)
+export const deleteTermsCategory     = (id)          => client.delete(`/hire/terms-categories/${id}`)
+
+export const getSignatoryDesignations    = ()            => client.get('/hire/signatory-designations')
+export const createSignatoryDesignation  = (data)        => client.post('/hire/signatory-designations', data)
+export const deleteSignatoryDesignation  = (id)          => client.delete(`/hire/signatory-designations/${id}`)
+
+export const getSignatories          = ()            => client.get('/hire/signatories')
+export const createSignatory         = (data)        => client.post('/hire/signatories', data)
+export const updateSignatory         = (id, data)    => client.put(`/hire/signatories/${id}`, data)
+export const deleteSignatory         = (id)          => client.delete(`/hire/signatories/${id}`)
+
+// Hire Indents
+export const getHireIndents          = (params)      => client.get('/hire-indents', { params })
+export const getHireIndent           = (id)          => client.get(`/hire-indents/${id}`)
+export const createHireIndent        = (data)        => client.post('/hire-indents', data)
+export const updateHireIndent        = (id, data)    => client.put(`/hire-indents/${id}`, data)
+export const deleteHireIndent        = (id)          => client.delete(`/hire-indents/${id}`)
+export const submitHireIndent        = (id)          => client.patch(`/hire-indents/${id}/submit`)
+export const approveHireIndentL1     = (id, data)    => client.patch(`/hire-indents/${id}/approve-l1`, data)
+export const approveHireIndentFinal  = (id, data)    => client.patch(`/hire-indents/${id}/approve`, data)
+export const rejectHireIndent        = (id, data)    => client.patch(`/hire-indents/${id}/reject`, data)
+export const convertIndentToWO       = (id)          => client.post(`/hire-indents/${id}/convert`)
+
 // Hire Billing
 export const getHireBills           = (params)      => client.get('/hire-billing', { params })
 export const getHireBill            = (id)          => client.get(`/hire-billing/${id}`)
@@ -148,6 +191,12 @@ export const getSpareTransactions  = (params) => client.get('/spare-parts', { pa
 export const getSpareStockSummary  = (params) => client.get('/spare-parts/stock-summary', { params })
 export const createSpareTransaction = (data)  => client.post('/spare-parts', data)
 export const deleteSpareTransaction = (id)    => client.delete(`/spare-parts/${id}`)
+
+// Machine Documents
+export const getMachineDocuments      = (machineId) => client.get(`/machine-documents/${machineId}`)
+export const createMachineDocument    = (data)      => client.post('/machine-documents', data)
+export const deleteMachineDocument    = (id)        => client.delete(`/machine-documents/${id}`)
+export const getMachineDocumentUrl    = (id)        => client.get(`/machine-documents/${id}/download`)
 
 // RTA Compliance
 export const getComplianceAll        = (params)      => client.get('/compliance', { params })
@@ -178,3 +227,11 @@ export const setMachineReadingConfigs   = (machineId, data) => client.put(`/mach
 export const toggleMachineReadingConfig = (id, data)        => client.patch(`/machine-reading-configs/${id}/toggle`, data)
 export const resetMachineReadingConfigs    = (machineId)       => client.post(`/machines/${machineId}/reset-reading-configs`)
 export const propagateMachineReadingConfigs = (eqTypeName)    => client.post('/machines/propagate-reading-configs', { equipment_type_name: eqTypeName })
+
+// Asset Matrix
+export const searchAssetMatrix      = (q)           => client.get('/asset-matrix/search', { params: { q } })
+export const getAssetMatrix         = (params)      => client.get('/asset-matrix', { params })
+export const getAssetMatrixOne      = (amId)        => client.get(`/asset-matrix/${amId}`)
+export const getAssetMatrixTypes    = ()            => client.get('/asset-matrix/asset-types')
+export const createAssetMatrix      = (data)        => client.post('/asset-matrix', data)
+export const updateAssetMatrix      = (amId, data)  => client.put(`/asset-matrix/${amId}`, data)

@@ -15,9 +15,13 @@ app.use(cors({
 
 const apiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 300,
+  max: 2000,
   standardHeaders: true,
-  legacyHeaders: false
+  legacyHeaders: false,
+  // Key by auth token so each logged-in user gets their own limit,
+  // not a shared pool for everyone behind the same office IP.
+  keyGenerator: (req) =>
+    req.headers.authorization?.replace('Bearer ', '') || req.ip,
 });
 app.use('/api/', apiLimiter);
 

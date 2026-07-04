@@ -12,9 +12,10 @@ import * as XLSX from 'xlsx'
 const QUICK_PROMPTS = [
   { label: "Today's DPR status",     text: "What is today's DPR submission status?" },
   { label: 'This month utilization', text: 'Show me the utilization report for this month' },
-  { label: 'Fleet breakdown',        text: 'Give me a fleet status breakdown by equipment type' },
-  { label: 'Hire machinery HSD',     text: 'Show fuel consumption for hire machinery this month' },
-  { label: 'Low utilization',        text: 'Which machines have below 50% utilization this month?' },
+  { label: 'Fleet status',           text: 'Give me a fleet status breakdown by equipment type' },
+  { label: 'Idle & Breakdown',       text: 'Show idle and breakdown statistics for this month' },
+  { label: 'Compliance expiry',      text: 'Show compliance documents expiring in the next 30 days' },
+  { label: 'Hire WOs',               text: 'Show all approved hire work orders' },
 ]
 
 // ── Table renderer inside chat ────────────────────────────────────────────────
@@ -244,7 +245,7 @@ function downloadPdf(tableData) {
 
 // ── Main KalaPanel ────────────────────────────────────────────────────────────
 
-const GREETING = "Hi! I'm **Kala**, your AI assistant for PnM DPR. I can help you:\n- Fetch utilization and fuel reports\n- Check today's DPR completion status\n- Analyze fleet performance by project, equipment type, or ownership\n\nTry asking me something, or use the quick prompts below."
+const GREETING = "Hi! I'm **Kala**, your AI assistant for PnM DPR. I can help you:\n- Fetch utilization, fuel and breakdown reports\n- Check today's DPR completion status\n- Analyze idle and breakdown statistics per machine\n- View hire work orders, billing, and vendor details\n- Check compliance (insurance, road tax, fitness, PUC) expiry\n- Query meter resets, service records, and spare parts stock\n\nTry asking me something, or use the quick prompts below."
 
 export default function KalaPanel({ onClose }) {
   const [messages, setMessages] = useState([
@@ -291,14 +292,17 @@ export default function KalaPanel({ onClose }) {
 
     setError(null)
     setInput('')
-    const userMsg   = { role: 'user', content: txt }
-    const nextMsgs  = [...messages, userMsg]
+    const userMsg  = { role: 'user', content: txt }
+    const nextMsgs = [...messages, userMsg]
     setMessages(nextMsgs)
     setLoading(true)
 
-    // Only send the actual conversation (skip the hardcoded greeting)
+    // Build clean API history: skip greeting (index 0), skip error-reply messages,
+    // keep only role+content, trim to last 10 to avoid context overflow.
     const apiMessages = nextMsgs
-      .slice(1)                         // skip greeting
+      .slice(1)                              // skip greeting
+      .filter(m => !m.isErrorReply)          // skip previous error replies
+      .slice(-10)                            // keep last 10 messages (5 turns)
       .map(m => ({ role: m.role, content: m.content }))
 
     try {
@@ -306,9 +310,21 @@ export default function KalaPanel({ onClose }) {
       const { reply, tableData } = res.data
       setMessages(m => [...m, { role: 'assistant', content: reply, tableData }])
     } catch (err) {
-      const msg = err.response?.data?.error || 'Unable to reach Kala. Check that ANTHROPIC_API_KEY is configured in the backend.'
-      setError(msg)
-      setMessages(m => [...m, { role: 'assistant', content: `Sorry, I ran into an issue: ${msg}` }])
+      const serverMsg = err.response?.data?.error
+      const status    = err.response?.status
+      let userMsg_
+      if (status === 429) {
+        userMsg_ = 'Kala is busy right now — please wait a moment and try again.'
+      } else if (status === 503) {
+        userMsg_ = 'The AI service is temporarily overloaded. Please try again in a few seconds.'
+      } else if (serverMsg) {
+        userMsg_ = serverMsg
+      } else {
+        userMsg_ = 'Unable to reach Kala. Please try again.'
+      }
+      setError(userMsg_)
+      // Add error reply to UI but mark it so it's excluded from future API calls
+      setMessages(m => [...m, { role: 'assistant', content: `I ran into an issue: ${userMsg_}`, isErrorReply: true }])
     } finally {
       setLoading(false)
       setTimeout(() => inputRef.current?.focus(), 50)
@@ -472,7 +488,7 @@ export default function KalaPanel({ onClose }) {
         </div>
 
         <p style={{ fontSize: 10, color: '#d1d5db', marginTop: 7, textAlign: 'center' }}>
-          Ask Kala · Powered by Claude AI · RVR Projects
+          Ask Kala · Powered by Groq AI · RVR Projects
         </p>
       </div>
     </div>

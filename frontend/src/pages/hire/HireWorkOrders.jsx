@@ -1,23 +1,98 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Fragment } from 'react'
 import { useAuth } from '../../context/AuthContext'
 import {
   getHireVendors, createHireVendor, updateHireVendor, deleteHireVendor,
   getHireWorkOrders, getHireWorkOrder, createHireWorkOrder, updateHireWorkOrder,
   deleteHireWorkOrder, submitHireWorkOrder, approveHireWOL1, approveHireWOFinal,
-  rejectHireWorkOrder, renewHireWorkOrder, getProjects, getMachines,
+  rejectHireWorkOrder, renewHireWorkOrder, getProjects, getEquipmentTypes,
+  getHireIndents, getHireIndent,
+  getTermsLibrary, createTermsLibraryItem, updateTermsLibraryItem, deleteTermsLibraryItem,
+  getTermsCategories, createTermsCategory, deleteTermsCategory,
+  getSignatoryDesignations, createSignatoryDesignation, deleteSignatoryDesignation,
+  getSignatories, createSignatory, updateSignatory, deleteSignatory,
 } from '../../lib/api'
 import GSTVerifyField from '../../components/GSTVerifyField'
 import {
   Plus, Edit2, Trash2, X, Search, Eye, CheckCircle, XCircle,
-  FileText, Download, RefreshCw, ChevronDown, ChevronRight, AlertCircle, Loader2,
+  FileText, Download, RefreshCw, ChevronDown, ChevronUp, ChevronRight, AlertCircle, Loader2,
   Building2, FileCheck, RotateCcw, ShieldCheck, ShieldX, BadgeCheck,
   ToggleLeft, ToggleRight,
 } from 'lucide-react'
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-const fmtDate  = d => d ? new Date(d).toLocaleDateString('en-IN') : '—'
+const fmtDate     = d => d ? new Date(d).toLocaleDateString('en-IN') : '—'
+const fmtDateTime = d => d ? new Date(d).toLocaleString('en-IN', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }) : '—'
 const fmtMoney = v => v != null ? `₹ ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'
+
+// ── COMPANY LETTERHEAD / SIGNATORY (single point to update) ─────────────────
+
+const RVR_COMPANY = {
+  name: 'RVR PROJECTS PVT LTD',
+  addressLines: ['#9-16-29, C.B.M Compound,', 'Visakhapatnam, Andhra Pradesh - 530003, India'],
+  gst: '36AADCR4363H1Z8',
+}
+const RVR_SIGNATORY = { name: 'R SATYANARAYANA', title: 'DIRECTOR' }
+
+// ── AMOUNT IN WORDS (Indian numbering system) ────────────────────────────────
+
+const ONES = ['','One','Two','Three','Four','Five','Six','Seven','Eight','Nine','Ten',
+  'Eleven','Twelve','Thirteen','Fourteen','Fifteen','Sixteen','Seventeen','Eighteen','Nineteen']
+const TENS = ['','','Twenty','Thirty','Forty','Fifty','Sixty','Seventy','Eighty','Ninety']
+
+function twoDigitWords(n) {
+  if (n < 20) return ONES[n]
+  return TENS[Math.floor(n / 10)] + (n % 10 ? ' ' + ONES[n % 10] : '')
+}
+function threeDigitWords(n) {
+  const h = Math.floor(n / 100), r = n % 100
+  return (h ? ONES[h] + ' Hundred' + (r ? ' ' : '') : '') + (r ? twoDigitWords(r) : '')
+}
+function numberToWordsIndian(num) {
+  num = Math.round(Number(num) || 0)
+  if (num === 0) return 'Zero'
+  const crore = Math.floor(num / 1e7); num %= 1e7
+  const lakh  = Math.floor(num / 1e5); num %= 1e5
+  const thousand = Math.floor(num / 1e3); num %= 1e3
+  const rest  = num
+  const parts = []
+  if (crore)    parts.push(threeDigitWords(crore) + ' Crore')
+  if (lakh)     parts.push(threeDigitWords(lakh) + ' Lakh')
+  if (thousand) parts.push(threeDigitWords(thousand) + ' Thousand')
+  if (rest)     parts.push(threeDigitWords(rest))
+  return parts.join(' ')
+}
+const amountInWords = v => {
+  const n = Number(v)
+  if (!n) return ''
+  return `Rupees In Words: ${numberToWordsIndian(n)} Rupees Only`
+}
+const ordinalQty = n => {
+  const num = parseInt(n) || 0
+  return `${ONES[num] || num} (${String(num).padStart(2, '0')})`
+}
+
+// ── ADDITIONAL CONDITIONS: line helpers (shared by picker, editor & document) ─
+// Picked library conditions carry their sub-heading (category) encoded as
+// "Category::Description" so it can be rendered as a bold heading in the
+// generated document and editor. Manually-typed custom lines have no "::"
+// and render as plain numbered text (unchanged behaviour).
+
+const conditionLines = text => (text || '').split('\n').map(l => l.trim()).filter(Boolean)
+const stripLineNumber = l => l.replace(/^\d+[.)]\s*/, '').trim()
+// "\n" is the separator between distinct picked points, so a single condition's
+// own text must never contain one — collapse any embedded newlines to spaces.
+const singleLine = s => (s || '').replace(/\s*\n\s*/g, ' ').trim()
+const encodeConditionLine = (category, description) =>
+  category ? `${singleLine(category)}::${singleLine(description)}` : singleLine(description)
+const decodeConditionLine = line => {
+  const sepIdx = line.indexOf('::')
+  return sepIdx >= 0
+    ? { category: line.slice(0, sepIdx).trim(), text: line.slice(sepIdx + 2).trim() }
+    : { category: null, text: line }
+}
+const numberedConditions = text => conditionLines(text).map(stripLineNumber).filter(Boolean)
+  .map((l, i) => ({ n: i + 1, ...decodeConditionLine(l) }))
 
 const STATUS_META = {
   draft:       { label: 'Draft',       color: 'bg-gray-100 text-gray-600'   },
@@ -339,7 +414,7 @@ function VendorModal({ vendor, onClose, onSaved }) {
 
 // ── WO ITEM ROW ───────────────────────────────────────────────────────────────
 
-function ItemRow({ item, machines, onChange, onRemove }) {
+function ItemRow({ item, equipmentTypes, onChange, onRemove }) {
   const set = k => e => {
     const updated = { ...item, [k]: e.target.value }
     if (['quantity','rate'].includes(k)) {
@@ -348,33 +423,48 @@ function ItemRow({ item, machines, onChange, onRemove }) {
     onChange(updated)
   }
   return (
-    <div className="grid grid-cols-12 gap-2 items-start">
-      <div className="col-span-4">
-        <select className={inp} value={item.machine_id || ''} onChange={e => {
-          const m = machines.find(m => String(m.id) === e.target.value)
-          onChange({ ...item, machine_id: e.target.value || null,
-            equipment_desc: m ? `${m.eq_type}${m.capacity ? ` (${m.capacity})` : ''} — ${m.slno}` : item.equipment_desc })
-        }}>
-          <option value="">— select machine or type below —</option>
-          {machines.map(m => <option key={m.id} value={m.id}>{m.slno} · {m.eq_type}{m.reg_no ? ` (${m.reg_no})` : ''}</option>)}
-        </select>
-        <input className={`${inp} mt-1`} placeholder="Equipment description *" value={item.equipment_desc} onChange={set('equipment_desc')} />
+    <div className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50/50">
+      <div className="grid grid-cols-12 gap-2">
+        <div className="col-span-11">
+          <input className={inp} placeholder="Equipment description *" value={item.equipment_desc} onChange={set('equipment_desc')} />
+        </div>
+        <div className="col-span-1 pt-1 text-right">
+          <button type="button" onClick={onRemove} className="text-red-400 hover:text-red-600 p-1"><X size={15} /></button>
+        </div>
       </div>
-      <div className="col-span-1"><input type="number" className={inp} placeholder="Qty" value={item.quantity} onChange={set('quantity')} /></div>
-      <div className="col-span-1"><input className={inp} placeholder="Unit" value={item.unit} onChange={set('unit')} /></div>
-      <div className="col-span-2"><input type="number" className={inp} placeholder="Rate" value={item.rate} onChange={set('rate')} /></div>
-      <div className="col-span-2">
-        <select className={inp} value={item.rate_type} onChange={set('rate_type')}>
-          <option value="per_month">Per Month</option>
-          <option value="per_day">Per Day</option>
-          <option value="per_hour">Per Hour</option>
-          <option value="lump_sum">Lump Sum</option>
-        </select>
+
+      <div className="grid grid-cols-5 gap-2">
+        <div>
+          <label className="text-[10px] text-gray-400 uppercase">Equipment Type</label>
+          <select className={inp} value={item.eq_type} onChange={set('eq_type')}>
+            <option value="">— select —</option>
+            {equipmentTypes.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
+          </select>
+        </div>
+        <div><label className="text-[10px] text-gray-400 uppercase">Reg No</label><input className={inp} value={item.reg_no} onChange={set('reg_no')} /></div>
+        <div><label className="text-[10px] text-gray-400 uppercase">Make</label><input className={inp} value={item.manufacturer} onChange={set('manufacturer')} placeholder="e.g. ACE" /></div>
+        <div><label className="text-[10px] text-gray-400 uppercase">Model</label><input className={inp} value={item.model} onChange={set('model')} /></div>
+        <div><label className="text-[10px] text-gray-400 uppercase">YOM</label><input className={inp} value={item.yom} onChange={set('yom')} maxLength={4} placeholder="e.g. 2023" /></div>
       </div>
-      <div className="col-span-1"><input readOnly className={`${inp} bg-gray-50 text-gray-600`} value={item.amount} /></div>
-      <div className="col-span-1 pt-2">
-        <button type="button" onClick={onRemove} className="text-red-400 hover:text-red-600 p-1"><X size={15} /></button>
+
+      <div className="grid grid-cols-6 gap-2">
+        <div><label className="text-[10px] text-gray-400 uppercase">Qty</label><input type="number" className={inp} value={item.quantity} onChange={set('quantity')} /></div>
+        <div><label className="text-[10px] text-gray-400 uppercase">Unit</label><input className={inp} value={item.unit} onChange={set('unit')} /></div>
+        <div><label className="text-[10px] text-gray-400 uppercase">Billing Rate</label><input type="number" className={inp} value={item.rate} onChange={set('rate')} /></div>
+        <div>
+          <label className="text-[10px] text-gray-400 uppercase">Rate Type</label>
+          <select className={inp} value={item.rate_type} onChange={set('rate_type')}>
+            <option value="per_month">Per Month</option>
+            <option value="per_day">Per Day</option>
+            <option value="per_hour">Per Hour</option>
+            <option value="lump_sum">Lump Sum</option>
+          </select>
+        </div>
+        <div><label className="text-[10px] text-gray-400 uppercase">Single Shift Rate</label><input type="number" className={inp} value={item.rate_single_shift} onChange={set('rate_single_shift')} placeholder="₹ / month" /></div>
+        <div><label className="text-[10px] text-gray-400 uppercase">Double Shift Rate</label><input type="number" className={inp} value={item.rate_double_shift} onChange={set('rate_double_shift')} placeholder="₹ / month" /></div>
       </div>
+
+      <div className="text-right text-xs text-gray-500">Amount: <span className="font-semibold text-gray-800">{fmtMoney(item.amount)}</span></div>
     </div>
   )
 }
@@ -455,25 +545,118 @@ function BillingRulesSection({ rules, onChange }) {
   )
 }
 
-const blankItem = () => ({ machine_id: null, equipment_desc: '', quantity: 1, unit: 'No.', rate: '', rate_type: 'per_month', amount: '0' })
+const blankItem = () => ({
+  machine_id: null, equipment_desc: '', eq_type: '', reg_no: '', manufacturer: '', model: '', yom: '',
+  quantity: 1, unit: 'No.', rate: '', rate_type: 'per_month',
+  rate_single_shift: '', rate_double_shift: '', amount: '0',
+})
 
-const PRESET_TERMS = [
-  { id: 1,  text: 'Hire charges shall be paid monthly on submission of bills duly certified by the Site Engineer.' },
-  { id: 2,  text: 'The equipment shall be maintained by the vendor in good working condition at all times.' },
-  { id: 3,  text: 'Fuel and lubricants shall be supplied by RVR Projects Pvt Ltd.' },
-  { id: 4,  text: 'Operator / Driver charges are to be borne by the vendor unless otherwise agreed in writing.' },
-  { id: 5,  text: 'The work order is valid for the tenure specified and subject to site conditions and availability of work.' },
-  { id: 6,  text: 'Either party may terminate this work order with 15 days written notice.' },
-  { id: 7,  text: 'The vendor shall not sublet or transfer this work order to any third party without prior written consent.' },
-  { id: 8,  text: 'Disputes arising out of this work order shall be resolved as per the Indian Arbitration and Conciliation Act.' },
-  { id: 9,  text: 'The equipment shall be deployed only at the project site mentioned herein and for the work specified.' },
-  { id: 10, text: 'Idle charges shall not be payable unless specifically agreed in writing.' },
-  { id: 11, text: 'The vendor shall ensure all statutory compliances including insurance, fitness certificate, and PUC for the equipment.' },
-  { id: 12, text: 'Hours / measurements shall be as certified by the authorised Site Engineer of RVR Projects Pvt Ltd.' },
-  { id: 13, text: 'RVR Projects Pvt Ltd reserves the right to reduce or terminate the work order without any compensation if site work is stalled.' },
-  { id: 14, text: 'Any damage to equipment due to negligence of RVR Projects Pvt Ltd staff shall be compensated as mutually agreed.' },
-  { id: 15, text: 'The vendor shall submit invoices within 7 days of the end of each billing cycle.' },
-]
+// ── MACHINE-SPECIFIC TERMS & CONDITIONS LIBRARY ─────────────────────────────
+// Both the conditions (hire_terms_library) and their sub-headings
+// (hire_terms_categories) are stored in the DB and fetched at runtime, so they
+// can be managed (added/removed) directly from the picker UI.
+
+// ── STANDARD CLAUSE LIBRARY ───────────────────────────────────────────────────
+// Fixed legal/operational clauses common to every hire WO (clause 1 = equipment
+// particulars, rendered separately as a table). Variable data is substituted in.
+
+// The Additional/Special Conditions clause (the user's picked points) — shown
+// in both the draft summary and the full legal document.
+function buildAdditionalConditionsClause(wo) {
+  if (!wo.terms_conditions?.trim()) return null
+  return {
+    title: 'Additional / Special Conditions',
+    body: numberedConditions(wo.terms_conditions).map(c => c.category
+      ? { heading: `${c.n}) ${c.category}`, text: c.text }
+      : { heading: null, text: `${c.n}) ${c.text}` }),
+  }
+}
+
+// The full 35-clause legal document (fuel norms, payment, insurance, jurisdiction,
+// etc.) — only used for the final/approved copy sent to the vendor.
+function buildStandardClauses(wo) {
+  const tenureText = wo.tenure_months
+    ? `Minimum ${wo.tenure_months} Month(s) and will be extendable on mutual consent.`
+    : 'As mutually agreed and extendable on mutual consent.'
+  const vendorBank = wo.vendor_bank_name
+    ? `${wo.vendor_bank_name}, A/c No: ${wo.vendor_bank_account || '—'}, IFSC: ${wo.vendor_bank_ifsc || '—'}`
+    : 'NA'
+
+  return [
+    { title: 'Monsoon Season Terms & Conditions', body: ['In Monsoon Season actual working days will be payable on prorata basis.'] },
+    { title: 'Project Site Location', body: [`${wo.project_code || ''}${wo.project_name ? ' — ' + wo.project_name : ''}.`] },
+    { title: 'Reporting Date', body: [wo.reporting_date ? fmtDate(wo.reporting_date) : fmtDate(wo.start_date)] },
+    { title: 'Mobilization', body: ['One-side transportation charges shall be paid by RVR at actuals along with the 1st RA Bill, subject to valid submission of bills, payment proofs and E-Way Bills.'] },
+    { title: 'Fuel Norms', body: [
+      '2.5 to 4 Ltrs/Hour. Any consumption exceeding this limit will be recovered based on actual usage, with an additional 5% handling charge.',
+      'If any abnormal working hours or kilometers are recorded, RVRPL reserves the right to calculate and compensate for those hours according to standard HSD consumption norms.',
+      "Upon the machine's arrival at the site, the fuel tank will be filled completely, and the quantity filled will be debited in the first RA bill. Similarly, at the time of demobilization, the fuel tank will be filled to its full capacity before the machine is released from the site.",
+    ] },
+    { title: 'Fuel / Lubricants', body: ['HSD is our scope. If any other lubricants are provided by RVR, the recovery will be done at actual cost with 5% handling/surcharge.'] },
+    { title: 'Working Hours', body: [
+      'Single Shift (12 Hrs). Double Shift (Round the Clock).',
+      'If any abnormal working hours are found during the work (i.e. manipulation in hours meter or keeping the engine idle while no work at site), those working hours will be deducted on prorata basis including fuel; idle hours will be calculated as per OEM standard fuel consumption norms.',
+      'Operator should submit the shift-wise trip/log sheet to the workshop without fail, capturing start & end hour-meter readings, HSD issued quantity, and nature of work done (chainage/location-wise), signed by the concerned Site Engineer. Operator is also responsible to send photographs of start & end readings to the concerned P&M Engineer daily or as required.',
+    ] },
+    { title: 'Period of Contract', body: [tenureText] },
+    { title: 'Change in Contract Period', body: ['Period and place of hiring can be amended/changed on the same terms and conditions, subject to written confirmation.'] },
+    { title: "Tax & Levy's", body: ['CGST @ 9% and SGST @ 9% or IGST @ 18% will be paid extra as applicable. (SAC Code: 9973)'] },
+    { title: 'TDS / Income Tax', body: ['TDS/Income Tax at source will be deducted from your bills as per government rules.'] },
+    { title: 'Payment of Bills', body: [
+      'You shall submit your bills by the 5th of every month and the payment shall be cleared within 15 days after valid certification by the Project Manager / Site In-charge.',
+      'The Tax Invoice shall be raised as per Sec. 31 of CGST Act 2017 & Invoice Rules of CGST Rules 2017.',
+      `You shall mention our GST Reg. No. ${RVR_COMPANY.gst} in your Invoice.`,
+      'You shall pay the GST to the Department by the due date and include the invoices submitted to RVR in the monthly return (GSTR-1 & GSTR-3B) filed by you, on or before the due date defined under the GST Act & Rules. If RVR is unable to claim input tax credit due to reasons attributable to you, the GST amount along with interest @18% will be recovered from the amount due to you.',
+      'Invoice will be processed from site only upon submission of the GSTR-1 filed copy of the previous bill. If the vendor fails to deposit GST (3B) of previous bills, RVR reserves the right to hold further bill amounts until clearance of the previous GST paid by RVR.',
+    ] },
+    { title: 'Operator Clause', body: [
+      'One operator should be provided for single shift; two operators for double shift. Double operation with a single operator is not acceptable. The operator should be a minimum of 21 years old, possess proper knowledge of equipment operation, and hold a valid licence. If work is hampered due to lack of knowledge/negligence of the operator, liquidated damages shall be recovered.',
+      "If an operator is provided by RVR (in case the vendor is unable to provide one), the operator's salary will be debited on prorata basis from the monthly billing.",
+      'No compensation shall be paid against accidental damages, faulty operation, or breakdowns due to lack of maintenance; such breakdown days will not be paid (applicable when machine is operated by RVR operators).',
+    ] },
+    { title: 'Accommodation & Food', body: ["In RVR's scope at site."] },
+    { title: 'Demobilisation', body: [
+      "In service provider's scope. In case of non-satisfactory service, RVR reserves the right to terminate this order without assigning any reason and without pre-intimation. No compensation shall be payable for such termination; however, 7 days' advance notice will be given for demobilizing the machine.",
+    ] },
+    { title: 'Logbook & Hour Meter', body: [
+      "The service provider shall maintain RVR's logbook, jointly signed by RVR's representative & the service provider on a day-to-day basis.",
+      'Hour meter should be in working condition. If the meter is not working or is tampered with by the operator, the service provider shall ensure repair/replacement within 1-2 working days, failing which RVRPL reserves the right to calculate hours based on OEM standard fuel consumption norms or output certified by the site in-charge.',
+    ] },
+    { title: 'RTA / Insurance', body: [
+      'The Service Provider shall maintain valid comprehensive insurance for the machine/vehicle and ensure all deployed manpower is covered under Group Personal Accident and Workmen Compensation policies. All policies shall be kept valid, renewed on time, and copies submitted to RVR Projects Pvt Ltd. RVR shall not be responsible for insurance lapses, RTA-related issues due to invalid documents, or any accident/loss/damage to machine or manpower; all such liabilities shall be borne by the Service Provider.',
+    ] },
+    { title: 'Accessories & Attachments', body: ['All tools, tackles and attachments required shall be supplied by the service provider. Maintenance of the machine is in vendor scope; if any maintenance is done by RVR, the cost (including raw material & manpower) will be recovered.'] },
+    { title: 'GPS & Fuel Sensor', body: ['It is mandatory to have a GPS and fuel sensor installed. If not installed, RVR Projects will arrange installation and debit the cost in the 2nd RA bill. Any recorded fuel theft will attract a penalty of 10 times the recorded value.'] },
+    { title: 'Loading & Unloading', body: ["In service provider's scope."] },
+    { title: 'Statutory Compliance', body: ["All statutory compliance related to operation of this machine shall be complied with at the service provider's cost. RVR Projects Pvt Ltd is not responsible for any damage/accident to a third party through the service provider."] },
+    { title: 'Repairs & Maintenance', body: [
+      "In service provider's scope; one day per month is allowed for routine maintenance. If the machine breaks down for more than four days, maintenance days will not be adjustable against the breakdown.",
+      "Any maintenance work done by RVRPL (welding, lubricant top-ups, hydraulic hoses, greasing, etc.) will be recovered at actuals with a 5% handling charge, including manpower.",
+    ] },
+    { title: 'Safety Operation', body: ['All lifting accessories (hooks, latches, ropes, etc.) shall be in good condition; the Safe Load Indication system (SLI) should be working. The service provider should provide a valid TPI certificate with the machine, renewed at recommended intervals.'] },
+    { title: 'Safety Compliance', body: ['The machine must have all safety gadgets installed and operational. Non-compliant machines may be considered unsafe for use. All safety instructions issued by the safety department must be complied with.'] },
+    { title: 'Legal Jurisdiction', body: ['This Work Order shall be governed by the laws of the Indian Union. The courts of Visakhapatnam, Andhra Pradesh shall have exclusive jurisdiction over any dispute arising out of this Work Order.'] },
+    { title: 'Breakdown of Equipment', body: ['If the machine remains idle due to breakdown and/or absence of operator, the same shall be recovered pro-rata from the monthly bill; such hours will not be adjusted on the maintenance day. In case of breakdown, the service provider must rectify the issue immediately, failing which the machine will be de-hired after one or two notices.'] },
+    { title: 'Indemnification', body: ['The Service Provider shall indemnify RVR Projects Pvt Ltd and its representatives from any implications of failure to adhere to statutory laws, or from accidents/injuries/damages arising from the negligence or action of the Service Provider. No director, official or employee of RVR Projects Pvt Ltd shall be personally bound or liable for performance of obligations under this Work Order.'] },
+    { title: 'Force Majeure', body: ['Neither party shall be responsible or in default if execution of the Work Order is delayed/interrupted due to causes beyond their control (act of God, natural calamity, war, civil commotion, supply chain disruption, fire, storm, flood, strike, lockout, bandh), provided such cause persists for more than 7 days. Neither party shall be liable to compensate the other for resulting loss.'] },
+    { title: 'Site Visit', body: ['We understand that your team has visited the site and understood the nature and scope of work.'] },
+    { title: 'Site Address / Contact Person', body: [
+      wo.site_address || wo.project_address || '—',
+      [wo.site_contact_name, wo.site_contact_phone].filter(Boolean).join(', ') || '—',
+    ] },
+    { title: 'Mobilization Advance', body: [wo.mobilization_advance || 'NA'] },
+    { title: "Bank Details of Service Provider's", body: [vendorBank] },
+    { title: 'Acceptance of Work Order', body: ['This Work Order will be automatically deemed accepted if RVR does not receive a signed acceptance copy within 7 days of the date of this WO.'] },
+    { title: 'Ownership', body: [`The ownership of the equipment shall remain with ${wo.vendor_name || 'the Service Provider'} during the whole contract period; no work order amendment will be made regarding change of ownership during this contract period.`] },
+  ]
+}
+
+// Approved/final copy: full legal document. Draft copy: equipment + picked points only.
+function buildClauses(wo) {
+  const additional = buildAdditionalConditionsClause(wo)
+  if (wo.status !== 'approved') return additional ? [additional] : []
+  return [...buildStandardClauses(wo), ...(additional ? [additional] : [])]
+}
 
 async function fetchLogoBase64() {
   try {
@@ -498,13 +681,29 @@ function WOModal({ wo, onClose, onSaved }) {
     start_date: wo?.start_date?.slice(0,10) || '',
     end_date: wo?.end_date?.slice(0,10) || '',
     tenure_months: wo?.tenure_months || '',
+    description_line: wo?.description_line || '',
+    site_address: wo?.site_address || '',
+    reporting_date: wo?.reporting_date?.slice(0,10) || '',
+    site_contact_name: wo?.site_contact_name || '',
+    site_contact_phone: wo?.site_contact_phone || '',
+    mobilization_advance: wo?.mobilization_advance || 'NA',
+    signatory_id: wo?.signatory_id || '',
   })
-  const [selectedTermIds, setSelectedTermIds] = useState(new Set())
-  const [customTerms,     setCustomTerms]     = useState(wo?.terms_conditions || '')
+  const [customTerms, setCustomTerms] = useState(wo?.terms_conditions || '')
+  const [siteAddrTouched, setSiteAddrTouched] = useState(!!wo?.site_address)
   const [items,    setItems]    = useState([])
   const [vendors,  setVendors]  = useState([])
   const [projects, setProjects] = useState([])
-  const [machines, setMachines] = useState([])
+  const [equipmentTypes, setEquipmentTypes] = useState([])
+  const [termsLibrary, setTermsLibrary] = useState([])
+  const [termsCategories, setTermsCategories] = useState([])
+  const [showTermsPicker, setShowTermsPicker] = useState(false)
+  const [signatories, setSignatories] = useState([])
+  const [signatoryDesignations, setSignatoryDesignations] = useState([])
+  const [showSignatoryManager, setShowSignatoryManager] = useState(false)
+  const [approvedIndents,  setApprovedIndents]  = useState([])
+  const [selectedIndentId, setSelectedIndentId] = useState('')
+  const [indentPicking,    setIndentPicking]    = useState(false)
   const [saving,   setSaving]   = useState(false)
   const [error,    setError]    = useState('')
   const [billingRules, setBillingRules] = useState(
@@ -513,23 +712,26 @@ function WOModal({ wo, onClose, onSaved }) {
       : { ...DEFAULT_BILLING_RULES }
   )
 
-  const toggleTerm = id => setSelectedTermIds(prev => {
-    const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next
-  })
-
   useEffect(() => {
+    getEquipmentTypes().then(r => setEquipmentTypes(r.data.data)).catch(() => {})
+    getTermsLibrary().then(r => setTermsLibrary(r.data.data)).catch(() => {})
+    getTermsCategories().then(r => setTermsCategories(r.data.data)).catch(() => {})
+    getSignatories().then(r => setSignatories(r.data.data)).catch(() => {})
+    getSignatoryDesignations().then(r => setSignatoryDesignations(r.data.data)).catch(() => {})
     Promise.all([getHireVendors(), getProjects()]).then(([v, p]) => {
       setVendors(v.data.data)
       setProjects(p.data.data)
     })
+    if (!wo) getHireIndents({ status: 'approved' }).then(r => setApprovedIndents(r.data.data)).catch(() => {})
     if (wo?.items) setItems(wo.items.map(i => ({ ...i, amount: String(i.amount) })))
     else           setItems([blankItem()])
   }, [])
 
   useEffect(() => {
-    if (!form.project_id) { setMachines([]); return }
+    if (!form.project_id) return
     const proj = projects.find(p => String(p.id) === String(form.project_id))
-    if (proj) getMachines({ project_code: proj.code }).then(r => setMachines(r.data.data))
+    // Default site address from the project's registered address, unless the user already edited it
+    if (proj?.address && !siteAddrTouched) setForm(f => ({ ...f, site_address: proj.address }))
   }, [form.project_id, projects])
 
   useEffect(() => {
@@ -541,19 +743,50 @@ function WOModal({ wo, onClose, onSaved }) {
   }, [form.start_date, form.end_date])
 
   const setF   = k => e => setForm(f => ({ ...f, [k]: e.target.value }))
+
+  const handleIndentSelect = async e => {
+    const id = e.target.value
+    setSelectedIndentId(id)
+    if (!id) return
+    setIndentPicking(true)
+    try {
+      const r   = await getHireIndent(id)
+      const ind = r.data.data
+      setForm(f => ({
+        ...f,
+        indent_number:      ind.indent_number,
+        project_id:         ind.project_id   || f.project_id,
+        start_date:         ind.required_from?.slice(0, 10) || f.start_date,
+        end_date:           ind.required_to?.slice(0, 10)   || f.end_date,
+        tenure_months:      ind.tenure_months  || f.tenure_months,
+        description_line:   ind.purpose        || f.description_line,
+        site_address:       ind.site_address   || f.site_address,
+        site_contact_name:  ind.site_contact_name  || f.site_contact_name,
+        site_contact_phone: ind.site_contact_phone || f.site_contact_phone,
+      }))
+      setSiteAddrTouched(true)
+      if (ind.items?.length) {
+        setItems(ind.items.map(it => ({
+          ...blankItem(),
+          equipment_desc:    it.equipment_desc || '',
+          eq_type:           it.eq_type        || '',
+          quantity:          it.quantity       || 1,
+          unit:              it.unit           || 'No.',
+          rate_type:         it.rate_type      || 'per_month',
+          rate:              it.estimated_rate  || '',
+          rate_single_shift: it.shift_type === 'single' ? (it.estimated_rate || '') : '',
+          rate_double_shift: it.shift_type === 'double' ? (it.estimated_rate || '') : '',
+          amount:            String((Number(it.quantity) || 0) * (Number(it.estimated_rate) || 0)),
+        })))
+      }
+    } catch { /* silently ignore */ }
+    finally { setIndentPicking(false) }
+  }
+
   const total  = items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0)
   const addItem = () => setItems(prev => [...prev, blankItem()])
   const updateItem = (idx, val) => setItems(prev => prev.map((it, i) => i === idx ? val : it))
   const removeItem = idx => setItems(prev => prev.filter((_, i) => i !== idx))
-
-  const buildTerms = () => {
-    const presetLines = PRESET_TERMS.filter(t => selectedTermIds.has(t.id)).map(t => t.text)
-    const customLines = customTerms.trim().split('\n').map(l => l.trim()).filter(Boolean).map(l => l.replace(/^\d+\.\s*/,''))
-    const all = [...presetLines, ...customLines]
-    return all.map((t, i) => `${i+1}. ${t}`).join('\n')
-  }
-
-  const previewTerms = buildTerms()
 
   const save = async () => {
     if (!form.vendor_id)  { setError('Select a vendor'); return }
@@ -561,7 +794,7 @@ function WOModal({ wo, onClose, onSaved }) {
     if (items.every(i => !i.equipment_desc.trim())) { setError('Add at least one equipment item'); return }
     setSaving(true); setError('')
     try {
-      const payload = { ...form, terms_conditions: buildTerms(), billing_rules: billingRules, items: items.filter(i => i.equipment_desc.trim()) }
+      const payload = { ...form, terms_conditions: customTerms.trim(), billing_rules: billingRules, items: items.filter(i => i.equipment_desc.trim()) }
       if (wo?.id) await updateHireWorkOrder(wo.id, payload)
       else        await createHireWorkOrder(payload)
       onSaved()
@@ -574,13 +807,45 @@ function WOModal({ wo, onClose, onSaved }) {
     <Modal title={wo ? `Edit WO — ${wo.wo_number}` : 'New Hire Work Order'} onClose={onClose} wide>
       <div className="p-5 space-y-6">
 
+        {/* Indent picker — new WO only */}
+        {!wo && (
+          <section className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <FileCheck size={15} className="text-blue-600"/>
+              <p className="text-sm font-semibold text-blue-800">Pick from Approved Indent</p>
+              {indentPicking && <Loader2 size={14} className="animate-spin text-blue-600"/>}
+            </div>
+            <select
+              className={`${inp} border-blue-300 focus:ring-blue-500`}
+              value={selectedIndentId}
+              onChange={handleIndentSelect}
+              disabled={indentPicking}
+            >
+              <option value="">— select an approved indent to pre-fill this form —</option>
+              {approvedIndents.map(ind => (
+                <option key={ind.id} value={ind.id}>
+                  {ind.indent_number}  ·  {ind.project_code}{ind.project_name ? ' — ' + ind.project_name : ''}  ·  {ind.item_count ?? 0} item(s)
+                </option>
+              ))}
+            </select>
+            {!approvedIndents.length && (
+              <p className="text-xs text-blue-500 mt-1">No approved indents available. You can also fill the form manually.</p>
+            )}
+            {selectedIndentId && !indentPicking && (
+              <p className="text-xs text-green-700 mt-1 flex items-center gap-1">
+                <CheckCircle size={11}/> Form pre-filled from indent — review and adjust before saving.
+              </p>
+            )}
+          </section>
+        )}
+
         {/* Basic Info */}
         <section>
           <p className={`${lbl} mb-3`}>Work Order Details</p>
           <div className="grid grid-cols-3 gap-4">
             {wo && <div><label className={lbl}>WO Number</label><input readOnly className={`${inp} bg-gray-50`} value={wo.wo_number} /></div>}
             <div><label className={lbl}>WO Date *</label><input type="date" className={inp} value={form.wo_date} onChange={setF('wo_date')} /></div>
-            <div><label className={lbl}>Indent Number</label><input className={inp} value={form.indent_number} onChange={setF('indent_number')} placeholder="Optional" /></div>
+            <div><label className={lbl}>Indent Number</label><input className={`${inp} ${selectedIndentId ? 'bg-gray-50' : ''}`} readOnly={!!selectedIndentId} value={form.indent_number} onChange={setF('indent_number')} placeholder="Optional" /></div>
             <div><label className={lbl}>Vendor Offer No</label><input className={inp} value={form.vendor_offer_no} onChange={setF('vendor_offer_no')} placeholder="Vendor's quotation / offer ref." /></div>
             <div>
               <label className={lbl}>Vendor *</label>
@@ -595,6 +860,19 @@ function WOModal({ wo, onClose, onSaved }) {
                 <option value="">— select project —</option>
                 {projects.map(p => <option key={p.id} value={p.id}>{p.code}{p.name ? ` — ${p.name}` : ''}</option>)}
               </select>
+            </div>
+            <div>
+              <label className={lbl}>Authorized Signatory</label>
+              <div className="flex items-center gap-1.5">
+                <select className={inp} value={form.signatory_id} onChange={setF('signatory_id')}>
+                  <option value="">— select signatory —</option>
+                  {signatories.map(s => <option key={s.id} value={s.id}>{s.name} ({s.designation})</option>)}
+                </select>
+                <button type="button" onClick={() => setShowSignatoryManager(true)}
+                  className="p-2 text-gray-400 hover:text-blue-600 flex-shrink-0" title="Manage signatories">
+                  <Edit2 size={14}/>
+                </button>
+              </div>
             </div>
           </div>
         </section>
@@ -623,18 +901,9 @@ function WOModal({ wo, onClose, onSaved }) {
               <Plus size={14} />Add Row
             </button>
           </div>
-          <div className="space-y-2">
-            <div className="grid grid-cols-12 gap-2 text-xs font-semibold text-gray-400 uppercase tracking-wide px-1">
-              <div className="col-span-4">Equipment</div>
-              <div className="col-span-1">Qty</div>
-              <div className="col-span-1">Unit</div>
-              <div className="col-span-2">Rate</div>
-              <div className="col-span-2">Rate Type</div>
-              <div className="col-span-1">Amount</div>
-              <div className="col-span-1"></div>
-            </div>
+          <div className="space-y-3">
             {items.map((item, idx) => (
-              <ItemRow key={idx} item={item} machines={machines}
+              <ItemRow key={idx} item={item} equipmentTypes={equipmentTypes}
                 onChange={val => updateItem(idx, val)}
                 onRemove={() => removeItem(idx)} />
             ))}
@@ -644,57 +913,42 @@ function WOModal({ wo, onClose, onSaved }) {
           </div>
         </section>
 
-        {/* Terms & Conditions */}
+        {/* Description line */}
         <section>
-          <p className={`${lbl} mb-3`}>Terms &amp; Conditions</p>
+          <label className={lbl}>Description Line (shown under the WO title)</label>
+          <input className={inp} value={form.description_line} onChange={setF('description_line')}
+            placeholder={`e.g. Hire Work Order for Providing Service of ${ordinalQty(items[0]?.quantity||1)} No of ${items[0]?.equipment_desc || '[equipment]'} for our [Project] Project.`} />
+        </section>
+
+        {/* Site, Reporting & Mobilization */}
+        <section>
+          <p className={`${lbl} mb-3`}>Site, Reporting &amp; Mobilization</p>
           <div className="grid grid-cols-2 gap-4">
-
-            {/* Left: preset checkboxes */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <p className="text-xs text-gray-500 font-medium">Select standard clauses:</p>
-                <div className="flex gap-3">
-                  <button type="button" onClick={() => setSelectedTermIds(new Set(PRESET_TERMS.map(t => t.id)))}
-                    className="text-xs text-blue-600 hover:underline">All</button>
-                  <button type="button" onClick={() => setSelectedTermIds(new Set())}
-                    className="text-xs text-gray-400 hover:underline">None</button>
-                </div>
-              </div>
-              <div className="border border-gray-200 rounded-xl divide-y divide-gray-100 max-h-64 overflow-y-auto">
-                {PRESET_TERMS.map(t => (
-                  <label key={t.id} className={`flex items-start gap-2.5 px-3 py-2 cursor-pointer transition-colors hover:bg-blue-50 ${selectedTermIds.has(t.id) ? 'bg-blue-50' : ''}`}>
-                    <input type="checkbox" checked={selectedTermIds.has(t.id)} onChange={() => toggleTerm(t.id)}
-                      className="mt-0.5 w-4 h-4 accent-blue-600 flex-shrink-0" />
-                    <span className="text-xs text-gray-700 leading-relaxed">{t.text}</span>
-                  </label>
-                ))}
-              </div>
+            <div className="col-span-2">
+              <label className={lbl}>Site Address</label>
+              <textarea rows={2} className={inp} value={form.site_address}
+                onChange={e => { setSiteAddrTouched(true); setF('site_address')(e) }} />
             </div>
-
-            {/* Right: custom / additional terms + preview */}
-            <div className="flex flex-col gap-3">
-              <div className="flex-1">
-                <p className="text-xs text-gray-500 font-medium mb-2">Additional / custom terms:</p>
-                <textarea rows={6} className={inp}
-                  value={customTerms} onChange={e => setCustomTerms(e.target.value)}
-                  placeholder="Enter any additional clauses here…&#10;(existing WO terms are pre-loaded above)" />
-              </div>
-
-              {/* Live preview */}
-              {previewTerms && (
-                <div className="bg-gray-50 border border-gray-200 rounded-xl p-3">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                    Preview ({previewTerms.split('\n').length} clause{previewTerms.split('\n').length !== 1 ? 's' : ''})
-                  </p>
-                  <div className="max-h-28 overflow-y-auto space-y-1">
-                    {previewTerms.split('\n').map((line, i) => (
-                      <p key={i} className="text-xs text-gray-600">{line}</p>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
+            <div><label className={lbl}>Reporting Date</label><input type="date" className={inp} value={form.reporting_date} onChange={setF('reporting_date')} /></div>
+            <div><label className={lbl}>Mobilization Advance</label><input className={inp} value={form.mobilization_advance} onChange={setF('mobilization_advance')} placeholder="NA" /></div>
+            <div><label className={lbl}>Site Contact Person</label><input className={inp} value={form.site_contact_name} onChange={setF('site_contact_name')} /></div>
+            <div><label className={lbl}>Site Contact Phone</label><input className={inp} value={form.site_contact_phone} onChange={setF('site_contact_phone')} /></div>
           </div>
+        </section>
+
+        {/* Additional / Special Conditions */}
+        <section>
+          <p className={`${lbl} mb-3`}>Additional / Special Conditions</p>
+          <p className="text-xs text-gray-400 mb-2">
+            The standard 30+ clause hire terms (fuel norms, payment, operator clause, insurance, indemnification,
+            force majeure, jurisdiction, etc.) are applied automatically on the generated document. Use this field
+            only for clauses specific to this WO.
+          </p>
+          <button type="button" onClick={() => setShowTermsPicker(true)}
+            className="flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-900 mb-3">
+            <Plus size={14} /> Pick Terms &amp; Conditions
+          </button>
+          <ConditionsEditor value={customTerms} onChange={setCustomTerms} />
         </section>
 
         {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
@@ -706,7 +960,513 @@ function WOModal({ wo, onClose, onSaved }) {
           <button onClick={onClose} className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm">Cancel</button>
         </div>
       </div>
+      {showTermsPicker && (
+        <TermsPickerModal
+          itemTypes={[...new Set(items.map(i => i.eq_type).filter(Boolean))]}
+          equipmentTypes={equipmentTypes}
+          library={termsLibrary}
+          onLibraryChange={setTermsLibrary}
+          categories={termsCategories}
+          onCategoriesChange={setTermsCategories}
+          customTerms={customTerms}
+          onToggle={text => setCustomTerms(toggleConditionLine(customTerms, text))}
+          onClose={() => setShowTermsPicker(false)}
+        />
+      )}
+      {showSignatoryManager && (
+        <SignatoryManagerModal
+          signatories={signatories} onSignatoriesChange={setSignatories}
+          designations={signatoryDesignations} onDesignationsChange={setSignatoryDesignations}
+          onClose={() => setShowSignatoryManager(false)}
+        />
+      )}
     </Modal>
+  )
+}
+
+// ── ADDITIONAL CONDITIONS EDITOR (numbered, removable, reorderable) ──────────
+
+function ConditionsEditor({ value, onChange }) {
+  const lines = conditionLines(value).map(stripLineNumber)
+  const [customInput, setCustomInput] = useState('')
+
+  const setLines = next => onChange(next.join('\n'))
+  const moveLine = (idx, dir) => {
+    const target = idx + dir
+    if (target < 0 || target >= lines.length) return
+    const next = [...lines]
+    ;[next[idx], next[target]] = [next[target], next[idx]]
+    setLines(next)
+  }
+  const removeLine = idx => setLines(lines.filter((_, i) => i !== idx))
+  const addCustom = () => {
+    const t = customInput.trim()
+    if (!t) return
+    setLines([...lines, t])
+    setCustomInput('')
+  }
+
+  return (
+    <div className="space-y-2">
+      {lines.length === 0 && (
+        <p className="text-xs text-gray-400 italic">No additional conditions yet — use "Pick Terms &amp; Conditions" above or add a custom one below.</p>
+      )}
+      {lines.map((line, idx) => {
+        const { category, text } = decodeConditionLine(line)
+        return (
+        <div key={idx} className="flex items-start gap-2 bg-gray-50 border border-gray-200 rounded-lg px-3 py-2">
+          <span className="text-xs font-semibold text-gray-400 mt-0.5 flex-shrink-0">{idx+1})</span>
+          <span className="flex-1 text-sm text-gray-700">
+            {category && <span className="block font-bold text-gray-900">{category}</span>}
+            {text}
+          </span>
+          <div className="flex items-center gap-0.5 flex-shrink-0">
+            <button type="button" title="Move up" disabled={idx===0} onClick={() => moveLine(idx,-1)}
+              className="p-1 text-gray-400 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-gray-400">
+              <ChevronUp size={14}/>
+            </button>
+            <button type="button" title="Move down" disabled={idx===lines.length-1} onClick={() => moveLine(idx,1)}
+              className="p-1 text-gray-400 hover:text-blue-600 disabled:opacity-30 disabled:hover:text-gray-400">
+              <ChevronDown size={14}/>
+            </button>
+            <button type="button" title="Remove" onClick={() => removeLine(idx)} className="p-1 text-red-400 hover:text-red-600">
+              <X size={14}/>
+            </button>
+          </div>
+        </div>
+        )
+      })}
+      <div className="flex items-center gap-2">
+        <input className={inp} value={customInput} onChange={e => setCustomInput(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustom() } }}
+          placeholder="Type a custom condition and press Enter…" />
+        <button type="button" onClick={addCustom}
+          className="flex items-center gap-1 text-sm font-medium text-blue-700 hover:text-blue-900 px-3 py-2 whitespace-nowrap">
+          <Plus size={14}/> Add
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// ── TERMS & CONDITIONS PICKER ─────────────────────────────────────────────────
+
+function toggleConditionLine(text, line) {
+  const lines = conditionLines(text).map(stripLineNumber)
+  const idx = lines.indexOf(line)
+  if (idx >= 0) { lines.splice(idx, 1); return lines.join('\n') }
+  return [...lines, line].join('\n')
+}
+
+function TermsPickerModal({ itemTypes, equipmentTypes, library, onLibraryChange, categories, onCategoriesChange, customTerms, onToggle, onClose }) {
+  const [tagFilter, setTagFilter] = useState(itemTypes.length === 1 ? itemTypes[0] : 'All')
+  const [editingId, setEditingId] = useState(null)
+  const [editText,  setEditText]  = useState('')
+  const [savingId,  setSavingId]  = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
+  const [deletingCategory, setDeletingCategory] = useState(false)
+  const [showAdd,   setShowAdd]   = useState(false)
+  const categoryNames = categories.map(c => c.name)
+  const [newCategory,       setNewCategory]       = useState(categoryNames[0] || '__new__')
+  const [newCategoryCustom, setNewCategoryCustom] = useState('')
+  const [newDescription,    setNewDescription]    = useState('')
+  const [newTags,        setNewTags]        = useState(new Set(itemTypes.length === 1 ? itemTypes : []))
+  const [error, setError] = useState('')
+
+  const selectedLines = new Set(conditionLines(customTerms).map(stripLineNumber))
+  const isPicked = t => selectedLines.has(encodeConditionLine(t.category, t.description))
+  const allTags = [...new Set(['General', ...equipmentTypes.map(t => t.name), ...library.flatMap(t => t.tags)])]
+
+  const rows = library.filter(t => tagFilter === 'All' || t.tags.includes(tagFilter))
+  const categoriesPresent = [...new Set(rows.map(r => r.category))]
+  const orderedCategories = [
+    ...categoryNames.filter(c => categoriesPresent.includes(c)),
+    ...categoriesPresent.filter(c => !categoryNames.includes(c)),
+  ]
+
+  const startEdit  = row => { setEditingId(row.id); setEditText(row.description); setError('') }
+  const cancelEdit = () => { setEditingId(null); setEditText('') }
+
+  const saveEdit = async row => {
+    const text = singleLine(editText)
+    if (!text) { setError('Description cannot be empty'); return }
+    setSavingId(row.id); setError('')
+    try {
+      const res = await updateTermsLibraryItem(row.id, { category: row.category, description: text, tags: row.tags })
+      onLibraryChange(prev => prev.map(t => t.id === row.id ? res.data.data : t))
+      const oldLine = encodeConditionLine(row.category, row.description)
+      const newLine = encodeConditionLine(row.category, text)
+      if (selectedLines.has(oldLine) && text !== row.description) {
+        onToggle(oldLine)
+        onToggle(newLine)
+      }
+      cancelEdit()
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to save')
+    } finally { setSavingId(null) }
+  }
+
+  const removeRow = async row => {
+    if (!confirm(`Remove "${row.description}" from the library? This removes it for everyone, not just this WO.`)) return
+    setDeletingId(row.id); setError('')
+    try {
+      await deleteTermsLibraryItem(row.id)
+      onLibraryChange(prev => prev.filter(t => t.id !== row.id))
+      const line = encodeConditionLine(row.category, row.description)
+      if (selectedLines.has(line)) onToggle(line)
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to remove')
+    } finally { setDeletingId(null) }
+  }
+
+  const toggleNewTag = t => setNewTags(prev => {
+    const next = new Set(prev); next.has(t) ? next.delete(t) : next.add(t); return next
+  })
+
+  const submitNew = async () => {
+    const category = newCategory === '__new__' ? newCategoryCustom.trim() : newCategory
+    const description = singleLine(newDescription)
+    if (!category) { setError('Sub-heading is required'); return }
+    if (!description) { setError('Description is required'); return }
+    setError('')
+    try {
+      if (newCategory === '__new__' && !categoryNames.includes(category)) {
+        const catRes = await createTermsCategory({ name: category })
+        onCategoriesChange(prev => [...prev, catRes.data.data])
+      }
+      const res = await createTermsLibraryItem({ category, description, tags: [...newTags] })
+      onLibraryChange(prev => [...prev, res.data.data])
+      // Always show the new entry immediately, even if its tags don't match the current filter
+      if (tagFilter !== 'All' && !res.data.data.tags.includes(tagFilter)) setTagFilter('All')
+      setNewDescription(''); setNewTags(new Set()); setNewCategory(categoryNames[0] || '__new__'); setNewCategoryCustom(''); setShowAdd(false)
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to add')
+    }
+  }
+
+  const removeCategory = async () => {
+    const cat = categories.find(c => c.name === newCategory)
+    if (!cat) return
+    const count = library.filter(t => t.category === cat.name).length
+    const warn = count ? ` This will also remove its ${count} condition(s) from the library.` : ''
+    if (!confirm(`Remove the "${cat.name}" sub-heading?${warn}`)) return
+    setDeletingCategory(true); setError('')
+    try {
+      await deleteTermsCategory(cat.id)
+      onCategoriesChange(prev => prev.filter(c => c.id !== cat.id))
+      onLibraryChange(prev => prev.filter(t => t.category !== cat.name))
+      conditionLines(customTerms).map(stripLineNumber).forEach(line => {
+        const { category } = decodeConditionLine(line)
+        if (category === cat.name) onToggle(line)
+      })
+      setNewCategory(categories.find(c => c.id !== cat.id)?.name || '__new__')
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to remove sub-heading')
+    } finally { setDeletingCategory(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[88vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <h2 className="font-semibold text-gray-900">Pick Terms &amp; Conditions</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>
+        </div>
+        <div className="px-5 py-3 border-b border-gray-100 flex justify-end">
+          <select className={`${inp} w-48`} value={tagFilter} onChange={e => setTagFilter(e.target.value)}>
+            <option value="All">All Tags</option>
+            {allTags.map(t => <option key={t} value={t}>{t}{itemTypes.includes(t) ? ' (selected equipment)' : ''}</option>)}
+          </select>
+        </div>
+        <div className="overflow-y-auto flex-1">
+          <table className="w-full text-sm">
+            <thead className="bg-gray-50 text-xs text-gray-500 uppercase sticky top-0">
+              <tr>
+                <th className="px-4 py-2 text-left">Description</th>
+                <th className="px-4 py-2 text-left">Tag</th>
+                <th className="px-4 py-2 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {orderedCategories.map(cat => (
+                <Fragment key={cat}>
+                  <tr className="bg-gray-100/80">
+                    <td colSpan={3} className="px-4 py-1.5 text-xs font-bold text-gray-600 uppercase tracking-wide">{cat}</td>
+                  </tr>
+                  {rows.filter(r => r.category === cat).map(t => {
+                    const picked  = isPicked(t)
+                    const editing = editingId === t.id
+                    return (
+                      <tr key={t.id} className={picked ? 'bg-blue-50' : 'hover:bg-gray-50'}>
+                        <td className="px-4 py-2.5 text-gray-800">
+                          {editing ? (
+                            <textarea rows={2} className={inp} value={editText} onChange={e => setEditText(e.target.value)} />
+                          ) : t.description}
+                        </td>
+                        <td className="px-4 py-2.5 text-gray-400 text-xs">{t.tags.join(', ')}</td>
+                        <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                          {editing ? (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button type="button" disabled={savingId===t.id} onClick={() => saveEdit(t)}
+                                className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60">
+                                {savingId===t.id ? 'Saving…' : 'Save'}
+                              </button>
+                              <button type="button" onClick={cancelEdit}
+                                className="px-2.5 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-500 hover:bg-gray-50">Cancel</button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-end gap-1.5">
+                              <button type="button" title="Edit description" onClick={() => startEdit(t)}
+                                className="p-1.5 text-gray-400 hover:text-blue-600"><Edit2 size={13}/></button>
+                              <button type="button" title="Remove from library" disabled={deletingId===t.id} onClick={() => removeRow(t)}
+                                className="p-1.5 text-gray-400 hover:text-red-600 disabled:opacity-40"><Trash2 size={13}/></button>
+                              <button type="button" onClick={() => onToggle(encodeConditionLine(t.category, t.description))}
+                                className={`px-3 py-1 rounded-lg text-xs font-semibold ${picked
+                                  ? 'bg-green-100 text-green-700 border border-green-300'
+                                  : 'bg-gray-100 text-gray-600 border border-gray-200 hover:bg-blue-50 hover:text-blue-700'}`}>
+                                {picked ? '✓ Picked' : 'Pick'}
+                              </button>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </Fragment>
+              ))}
+              {rows.length === 0 && <tr><td colSpan={3} className="px-4 py-8 text-center text-gray-400">No conditions tagged "{tagFilter}"</td></tr>}
+            </tbody>
+          </table>
+
+          <div className="px-4 py-3 border-t border-gray-100">
+            {!showAdd ? (
+              <button type="button" onClick={() => setShowAdd(true)}
+                className="flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-900">
+                <Plus size={14}/> Add New Condition
+              </button>
+            ) : (
+              <div className="space-y-2 bg-gray-50 border border-gray-200 rounded-xl p-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className={lbl}>Sub-heading (Name)</label>
+                    <div className="flex items-center gap-1.5">
+                      <select className={inp} value={newCategory} onChange={e => setNewCategory(e.target.value)}>
+                        {categoryNames.map(c => <option key={c} value={c}>{c}</option>)}
+                        <option value="__new__">+ Add New Sub-heading…</option>
+                      </select>
+                      {newCategory !== '__new__' && (
+                        <button type="button" title="Remove this sub-heading" disabled={deletingCategory} onClick={removeCategory}
+                          className="p-2 text-gray-400 hover:text-red-600 disabled:opacity-40 flex-shrink-0">
+                          <Trash2 size={14}/>
+                        </button>
+                      )}
+                    </div>
+                    {newCategory === '__new__' && (
+                      <input className={`${inp} mt-1.5`} value={newCategoryCustom} onChange={e => setNewCategoryCustom(e.target.value)}
+                        placeholder="Type the new sub-heading name…" />
+                    )}
+                  </div>
+                  <div>
+                    <label className={lbl}>Applies to (Tags)</label>
+                    <div className="flex flex-wrap gap-1.5 max-h-20 overflow-y-auto">
+                      {allTags.map(t => (
+                        <button key={t} type="button" onClick={() => toggleNewTag(t)}
+                          className={`px-2 py-0.5 rounded-full text-xs border ${newTags.has(t)
+                            ? 'bg-blue-100 border-blue-300 text-blue-700'
+                            : 'bg-white border-gray-200 text-gray-500'}`}>
+                          {t}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <label className={lbl}>Description</label>
+                  <textarea rows={2} className={inp} value={newDescription} onChange={e => setNewDescription(e.target.value)}
+                    placeholder="Enter the full clause text…" />
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={submitNew}
+                    className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold rounded-lg">Save Condition</button>
+                  <button type="button" onClick={() => { setShowAdd(false); setNewDescription(''); setNewTags(new Set()); setNewCategory(categoryNames[0] || '__new__'); setNewCategoryCustom('') }}
+                    className="px-4 py-1.5 border border-gray-200 text-gray-500 hover:bg-gray-50 text-xs font-semibold rounded-lg">Cancel</button>
+                </div>
+              </div>
+            )}
+            {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+          </div>
+        </div>
+        <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} className="px-5 py-2 bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium rounded-lg">Done</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── SIGNATORY MANAGER (authorized persons + designations for the signature block) ─
+
+function SignatoryManagerModal({ signatories, onSignatoriesChange, designations, onDesignationsChange, onClose }) {
+  const designationNames = designations.map(d => d.name)
+  const [editingId, setEditingId] = useState(null)
+  const [editName, setEditName] = useState('')
+  const [editDesignation, setEditDesignation] = useState('')
+  const [savingId, setSavingId] = useState(null)
+  const [deletingId, setDeletingId] = useState(null)
+  const [deletingDesignation, setDeletingDesignation] = useState(false)
+  const [showAdd, setShowAdd] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newDesignation, setNewDesignation] = useState(designationNames[0] || '__new__')
+  const [newDesignationCustom, setNewDesignationCustom] = useState('')
+  const [error, setError] = useState('')
+
+  const startEdit = s => { setEditingId(s.id); setEditName(s.name); setEditDesignation(s.designation); setError('') }
+  const cancelEdit = () => { setEditingId(null); setEditName(''); setEditDesignation('') }
+
+  const saveEdit = async s => {
+    if (!editName.trim() || !editDesignation.trim()) { setError('Name and designation are required'); return }
+    setSavingId(s.id); setError('')
+    try {
+      const res = await updateSignatory(s.id, { name: editName.trim(), designation: editDesignation.trim() })
+      onSignatoriesChange(prev => prev.map(x => x.id === s.id ? res.data.data : x))
+      cancelEdit()
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to save')
+    } finally { setSavingId(null) }
+  }
+
+  const removeSignatory = async s => {
+    if (!confirm(`Remove "${s.name}" from the signatory list?`)) return
+    setDeletingId(s.id); setError('')
+    try {
+      await deleteSignatory(s.id)
+      onSignatoriesChange(prev => prev.filter(x => x.id !== s.id))
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to remove')
+    } finally { setDeletingId(null) }
+  }
+
+  const submitNew = async () => {
+    const designation = newDesignation === '__new__' ? newDesignationCustom.trim() : newDesignation
+    if (!newName.trim()) { setError('Name is required'); return }
+    if (!designation) { setError('Designation is required'); return }
+    setError('')
+    try {
+      if (newDesignation === '__new__' && !designationNames.includes(designation)) {
+        const res = await createSignatoryDesignation({ name: designation })
+        onDesignationsChange(prev => [...prev, res.data.data])
+      }
+      const res = await createSignatory({ name: newName.trim(), designation })
+      onSignatoriesChange(prev => [...prev, res.data.data])
+      setNewName(''); setNewDesignation(designationNames[0] || '__new__'); setNewDesignationCustom(''); setShowAdd(false)
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to add')
+    }
+  }
+
+  const removeDesignation = async () => {
+    const d = designations.find(x => x.name === newDesignation)
+    if (!d) return
+    if (!confirm(`Remove the "${d.name}" designation from the list? Existing signatories already using it are unaffected.`)) return
+    setDeletingDesignation(true); setError('')
+    try {
+      await deleteSignatoryDesignation(d.id)
+      onDesignationsChange(prev => prev.filter(x => x.id !== d.id))
+      setNewDesignation(designations.find(x => x.id !== d.id)?.name || '__new__')
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to remove designation')
+    } finally { setDeletingDesignation(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] flex flex-col">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200">
+          <h2 className="font-semibold text-gray-900">Manage Signatories</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-1"><X size={18} /></button>
+        </div>
+        <div className="overflow-y-auto flex-1 p-4 space-y-2">
+          {signatories.map(s => {
+            const editing = editingId === s.id
+            return (
+              <div key={s.id} className="border border-gray-200 rounded-lg p-3">
+                {editing ? (
+                  <div className="space-y-2">
+                    <input className={inp} value={editName} onChange={e => setEditName(e.target.value)} placeholder="Name" />
+                    <select className={inp} value={editDesignation} onChange={e => setEditDesignation(e.target.value)}>
+                      {designationNames.map(d => <option key={d} value={d}>{d}</option>)}
+                      {!designationNames.includes(editDesignation) && <option value={editDesignation}>{editDesignation}</option>}
+                    </select>
+                    <div className="flex gap-2">
+                      <button type="button" disabled={savingId===s.id} onClick={() => saveEdit(s)}
+                        className="px-3 py-1 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60">
+                        {savingId===s.id ? 'Saving…' : 'Save'}
+                      </button>
+                      <button type="button" onClick={cancelEdit}
+                        className="px-3 py-1 rounded-lg text-xs font-semibold border border-gray-200 text-gray-500 hover:bg-gray-50">Cancel</button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-semibold text-sm text-gray-900">{s.name}</p>
+                      <p className="text-xs text-gray-500">{s.designation}</p>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <button type="button" title="Edit" onClick={() => startEdit(s)} className="p-1.5 text-gray-400 hover:text-blue-600"><Edit2 size={14}/></button>
+                      <button type="button" title="Remove" disabled={deletingId===s.id} onClick={() => removeSignatory(s)}
+                        className="p-1.5 text-gray-400 hover:text-red-600 disabled:opacity-40"><Trash2 size={14}/></button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+          {signatories.length === 0 && <p className="text-sm text-gray-400 italic">No signatories yet.</p>}
+
+          {!showAdd ? (
+            <button type="button" onClick={() => setShowAdd(true)}
+              className="flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-900 pt-1">
+              <Plus size={14}/> Add New Signatory
+            </button>
+          ) : (
+            <div className="space-y-2 bg-gray-50 border border-gray-200 rounded-xl p-3">
+              <div>
+                <label className={lbl}>Name</label>
+                <input className={inp} value={newName} onChange={e => setNewName(e.target.value)} placeholder="e.g. R Satyanarayana" />
+              </div>
+              <div>
+                <label className={lbl}>Designation</label>
+                <div className="flex items-center gap-1.5">
+                  <select className={inp} value={newDesignation} onChange={e => setNewDesignation(e.target.value)}>
+                    {designationNames.map(d => <option key={d} value={d}>{d}</option>)}
+                    <option value="__new__">+ Add New Designation…</option>
+                  </select>
+                  {newDesignation !== '__new__' && (
+                    <button type="button" title="Remove this designation" disabled={deletingDesignation} onClick={removeDesignation}
+                      className="p-2 text-gray-400 hover:text-red-600 disabled:opacity-40 flex-shrink-0"><Trash2 size={14}/></button>
+                  )}
+                </div>
+                {newDesignation === '__new__' && (
+                  <input className={`${inp} mt-1.5`} value={newDesignationCustom} onChange={e => setNewDesignationCustom(e.target.value)}
+                    placeholder="Type the new designation…" />
+                )}
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={submitNew}
+                  className="px-4 py-1.5 bg-blue-700 hover:bg-blue-800 text-white text-xs font-semibold rounded-lg">Save Signatory</button>
+                <button type="button" onClick={() => { setShowAdd(false); setNewName(''); setNewDesignation(designationNames[0] || '__new__'); setNewDesignationCustom('') }}
+                  className="px-4 py-1.5 border border-gray-200 text-gray-500 hover:bg-gray-50 text-xs font-semibold rounded-lg">Cancel</button>
+              </div>
+            </div>
+          )}
+          {error && <p className="text-xs text-red-600">{error}</p>}
+        </div>
+        <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+          <button onClick={onClose} className="px-5 py-2 bg-blue-700 hover:bg-blue-800 text-white text-sm font-medium rounded-lg">Done</button>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -807,20 +1567,31 @@ function WODetailModal({ woId, onClose, onAction }) {
             <p className="text-gray-500">End: {fmtDate(wo.end_date)}</p>
             {wo.tenure_months && <p className="text-gray-500">Tenure: {wo.tenure_months} months</p>}
           </div>
+          <div className="bg-gray-50 rounded-xl p-3 space-y-1 col-span-2">
+            <p className="text-xs font-semibold text-gray-400 uppercase">Site &amp; Reporting</p>
+            <p className="text-gray-700">{wo.site_address || wo.project_address || '—'}</p>
+            <p className="text-gray-500">
+              Reporting Date: {fmtDate(wo.reporting_date)}
+              {(wo.site_contact_name || wo.site_contact_phone) && <> · Contact: {[wo.site_contact_name, wo.site_contact_phone].filter(Boolean).join(', ')}</>}
+              {wo.mobilization_advance && <> · Mobilization Advance: {wo.mobilization_advance}</>}
+            </p>
+          </div>
         </div>
 
         {/* Items table */}
         <div>
           <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Equipment Items</p>
-          <div className="rounded-xl border border-gray-200 overflow-hidden">
+          <div className="rounded-xl border border-gray-200 overflow-hidden overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-gray-50 text-xs text-gray-500 uppercase">
                 <tr>
                   <th className="px-3 py-2 text-left">#</th>
                   <th className="px-3 py-2 text-left">Equipment</th>
+                  <th className="px-3 py-2 text-left">Reg No</th>
+                  <th className="px-3 py-2 text-left">Make/Model/YOM</th>
                   <th className="px-3 py-2 text-right">Qty</th>
-                  <th className="px-3 py-2 text-right">Rate</th>
-                  <th className="px-3 py-2 text-left">Type</th>
+                  <th className="px-3 py-2 text-right">Single Shift</th>
+                  <th className="px-3 py-2 text-right">Double Shift</th>
                   <th className="px-3 py-2 text-right">Amount</th>
                 </tr>
               </thead>
@@ -829,14 +1600,16 @@ function WODetailModal({ woId, onClose, onAction }) {
                   <tr key={it.id} className="hover:bg-gray-50">
                     <td className="px-3 py-2 text-gray-500">{i+1}</td>
                     <td className="px-3 py-2 text-gray-900">{it.equipment_desc}</td>
+                    <td className="px-3 py-2 text-gray-600">{it.reg_no || '—'}</td>
+                    <td className="px-3 py-2 text-gray-600">{[it.manufacturer, it.model, it.yom].filter(Boolean).join(' / ') || '—'}</td>
                     <td className="px-3 py-2 text-right text-gray-600">{it.quantity} {it.unit}</td>
-                    <td className="px-3 py-2 text-right text-gray-600">{fmtMoney(it.rate)}</td>
-                    <td className="px-3 py-2 text-gray-500 capitalize">{it.rate_type?.replace('_',' ')}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{it.rate_single_shift ? fmtMoney(it.rate_single_shift) : '—'}</td>
+                    <td className="px-3 py-2 text-right text-gray-600">{it.rate_double_shift ? fmtMoney(it.rate_double_shift) : '—'}</td>
                     <td className="px-3 py-2 text-right font-medium text-gray-900">{fmtMoney(it.amount)}</td>
                   </tr>
                 ))}
                 <tr className="bg-blue-50 font-bold">
-                  <td colSpan={5} className="px-3 py-2 text-right text-gray-700">Total</td>
+                  <td colSpan={7} className="px-3 py-2 text-right text-gray-700">Total</td>
                   <td className="px-3 py-2 text-right text-blue-700">{fmtMoney(wo.total_value)}</td>
                 </tr>
               </tbody>
@@ -847,8 +1620,16 @@ function WODetailModal({ woId, onClose, onAction }) {
         {/* Terms */}
         {wo.terms_conditions && (
           <div>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Terms &amp; Conditions</p>
-            <pre className="text-xs text-gray-600 bg-gray-50 rounded-xl p-3 whitespace-pre-wrap border border-gray-100">{wo.terms_conditions}</pre>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-2">Additional / Special Conditions</p>
+            <div className="text-xs text-gray-600 bg-gray-50 rounded-xl p-3 border border-gray-100 space-y-1.5">
+              {numberedConditions(wo.terms_conditions).map(c => (
+                <p key={c.n}>
+                  {c.category
+                    ? <><span className="font-bold text-gray-900">{c.n}) {c.category}</span><br/>{c.text}</>
+                    : <>{c.n}) {c.text}</>}
+                </p>
+              ))}
+            </div>
           </div>
         )}
 
@@ -922,122 +1703,152 @@ function WODetailModal({ woId, onClose, onAction }) {
 
 // ── DOWNLOAD FUNCTIONS ────────────────────────────────────────────────────────
 
+function defaultDescriptionLine(wo) {
+  const it = (wo.items || [])[0]
+  if (!it) return ''
+  const siteSuffix = wo.site_address ? `, ${wo.site_address.split(',').slice(-2).join(',').trim()}` : ''
+  return `Hire Work Order for Providing Service of ${ordinalQty(it.quantity)} No of ${it.equipment_desc} for our ${wo.project_name || wo.project_code} Project${siteSuffix}.`
+}
+
 function woHtml(wo, logoSrc) {
   const isApproved = wo.status === 'approved'
   const { items = [] } = wo
-  const rows = items.map((it, i) => `
-    <tr>
-      <td>${i+1}</td>
-      <td>${it.equipment_desc || ''}</td>
-      <td style="text-align:right">${it.quantity} ${it.unit}</td>
-      <td style="text-align:right">₹ ${Number(it.rate).toLocaleString('en-IN')}</td>
-      <td>${(it.rate_type||'').replace('_',' ')}</td>
-      <td style="text-align:right;font-weight:600">₹ ${Number(it.amount).toLocaleString('en-IN')}</td>
-    </tr>`).join('')
+  const descLine = wo.description_line || defaultDescriptionLine(wo)
+  const clauses = buildClauses(wo)
 
-  const terms = (wo.terms_conditions || '').split('\n').map(l => `<p style="margin:2px 0;font-size:11px">${l}</p>`).join('')
+  const PERIOD_LABEL = { per_month:'Per Month', per_day:'Per Day', per_hour:'Per Hour', lump_sum:'Lump Sum' }
+  const itemRows = items.flatMap((it, i) => {
+    const periodLabel = PERIOD_LABEL[it.rate_type] || it.rate_type || '—'
+    const shifts = []
+    if (it.rate_single_shift) shifts.push({ label:'Single Shift', rate: it.rate_single_shift })
+    if (it.rate_double_shift) shifts.push({ label:'Double Shift', rate: it.rate_double_shift })
+    if (!shifts.length)       shifts.push({ label:'—',            rate: it.rate })
+    const noteParts = [
+      [it.manufacturer, it.model].filter(Boolean).join(' ') ? `Make/Model: ${[it.manufacturer, it.model].filter(Boolean).join(' ')}` : '',
+      it.reg_no ? `Reg No: ${it.reg_no}` : '',
+      it.yom    ? `YOM: ${it.yom}`       : '',
+    ].filter(Boolean).join('  ·  ')
+    return shifts.map((sh, si) => {
+      const isFirst = si === 0
+      const amt = (Number(it.quantity)||0) * (Number(sh.rate)||0)
+      return `
+    <tr>
+      <td>${isFirst ? i+1 : ''}</td>
+      <td>${isFirst ? (it.equipment_desc || '') : ''}</td>
+      <td style="text-align:center">${isFirst ? `${it.quantity} ${it.unit}` : ''}</td>
+      <td style="text-align:center">${isFirst ? periodLabel : ''}</td>
+      <td style="text-align:center">${sh.label}</td>
+      <td style="text-align:right">₹ ${Number(sh.rate||0).toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+      <td style="text-align:right;font-weight:600">₹ ${amt.toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
+    </tr>
+    ${isFirst && noteParts ? `<tr><td></td><td colspan="6" style="font-size:9.5px;color:#555;border-top:none;font-style:italic">${noteParts}</td></tr>` : ''}`
+    })
+  }).join('')
+
+  const renderBodyItem = p => {
+    if (p && typeof p === 'object') {
+      return `${p.heading ? `<p class="clause-body" style="font-weight:700;margin-bottom:1px">${p.heading}</p>` : ''}<p class="clause-body" style="margin-top:0">${p.text}</p>`
+    }
+    return `<p class="clause-body">${p}</p>`
+  }
+  const clausesHtml = clauses.length ? `
+    <p style="font-weight:700;font-family:Arial,sans-serif;font-size:12px;text-decoration:underline;margin:16px 0 6px">Terms &amp; Conditions</p>
+    ${clauses.map((c, i) => `
+    <div class="clause">
+      <p class="clause-title">${i+2}) ${c.title}</p>
+      ${c.body.map(renderBodyItem).join('')}
+    </div>`).join('')}` : ''
 
   return `
   <html><head><meta charset="UTF-8"><style>
-    body{font-family:Arial,sans-serif;font-size:12px;color:#222;margin:30px;position:relative}
-    h1{font-size:16px;margin:0}
-    h2{font-size:13px;margin:0 0 4px}
+    body{font-family:'Times New Roman',Georgia,serif;font-size:12px;color:#1a1a1a;margin:30px;position:relative;line-height:1.5}
+    h1{font-size:16px;margin:0;letter-spacing:.03em}
     table{width:100%;border-collapse:collapse;margin:8px 0}
-    th,td{border:1px solid #ccc;padding:5px 8px;font-size:11px}
-    th{background:#1e3a5f;color:#fff;font-weight:600}
-    .header{background:#1e3a5f;color:#fff;padding:16px;margin:-30px -30px 20px;display:flex;align-items:center;gap:16px}
-    .header-logo{height:40px;width:auto;flex-shrink:0}
+    th,td{border:1px solid #999;padding:5px 7px;font-size:10.5px;vertical-align:top}
+    th{background:#f2f2f2;color:#1a1a1a;font-weight:700}
+    .header{display:flex;align-items:center;gap:16px;margin:-30px -30px 12px;padding:4px 30px}
+    .header-logo{height:65px;width:auto;flex-shrink:0}
     .header-text{flex:1;text-align:center}
     .draft-watermark{position:fixed;top:40%;left:50%;transform:translate(-50%,-50%) rotate(-45deg);
       font-size:90px;font-weight:900;color:rgba(200,200,200,0.35);white-space:nowrap;pointer-events:none;z-index:9999;
       font-family:Arial,sans-serif;letter-spacing:8px}
     .badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:10px;font-weight:700;
-      background:#d1fae5;color:#065f46}
+      background:#d1fae5;color:#065f46;font-family:Arial,sans-serif}
     .draft-badge{display:inline-block;padding:2px 10px;border-radius:99px;font-size:10px;font-weight:700;
-      background:#fee2e2;color:#991b1b;border:1px solid #fca5a5}
-    .section{margin:16px 0}
-    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:8px 0}
-    .box{background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:10px}
-    .label{font-size:10px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.04em}
-    .total-row td{background:#eff6ff;font-weight:700;font-size:12px}
-    .approval{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:8px}
-    .ap-box{border:1px solid #e2e8f0;border-radius:6px;padding:10px;text-align:center}
-    .footer{margin-top:40px;font-size:10px;color:#888;text-align:center}
+      background:#fee2e2;color:#991b1b;border:1px solid #fca5a5;font-family:Arial,sans-serif}
+    .title-row{text-align:center;margin:6px 0 14px}
+    .title-row h2{font-size:14px;text-decoration:underline;margin:4px 0}
+    .desc-line{font-style:italic;text-align:center;margin:0 0 14px}
+    .party-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:10px 0 16px}
+    .party-box p{margin:1px 0}
+    .party-label{font-weight:700;font-family:Arial,sans-serif;font-size:10.5px;color:#1e3a5f;text-transform:uppercase}
+    .clause{margin:9px 0}
+    .clause-title{font-weight:700;margin:0 0 2px;font-family:Arial,sans-serif;font-size:11px}
+    .clause-body{margin:0 0 2px 14px;font-size:11px;text-align:justify}
+    .sign-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-top:36px}
+    .footer{margin-top:30px;font-size:9px;color:#888;text-align:center;font-family:Arial,sans-serif}
   </style></head><body>
     ${!isApproved ? '<div class="draft-watermark">DRAFT COPY</div>' : ''}
     <div class="header">
       ${isApproved && logoSrc ? `<img src="${logoSrc}" class="header-logo" alt="RVR" />` : ''}
       <div class="header-text">
-        <h1>RVR PROJECTS PVT LTD</h1>
-        <p style="margin:4px 0;font-size:12px">HIRE WORK ORDER</p>
+        <h1>HIRE WORK ORDER</h1>
       </div>
     </div>
 
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-      <div>
-        <p><b>WO Number:</b> ${wo.wo_number}</p>
-        <p><b>WO Date:</b> ${fmtDate(wo.wo_date)}</p>
-        ${wo.indent_number   ? `<p><b>Indent No:</b> ${wo.indent_number}</p>` : ''}
-        ${wo.vendor_offer_no ? `<p><b>Vendor Offer No:</b> ${wo.vendor_offer_no}</p>` : ''}
-      </div>
-      <span class="${isApproved ? 'badge' : 'draft-badge'}">${(STATUS_META[wo.status]||{label:wo.status}).label}</span>
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;font-family:Arial,sans-serif;font-size:11px">
+      <p><b>Ref:</b> ${wo.wo_number}${wo.indent_number ? ` &nbsp;·&nbsp; <b>Indent No:</b> ${wo.indent_number}` : ''}${wo.vendor_offer_no ? ` &nbsp;·&nbsp; <b>Vendor Offer No:</b> ${wo.vendor_offer_no}` : ''}</p>
+      <p><b>Date:</b> ${fmtDate(wo.wo_date)}</p>
+    </div>
+    <div style="text-align:right;margin-bottom:6px"><span class="${isApproved ? 'badge' : 'draft-badge'}">${(STATUS_META[wo.status]||{label:wo.status}).label}</span></div>
+
+    ${!isApproved ? `
+    <div style="font-family:Arial,sans-serif;font-size:9px;color:#666;margin-bottom:10px">
+      ${wo.created_by_name ? `Created by ${wo.created_by_name} on ${fmtDateTime(wo.created_at)}` : ''}
+      ${wo.updated_by_name ? ` &nbsp;·&nbsp; Last edited by ${wo.updated_by_name} on ${fmtDateTime(wo.updated_at)}` : ''}
+    </div>` : ''}
+
+    ${descLine ? `<p class="desc-line">${descLine}</p>` : ''}
+
+    <p style="font-weight:700;font-family:Arial,sans-serif;font-size:11px">Between:</p>
+    <div class="party-box">
+      <p><b>M/s ${RVR_COMPANY.name}</b></p>
+      ${RVR_COMPANY.addressLines.map(l => `<p>${l}</p>`).join('')}
+      <p>GST No: ${RVR_COMPANY.gst}</p>
+    </div>
+    <p style="font-weight:700;font-family:Arial,sans-serif;font-size:11px;margin-top:10px">And</p>
+    <div class="party-box">
+      <p><b>M/s. ${wo.vendor_name || '—'}</b></p>
+      ${wo.vendor_address ? `<p>${wo.vendor_address}</p>` : ''}
+      ${wo.vendor_gst   ? `<p>GST No: ${wo.vendor_gst}</p>` : ''}
+      ${wo.vendor_contact || wo.vendor_phone ? `<p>Contact: ${[wo.vendor_contact, wo.vendor_phone].filter(Boolean).join(', ')}</p>` : ''}
     </div>
 
-    <div class="grid">
-      <div class="box">
-        <p class="label">Vendor</p>
-        <p><b>${wo.vendor_name || '—'}</b></p>
-        ${wo.vendor_contact ? `<p>${wo.vendor_contact}</p>` : ''}
-        ${wo.vendor_phone   ? `<p>${wo.vendor_phone}</p>` : ''}
-        ${wo.vendor_gst     ? `<p>GST: ${wo.vendor_gst}</p>` : ''}
-      </div>
-      <div class="box">
-        <p class="label">Project &amp; Tenure</p>
-        <p><b>${wo.project_code || ''}${wo.project_name ? ' — '+wo.project_name : ''}</b></p>
-        <p>Start: ${fmtDate(wo.start_date)}</p>
-        <p>End: ${fmtDate(wo.end_date)}</p>
-        ${wo.tenure_months ? `<p>Tenure: ${wo.tenure_months} months</p>` : ''}
-      </div>
-    </div>
-
-    <div class="section">
-      <h2>Equipment / Machinery</h2>
+    <div class="clause">
+      <p class="clause-title">1) Equipment Particulars</p>
       <table>
         <thead><tr>
-          <th>#</th><th>Equipment</th><th>Qty</th><th>Rate</th><th>Rate Type</th><th>Amount</th>
+          <th>#</th><th>Equipment</th><th>Qty</th><th>Period</th><th>Shift</th><th>Rate</th><th>Amount</th>
         </tr></thead>
         <tbody>
-          ${rows}
-          <tr class="total-row">
-            <td colspan="5" style="text-align:right">TOTAL VALUE</td>
-            <td style="text-align:right">₹ ${Number(wo.total_value).toLocaleString('en-IN',{minimumFractionDigits:2})}</td>
-          </tr>
+          ${itemRows}
         </tbody>
       </table>
     </div>
 
-    ${wo.terms_conditions ? `
-    <div class="section">
-      <h2>Terms &amp; Conditions</h2>
-      ${terms}
-    </div>` : ''}
+    ${clausesHtml}
 
-    <div class="approval">
-      <div class="ap-box">
-        <p class="label">Prepared By</p>
-        <p style="margin-top:30px;border-top:1px solid #ccc;padding-top:4px">${wo.created_by_name || ''}</p>
+    <p style="margin-top:18px">Thanking You,</p>
+
+    <div class="sign-grid">
+      <div>
+        <p>For ${RVR_COMPANY.name},</p>
+        <p style="margin-top:34px;font-weight:700">${wo.signatory_name || RVR_SIGNATORY.name}</p>
+        <p>${wo.signatory_designation || RVR_SIGNATORY.title}</p>
       </div>
-      <div class="ap-box">
-        <p class="label">L1 Approved By</p>
-        <p style="margin-top:30px;border-top:1px solid #ccc;padding-top:4px">${wo.l1_approved_by_name || ''}</p>
-      </div>
-      <div class="ap-box">
-        <p class="label">Final Approved By</p>
-        <p style="margin-top:30px;border-top:1px solid #ccc;padding-top:4px">${wo.approved_by_name || ''}</p>
-      </div>
-      <div class="ap-box">
-        <p class="label">Vendor Signature</p>
-        <p style="margin-top:30px;border-top:1px solid #ccc;padding-top:4px">&nbsp;</p>
+      <div>
+        <p>Accepted by</p>
+        <p style="margin-top:34px;font-weight:700">M/S. ${wo.vendor_name || ''}</p>
       </div>
     </div>
 
@@ -1046,112 +1857,199 @@ function woHtml(wo, logoSrc) {
 }
 
 async function downloadWOPDF(wo) {
-  const { jsPDF }             = await import('jspdf')
+  const { jsPDF }              = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
   const doc        = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
   const pw         = doc.internal.pageSize.getWidth()
   const ph         = doc.internal.pageSize.getHeight()
   const isApproved = wo.status === 'approved'
+  const MARGIN     = 12
 
   const logoData = isApproved ? await fetchLogoBase64() : null
 
-  // header bar
-  doc.setFillColor(30, 58, 95)
-  doc.rect(0, 0, pw, 22, 'F')
-  if (logoData) {
-    try { doc.addImage(logoData, 'PNG', 6, 3, 36, 16) } catch {}
+  const ensureSpace = (yPos, needed) => {
+    if (yPos + needed > ph - 18) { doc.addPage(); return logoData ? 52 : 12 }
+    return yPos
   }
-  doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.setTextColor(255,255,255)
-  doc.text('RVR PROJECTS PVT LTD', pw/2, 9, { align:'center' })
-  doc.setFontSize(9); doc.setFont('helvetica','normal')
-  doc.text('HIRE WORK ORDER', pw/2, 15, { align:'center' })
 
-  let y = 28
-  doc.setTextColor(0); doc.setFontSize(9)
-  doc.setFont('helvetica','bold')
-  doc.text(`WO No: ${wo.wo_number}`, 14, y)
-  doc.text(`Date: ${fmtDate(wo.wo_date)}`, pw-14, y, { align:'right' })
-  y += 5
-  doc.setFont('helvetica','normal')
-  const infoLine = [
-    wo.indent_number   ? `Indent: ${wo.indent_number}` : null,
-    wo.vendor_offer_no ? `Vendor Offer: ${wo.vendor_offer_no}` : null,
-    `Status: ${(STATUS_META[wo.status]||{label:wo.status}).label}`,
-  ].filter(Boolean).join('   |   ')
-  doc.text(infoLine, 14, y)
-  y += 8
+  // page 1 header: logo + HIRE WORK ORDER title
+  const LOGO_W = 35, LOGO_H = 50
+  let y = 0
+  if (logoData) { try { doc.addImage(logoData, 'PNG', MARGIN, y, LOGO_W, LOGO_H) } catch {} }
+  doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.setTextColor(0)
+  const titleY = y + LOGO_H / 2 + 2
+  doc.text('HIRE WORK ORDER', pw/2, titleY, { align:'center' })
+  y = y + LOGO_H + 4
+  doc.setTextColor(0); doc.setFontSize(8.5); doc.setFont('helvetica','bold')
+  const refLine = [`Ref: ${wo.wo_number}`, wo.indent_number && `Indent No: ${wo.indent_number}`, wo.vendor_offer_no && `Vendor Offer No: ${wo.vendor_offer_no}`].filter(Boolean).join('   ·   ')
+  doc.text(doc.splitTextToSize(refLine, pw - 2*MARGIN - 30), MARGIN, y)
+  doc.text(`Date: ${fmtDate(wo.wo_date)}`, pw-MARGIN, y, { align:'right' })
+  y += 6
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(120)
+  doc.text(`Status: ${(STATUS_META[wo.status]||{label:wo.status}).label}`, pw-MARGIN, y, { align:'right' })
+  y += 6
 
-  doc.setFillColor(248,250,252); doc.rect(10, y-2, (pw-20)/2-2, 22, 'F')
-  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(100,116,139)
-  doc.text('VENDOR', 14, y+2)
-  doc.setFont('helvetica','normal'); doc.setTextColor(30,30,30); doc.setFontSize(8.5)
-  doc.text(wo.vendor_name || '—', 14, y+7)
-  if (wo.vendor_phone) doc.text(wo.vendor_phone, 14, y+12)
-  if (wo.vendor_gst)   doc.text(`GST: ${wo.vendor_gst}`, 14, y+17)
+  if (!isApproved) {
+    const auditLine = [
+      wo.created_by_name && `Created by ${wo.created_by_name} on ${fmtDateTime(wo.created_at)}`,
+      wo.updated_by_name && `Last edited by ${wo.updated_by_name} on ${fmtDateTime(wo.updated_at)}`,
+    ].filter(Boolean).join('   ·   ')
+    if (auditLine) {
+      doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(130)
+      doc.text(auditLine, MARGIN, y)
+      y += 5
+    }
+  }
 
-  const col2 = pw/2 + 4
-  doc.setFillColor(248,250,252); doc.rect(col2-4, y-2, (pw-20)/2, 22, 'F')
-  doc.setFont('helvetica','bold'); doc.setFontSize(8); doc.setTextColor(100,116,139)
-  doc.text('PROJECT & TENURE', col2, y+2)
-  doc.setFont('helvetica','normal'); doc.setTextColor(30,30,30); doc.setFontSize(8.5)
-  doc.text(`${wo.project_code || ''}`, col2, y+7)
-  doc.text(`${fmtDate(wo.start_date)} — ${fmtDate(wo.end_date)}`, col2, y+12)
-  if (wo.tenure_months) doc.text(`${wo.tenure_months} months`, col2, y+17)
-  y += 28
+  // title already drawn in page-1 header
+
+  const descLine = wo.description_line || defaultDescriptionLine(wo)
+  if (descLine) {
+    doc.setFont('helvetica','italic'); doc.setFontSize(8.5); doc.setTextColor(40)
+    const lines = doc.splitTextToSize(descLine, pw-2*MARGIN)
+    doc.text(lines, pw/2, y, { align:'center' })
+    y += lines.length * 4 + 4
+  }
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(0)
+  doc.text('Between:', MARGIN, y); y += 4.5
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5)
+  doc.text(`M/s ${RVR_COMPANY.name}`, MARGIN, y); y += 4
+  RVR_COMPANY.addressLines.forEach(l => { doc.text(l, MARGIN, y); y += 4 })
+  doc.text(`GST No: ${RVR_COMPANY.gst}`, MARGIN, y); y += 6
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(9)
+  doc.text('And', MARGIN, y); y += 4.5
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5)
+  doc.text(`M/s. ${wo.vendor_name || '—'}`, MARGIN, y); y += 4
+  if (wo.vendor_address) {
+    const al = doc.splitTextToSize(wo.vendor_address, pw-2*MARGIN)
+    doc.text(al, MARGIN, y); y += al.length * 4
+  }
+  if (wo.vendor_gst) { doc.text(`GST No: ${wo.vendor_gst}`, MARGIN, y); y += 4 }
+  if (wo.vendor_contact || wo.vendor_phone) {
+    doc.text(`Contact: ${[wo.vendor_contact, wo.vendor_phone].filter(Boolean).join(', ')}`, MARGIN, y); y += 4
+  }
+  y += 3
+
+  y = ensureSpace(y, 20)
+  doc.setFont('helvetica','bold'); doc.setFontSize(9); doc.setTextColor(0)
+  doc.text('1) Equipment Particulars', MARGIN, y); y += 3
+
+  const PDF_PERIOD = { per_month:'Per Month', per_day:'Per Day', per_hour:'Per Hour', lump_sum:'Lump Sum' }
+  const itemBody = []
+  ;(wo.items || []).forEach((it, i) => {
+    const periodLabel = PDF_PERIOD[it.rate_type] || it.rate_type || '—'
+    const shifts = []
+    if (it.rate_single_shift) shifts.push({ label:'Single Shift', rate: it.rate_single_shift })
+    if (it.rate_double_shift) shifts.push({ label:'Double Shift', rate: it.rate_double_shift })
+    if (!shifts.length)       shifts.push({ label:'—',            rate: it.rate })
+    const noteParts = [
+      [it.manufacturer, it.model].filter(Boolean).join(' ') ? `Make/Model: ${[it.manufacturer, it.model].filter(Boolean).join(' ')}` : '',
+      it.reg_no ? `Reg No: ${it.reg_no}` : '',
+      it.yom    ? `YOM: ${it.yom}`       : '',
+    ].filter(Boolean).join('  ·  ')
+    shifts.forEach((sh, si) => {
+      const isFirst = si === 0
+      const amt = (Number(it.quantity)||0) * (Number(sh.rate)||0)
+      itemBody.push([
+        isFirst ? i+1 : '',
+        isFirst ? it.equipment_desc : '',
+        isFirst ? `${it.quantity} ${it.unit}` : '',
+        isFirst ? periodLabel : '',
+        sh.label,
+        `Rs. ${Number(sh.rate||0).toLocaleString('en-IN',{minimumFractionDigits:2})}`,
+        `Rs. ${amt.toLocaleString('en-IN',{minimumFractionDigits:2})}`,
+      ])
+      if (isFirst && noteParts) itemBody.push([{ content: noteParts, colSpan: 7, styles: { fontStyle:'italic', fontSize:6.5, textColor:[90,90,90] } }])
+    })
+  })
 
   autoTable(doc, {
     startY: y,
-    head: [['#','Equipment','Qty','Rate','Rate Type','Amount']],
-    body: [
-      ...(wo.items||[]).map((it,i) => [
-        i+1, it.equipment_desc, `${it.quantity} ${it.unit}`,
-        `₹ ${Number(it.rate).toLocaleString('en-IN')}`,
-        (it.rate_type||'').replace('_',' '),
-        `₹ ${Number(it.amount).toLocaleString('en-IN',{minimumFractionDigits:2})}`,
-      ]),
-      [{ content:'TOTAL', colSpan:5, styles:{ fontStyle:'bold', halign:'right', fillColor:[239,246,255] } },
-       { content:`₹ ${Number(wo.total_value).toLocaleString('en-IN',{minimumFractionDigits:2})}`, styles:{ fontStyle:'bold', fillColor:[239,246,255], textColor:[30,82,212] } }],
-    ],
-    styles:{ fontSize:8, cellPadding:2 },
-    headStyles:{ fillColor:[30,58,95], textColor:255, fontStyle:'bold', fontSize:8 },
-    alternateRowStyles:{ fillColor:[248,250,252] },
-    margin:{ left:10, right:10 },
+    theme: 'grid',
+    head: [['#','Equipment','Qty','Period','Shift','Rate','Amount']],
+    body: itemBody,
+    styles:{ fontSize:7.5, cellPadding:1.8, lineColor:[180,180,180], lineWidth:0.3 },
+    headStyles:{ fillColor:[255,255,255], textColor:[0,0,0], fontStyle:'bold', fontSize:7.5 },
+    margin:{ left:MARGIN, right:MARGIN },
   })
+  y = doc.lastAutoTable.finalY + 6
 
-  y = doc.lastAutoTable.finalY + 8
-  if (wo.terms_conditions && y < 220) {
-    doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.setTextColor(0)
-    doc.text('Terms & Conditions', 14, y); y += 5
-    doc.setFont('helvetica','normal'); doc.setFontSize(7.5); doc.setTextColor(60)
-    const lines = doc.splitTextToSize(wo.terms_conditions, pw-28)
-    doc.text(lines, 14, y)
-    y += lines.length * 3.5 + 6
+  // ── Terms & Conditions heading ────────────────────────────────────────────
+  const clauses = buildClauses(wo)
+  if (clauses.length) {
+    y = ensureSpace(y, 10)
+    doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.setTextColor(0)
+    doc.text('Terms & Conditions', MARGIN, y)
+    const tcWidth = doc.getTextWidth('Terms & Conditions')
+    doc.setLineWidth(0.35)
+    doc.line(MARGIN, y + 1, MARGIN + tcWidth, y + 1)
+    y += 7
   }
 
-  // Signature boxes
-  if (y > 250) { doc.addPage(); y = 20 }
-  const boxW = (pw-20)/4, sigY = y + 16
-  const sigNames = ['Prepared By','L1 Approved By','Final Approved By','Vendor Signature']
-  const sigVals  = [wo.created_by_name||'', wo.l1_approved_by_name||'', wo.approved_by_name||'', '']
-  sigNames.forEach((name, i) => {
-    const x = 10 + i * boxW
-    doc.setDrawColor(200); doc.rect(x, y, boxW-2, 22)
-    doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.setTextColor(100,116,139)
-    doc.text(name, x + (boxW-2)/2, y+5, { align:'center' })
-    doc.setDrawColor(180); doc.line(x+4, sigY, x+boxW-6, sigY)
-    doc.setFont('helvetica','normal'); doc.setFontSize(7); doc.setTextColor(30)
-    doc.text(sigVals[i], x + (boxW-2)/2, y+20, { align:'center' })
+  // ── Numbered clauses ──────────────────────────────────────────────────────
+  doc.setFontSize(8.5)
+  clauses.forEach((c, idx) => {
+    y = ensureSpace(y, 10)
+    doc.setFont('helvetica','bold'); doc.setTextColor(0)
+    doc.text(`${idx+2}) ${c.title}`, MARGIN, y); y += 4
+    doc.setFont('helvetica','normal'); doc.setTextColor(40)
+    c.body.forEach(p => {
+      if (p && typeof p === 'object') {
+        if (p.heading) {
+          doc.setFont('helvetica','bold'); doc.setTextColor(0)
+          const hLines = doc.splitTextToSize(p.heading, pw - 2*MARGIN - 4)
+          y = ensureSpace(y, hLines.length * 3.6 + 1)
+          doc.text(hLines, MARGIN+4, y)
+          y += hLines.length * 3.6
+        }
+        doc.setFont('helvetica','normal'); doc.setTextColor(40)
+        const tLines = doc.splitTextToSize(p.text, pw - 2*MARGIN - 4)
+        y = ensureSpace(y, tLines.length * 3.6 + 2)
+        doc.text(tLines, MARGIN+4, y)
+        y += tLines.length * 3.6 + 1.5
+        return
+      }
+      const lines = doc.splitTextToSize(p, pw - 2*MARGIN - 4)
+      y = ensureSpace(y, lines.length * 3.6 + 2)
+      doc.text(lines, MARGIN+4, y)
+      y += lines.length * 3.6 + 1.5
+    })
+    y += 1
   })
 
-  // DRAFT watermark on every page for non-approved copies
-  if (!isApproved) {
-    const pageCount = doc.internal.getNumberOfPages()
-    for (let i = 1; i <= pageCount; i++) {
-      doc.setPage(i)
+  // Signature block
+  y = ensureSpace(y, 30)
+  y += 6
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.setTextColor(0)
+  doc.text('Thanking You,', MARGIN, y); y += 8
+
+  const colW = (pw - 2*MARGIN) / 2
+  doc.text(`For ${RVR_COMPANY.name},`, MARGIN, y)
+  doc.text('Accepted by', MARGIN + colW, y)
+  y += 14
+  doc.setFont('helvetica','bold')
+  doc.text(wo.signatory_name || RVR_SIGNATORY.name, MARGIN, y)
+  doc.text(`M/S. ${wo.vendor_name || ''}`, MARGIN + colW, y)
+  y += 4
+  doc.setFont('helvetica','normal'); doc.setFontSize(7.5)
+  doc.text(wo.signatory_designation || RVR_SIGNATORY.title, MARGIN, y)
+
+  // per-page: logo + heading on continuation pages, page numbers, DRAFT watermark
+  const totalPages = doc.internal.getNumberOfPages()
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i)
+    if (i > 1 && logoData) {
+      try { doc.addImage(logoData, 'PNG', MARGIN, 0, 35, 50) } catch {}
+    }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(120)
+    doc.text(`Page ${i} of ${totalPages}`, pw/2, ph - 8, { align: 'center' })
+    if (!isApproved) {
       doc.setFont('helvetica', 'bold')
       doc.setFontSize(58)
       doc.setTextColor(210, 210, 210)
-      doc.text('DRAFT COPY', pw / 2, ph / 2, { align: 'center', angle: 45 })
+      doc.text('DRAFT COPY', pw/2, ph/2, { align: 'center', angle: 45 })
     }
   }
 
@@ -1274,8 +2172,20 @@ export default function HireWorkOrders({ defaultTab = 'wo' }) {
   const [filterStatus,setFilterStatus]= useState('')
   const [showCreate,  setShowCreate]  = useState(false)
   const [editWO,      setEditWO]      = useState(null)
+  const [editLoading, setEditLoading] = useState(false)
   const [viewWOId,    setViewWOId]    = useState(null)
   const [renewWO,     setRenewWO]     = useState(null)
+
+  // The list rows don't include equipment items — fetch the full WO before editing
+  // so equipment items, reg no, rates etc. aren't wiped out when the form loads.
+  const openEdit = async wo => {
+    setEditLoading(true)
+    try {
+      const r = await getHireWorkOrder(wo.id)
+      setEditWO(r.data.data)
+      setShowCreate(true)
+    } finally { setEditLoading(false) }
+  }
 
   const loadWOs = () => {
     setLoading(true)
@@ -1361,7 +2271,9 @@ export default function HireWorkOrders({ defaultTab = 'wo' }) {
                   {filtered.map(wo => (
                     <tr key={wo.id} className="hover:bg-gray-50">
                       <td className="px-4 py-3 font-mono font-semibold text-blue-700 whitespace-nowrap">
-                        {wo.wo_number}
+                        <button type="button" onClick={() => setViewWOId(wo.id)} className="hover:underline">
+                          {wo.wo_number}
+                        </button>
                         {wo.renewal_count > 0 && <span className="ml-1 text-xs text-purple-600">(R{wo.renewal_count})</span>}
                       </td>
                       <td className="px-4 py-3 text-gray-600 whitespace-nowrap">{fmtDate(wo.wo_date)}</td>
@@ -1376,7 +2288,7 @@ export default function HireWorkOrders({ defaultTab = 'wo' }) {
                         <div className="flex items-center justify-end gap-1">
                           <button onClick={() => setViewWOId(wo.id)} title="View" className="p-1.5 text-gray-500 hover:text-blue-600"><Eye size={15}/></button>
                           {['draft','rejected'].includes(wo.status) && (
-                            <button onClick={() => { setEditWO(wo); setShowCreate(true) }} title="Edit" className="p-1.5 text-gray-500 hover:text-blue-600"><Edit2 size={15}/></button>
+                            <button onClick={() => openEdit(wo)} disabled={editLoading} title="Edit" className="p-1.5 text-gray-500 hover:text-blue-600 disabled:opacity-40"><Edit2 size={15}/></button>
                           )}
                           {wo.status === 'approved' && (
                             <button onClick={() => setRenewWO(wo)} title="Renew" className="p-1.5 text-gray-500 hover:text-green-600"><RotateCcw size={15}/></button>

@@ -31,7 +31,7 @@ async function getAll(req, res) {
              mc.attachment_name, mc.attachment_mime
       FROM machines m
       JOIN projects p ON m.project_id = p.id
-      LEFT JOIN machine_compliance mc ON mc.machine_id = m.id
+      LEFT JOIN machine_compliance mc ON mc.machine_id = m.id AND (mc.hidden IS NULL OR mc.hidden = false)
       WHERE ${conds.join(' AND ')}
       ORDER BY p.code, m.slno, mc.doc_type, mc.doc_label
     `, params)
@@ -124,7 +124,7 @@ async function getMachineCompliance(req, res) {
   try {
     const { rows } = await db.query(
       `SELECT id, machine_id, doc_type, doc_label, doc_no, issued_date, expiry_date,
-              issued_by, notes, attachment_name, attachment_key, attachment_mime, created_at, updated_at
+              issued_by, notes, hidden, attachment_name, attachment_key, attachment_mime, created_at, updated_at
        FROM machine_compliance
        WHERE machine_id = $1
        ORDER BY doc_type, doc_label`,
@@ -173,6 +173,7 @@ async function batchUpsert(req, res) {
       const {
         doc_type, doc_label = '', doc_no, issued_date, expiry_date, issued_by, notes,
         attachment_name, attachment_data, attachment_mime, clear_attachment,
+        hidden = false,
       } = doc
 
       let newKey = null
@@ -183,22 +184,24 @@ async function batchUpsert(req, res) {
       const { rows } = await client.query(`
         INSERT INTO machine_compliance
           (machine_id, doc_type, doc_label, doc_no, issued_date, expiry_date, issued_by, notes,
-           attachment_name, attachment_key, attachment_mime, updated_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+           hidden, attachment_name, attachment_key, attachment_mime, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
         ON CONFLICT (machine_id, doc_type, doc_label) DO UPDATE SET
           doc_no          = EXCLUDED.doc_no,
           issued_date     = EXCLUDED.issued_date,
           expiry_date     = EXCLUDED.expiry_date,
           issued_by       = EXCLUDED.issued_by,
           notes           = EXCLUDED.notes,
+          hidden          = EXCLUDED.hidden,
           attachment_name = COALESCE(EXCLUDED.attachment_name, machine_compliance.attachment_name),
           attachment_key  = COALESCE(EXCLUDED.attachment_key,  machine_compliance.attachment_key),
           attachment_mime = COALESCE(EXCLUDED.attachment_mime, machine_compliance.attachment_mime),
           updated_at      = NOW()
-        RETURNING id, doc_type, doc_label, expiry_date, attachment_name, attachment_key, attachment_mime
+        RETURNING id, doc_type, doc_label, expiry_date, hidden, attachment_name, attachment_key, attachment_mime
       `, [
         machine_id, doc_type, doc_label,
         doc_no || null, issued_date || null, expiry_date || null, issued_by || null, notes || null,
+        hidden ? true : false,
         newKey ? attachment_name : null,
         newKey,
         newKey ? attachment_mime : null,
