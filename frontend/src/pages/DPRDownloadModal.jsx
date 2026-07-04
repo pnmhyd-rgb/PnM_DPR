@@ -309,18 +309,19 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
     }
 
     if (sections.days || sections.utilization || sections.fuel) {
-      const d   = calcDaysSummary(entries, m, from, to)
-      const s   = calcSummary(entries)
+      const d         = calcDaysSummary(entries, m, from, to)
+      const s         = calcSummary(entries)
+      const isKmBasis = /km/i.test(m.reading1_basis || '')
+      const rangeUnit = isKmBasis ? 'km/ltr' : 'ltr/hr'
       const approvedRange = (m.fuel_min && m.fuel_max)
-        ? `${m.fuel_min} – ${m.fuel_max}`
-        : m.fuel_min ? `≥ ${m.fuel_min}` : '—'
+        ? `${m.fuel_min} – ${m.fuel_max} ${rangeUnit}`
+        : m.fuel_min ? `≥ ${m.fuel_min} ${rangeUnit}` : '—'
       const fr  = fuelRecordsMap[m.id] || null
       const ob  = fr ? parseFloat(fr.opening_balance) : null
       const cb  = fr ? parseFloat(fr.closing_balance) : null
       // Consumed = Opening + Total Issued (DPR) - Closing
-      const consumed     = ob !== null && cb !== null ? ob + s.hsdTotal - cb : null
-      const isKmBasis    = /km/i.test(m.reading1_basis || '')
-      const actualAvg    = consumed != null && consumed > 0
+      const consumed  = ob !== null && cb !== null ? ob + s.hsdTotal - cb : null
+      const actualAvg = consumed != null && consumed > 0
         ? isKmBasis
           ? `${(s.totalR1 / consumed).toFixed(2)} km/ltr`
           : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
@@ -540,17 +541,18 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
     }
 
     if (sections.days || sections.utilization || sections.fuel) {
-      const d   = calcDaysSummary(entries, m, from, to)
-      const s   = calcSummary(entries)
+      const d         = calcDaysSummary(entries, m, from, to)
+      const s         = calcSummary(entries)
+      const isKmBasis = /km/i.test(m.reading1_basis || '')
+      const rangeUnit = isKmBasis ? 'km/ltr' : 'ltr/hr'
       const approvedRange = (m.fuel_min && m.fuel_max)
-        ? `${m.fuel_min} – ${m.fuel_max}`
-        : m.fuel_min ? `≥ ${m.fuel_min}` : '—'
+        ? `${m.fuel_min} – ${m.fuel_max} ${rangeUnit}`
+        : m.fuel_min ? `≥ ${m.fuel_min} ${rangeUnit}` : '—'
       const fr  = fuelRecordsMap[m.id] || null
       const ob  = fr ? parseFloat(fr.opening_balance) : null
       const cb  = fr ? parseFloat(fr.closing_balance) : null
       // Consumed = Opening Balance + Total Issued (from DPR) - Closing Balance
       const consumed  = ob !== null && cb !== null ? ob + s.hsdTotal - cb : null
-      const isKmBasis = /km/i.test(m.reading1_basis || '')
       const actualAvg = consumed != null && consumed > 0
         ? isKmBasis
           ? `${(s.totalR1 / consumed).toFixed(2)} km/ltr`
