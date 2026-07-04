@@ -222,15 +222,22 @@ function calcSummary(entries) {
 }
 
 function calcDaysSummary(entries, machine, from, to) {
-  const isDual       = machine.shift_type === 'Dual Shift'
-  const totalDays    = generateDateRange(from, to).length
-  const brkDivisor   = isDual ? 24 : 12
+  const isDual      = machine.shift_type === 'Dual Shift'
+  const totalDays   = generateDateRange(from, to).length
+  const brkDivisor  = isDual ? 24 : 12
 
+  const idleEntries    = entries.filter(e => e.is_idle)
+  const nonIdleEntries = entries.filter(e => !e.is_idle)
+
+  let idleDays   = 0
   let daysWorked = 0
+
   if (isDual) {
-    // Day Shift = 0.5 days, Night Shift = 0.5 days; both on same date = 1 day
+    // Each shift = 0.5 day
+    idleDays = idleEntries.length * 0.5
+
     const dateMap = {}
-    for (const e of entries) {
+    for (const e of nonIdleEntries) {
       const d = (e.entry_date || '').slice(0, 10)
       if (!dateMap[d]) dateMap[d] = new Set()
       dateMap[d].add(e.shift)
@@ -239,16 +246,15 @@ function calcDaysSummary(entries, machine, from, to) {
       daysWorked += (shifts.has('Day Shift') ? 0.5 : 0) + (shifts.has('Night Shift') ? 0.5 : 0)
     }
   } else {
-    // Single shift: each unique date with an entry = 1 day
-    daysWorked = new Set(entries.map(e => (e.entry_date || '').slice(0, 10))).size
+    idleDays   = idleEntries.length
+    daysWorked = new Set(nonIdleEntries.map(e => (e.entry_date || '').slice(0, 10))).size
   }
 
-  const totalBrkHrs  = entries.reduce((s, e) => s + (parseFloat(e.breakdown) || 0), 0)
-  const brkDays      = totalBrkHrs / brkDivisor
-  const idleDays     = Math.max(0, totalDays - daysWorked)
-  const netWorkDays  = Math.max(0, daysWorked - brkDays)
-  const payableDays  = idleDays + netWorkDays           // idle + effective working (excludes breakdown)
-  const utilPct      = totalDays > 0 ? ((netWorkDays / totalDays) * 100).toFixed(1) : '0.0'
+  const totalBrkHrs = entries.reduce((s, e) => s + (parseFloat(e.breakdown) || 0), 0)
+  const brkDays     = totalBrkHrs / brkDivisor
+  const netWorkDays = Math.max(0, daysWorked - brkDays)
+  const payableDays = idleDays + netWorkDays
+  const utilPct     = totalDays > 0 ? ((netWorkDays / totalDays) * 100).toFixed(1) : '0.0'
   const daysWorkedFmt = Number.isInteger(daysWorked) ? String(daysWorked) : daysWorked.toFixed(2)
 
   return { totalDays, daysWorked, daysWorkedFmt, idleDays, totalBrkHrs, brkDays, netWorkDays, payableDays, utilPct }
