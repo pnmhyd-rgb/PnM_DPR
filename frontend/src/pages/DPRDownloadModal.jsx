@@ -327,6 +327,13 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
           : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
         : '—'
 
+      // Proportional planned hrs: planned_per_shift × shifts_per_day × days_with_DPR
+      const daysWithDpr    = d.daysWorked + d.idleDays
+      const plannedPerShift = parseFloat(m.planned_hours) || 10
+      const shiftsPerDay    = m.shift_type === 'Dual Shift' ? 2 : 1
+      const actualPlanned   = plannedPerShift * shiftsPerDay * daysWithDpr
+      const utilPctActual   = actualPlanned > 0 ? ((s.workedTotal / actualPlanned) * 100).toFixed(1) : '—'
+
       // Left column: Working Day Summary
       const leftRows = sections.days ? [
         ['WORKING DAY SUMMARY',          ''],
@@ -341,9 +348,9 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
       const rightRows = []
       if (sections.utilization) {
         rightRows.push(['Utilization (Hrs)',  ''])
-        rightRows.push(['Planned Hrs',        `${s.plannedTotal.toFixed(2)} Hrs`])
+        rightRows.push(['Planned Hrs',        `${actualPlanned.toFixed(2)} Hrs`])
         rightRows.push(['Worked Hrs',         `${s.workedTotal.toFixed(2)} Hrs`])
-        rightRows.push(['Utilization',        `${s.utilPct} %`])
+        rightRows.push(['Utilization',        utilPctActual === '—' ? '—' : `${utilPctActual} %`])
         rightRows.push(['', ''])
       }
       if (sections.fuel) {
@@ -559,6 +566,13 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
           : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
         : '—'
 
+      // Proportional planned hrs: planned_per_shift × shifts_per_day × days_with_DPR
+      const daysWithDpr     = d.daysWorked + d.idleDays
+      const plannedPerShift = parseFloat(m.planned_hours) || 10
+      const shiftsPerDay    = m.shift_type === 'Dual Shift' ? 2 : 1
+      const actualPlanned   = plannedPerShift * shiftsPerDay * daysWithDpr
+      const utilPctActual   = actualPlanned > 0 ? ((s.workedTotal / actualPlanned) * 100).toFixed(1) : '—'
+
       // ── ERP-style bordered table renderer ──
       const rowH   = 5.5    // row height in mm
       const padL   = 2      // left text padding
@@ -627,9 +641,9 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
       // ── Right: Utilization ──
       if (sections.utilization) {
         rightBottom = drawTable(rx, y, rLabelW, rValueW, 'Utilization (Hrs)', [
-          ['Planned Hrs', `${s.plannedTotal.toFixed(2)} Hrs`],
+          ['Planned Hrs', `${actualPlanned.toFixed(2)} Hrs`],
           ['Worked Hrs',  `${s.workedTotal.toFixed(2)} Hrs`],
-          ['Utilization', `${s.utilPct} %`],
+          ['Utilization', utilPctActual === '—' ? '—' : `${utilPctActual} %`],
         ])
         rightBottom += 2
       }
