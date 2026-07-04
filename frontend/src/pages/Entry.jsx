@@ -597,7 +597,7 @@ function ShiftRow({
           </div>
         ) : (
           <div className="flex flex-col gap-1">
-            {(!!existingEntry || openingLocked) && (
+            {(!!existingEntry || openingLocked || isDualNight) && (
               <label className="flex items-center gap-1 cursor-pointer select-none py-0.5" title="Enable if meter was replaced — allows editing opening reading">
                 <input type="checkbox" checked={meterReset} onChange={e => setMeterReset(e.target.checked)} className="w-3 h-3 cursor-pointer accent-amber-600" />
                 <RefreshCw size={9} className="text-amber-600 flex-shrink-0" />
