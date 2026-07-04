@@ -182,8 +182,8 @@ function getStatus(e) {
   const bd = parseFloat(e.breakdown) || 0
   if (wh > 0 && bd > 0) return 'Working + Breakdown'
   if (wh > 0) return 'Working'
-  if (bd > 0) return 'Breakdown'
-  return 'Idle'
+  if (bd > 0) return e.remarks ? `Breakdown — ${e.remarks}` : 'Breakdown'
+  return e.remarks ? `Idle — ${e.remarks}` : 'Idle'
 }
 
 function cellVal(e, key, idx) {
