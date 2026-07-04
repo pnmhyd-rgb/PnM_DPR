@@ -16,6 +16,14 @@ import DPRDownloadModal, { downloadDPRForMachine } from './DPRDownloadModal'
 
 const MIN_OPTIONS = [0, 6, 12, 18, 24, 30, 36, 42, 48, 54]
 
+const IDLE_REASONS = [
+  'Idle due to Rain',
+  'Idle due to Holiday',
+  'Idle due to no work front',
+  'Idle due to no Fuel',
+  'Idle due to Local strikes',
+]
+
 const emptyForm = {
   shift: '',
   r1_open: '', r1_close: '',
@@ -28,6 +36,7 @@ const emptyForm = {
   n_breakdown_hrs: '', n_breakdown_min: '0',
   n_qty: '', n_work_done: '',
   remarks: '',
+  n_remarks: '',
   machine_status: null, n_machine_status: null,
 }
 
@@ -100,6 +109,7 @@ function buildEditForm(machine, dayEntry, nightEntry) {
       n_qty:           nightEntry?.qty != null ? String(nightEntry.qty) : '',
       n_work_done:     nightEntry?.work_done || '',
       remarks:         dayEntry?.remarks || '',
+      n_remarks:       nightEntry?.remarks || '',
       machine_status:   dayEntry?.is_idle ? 'idle' : (parseFloat(dayEntry?.breakdown) > 0 ? 'breakdown' : null),
       n_machine_status: nightEntry?.is_idle ? 'idle' : (parseFloat(nightEntry?.breakdown) > 0 ? 'breakdown' : null),
     }
@@ -124,6 +134,7 @@ function buildEditForm(machine, dayEntry, nightEntry) {
     n_qty:           nightEntry?.qty != null ? String(nightEntry.qty) : '',
     n_work_done:     nightEntry?.work_done || '',
     remarks:         dayEntry?.remarks || '',
+    n_remarks:       nightEntry?.remarks || '',
     machine_status:   dayEntry?.is_idle ? 'idle' : (parseFloat(dayEntry?.breakdown) > 0 ? 'breakdown' : null),
     n_machine_status: nightEntry?.is_idle ? 'idle' : (parseFloat(nightEntry?.breakdown) > 0 ? 'breakdown' : null),
   }
@@ -304,6 +315,14 @@ function ShiftRow({
 
     if (isZeroWork && !machineStatus) {
       setErrorMsg('Readings are same — select Idle or Breakdown')
+      return
+    }
+    if (isZeroWork && machineStatus === 'breakdown' && !form.remarks?.trim()) {
+      setErrorMsg('Breakdown reason is required')
+      return
+    }
+    if (isZeroWork && machineStatus === 'idle' && !form.remarks) {
+      setErrorMsg('Please select an idle reason')
       return
     }
 
@@ -519,11 +538,11 @@ function ShiftRow({
       <td className={`${thCls} w-44`}>
         {isZeroWork && !readOnly ? (
           <div className="flex gap-1">
-            <button type="button" onClick={() => { setMachineStatus('idle'); setForm(f => ({ ...f, breakdown_hrs: '0', breakdown_min: '0' })) }}
+            <button type="button" onClick={() => { setMachineStatus('idle'); setForm(f => ({ ...f, breakdown_hrs: '0', breakdown_min: '0', remarks: '' })) }}
               className={`flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border transition-colors ${machineStatus === 'idle' ? 'bg-amber-100 border-amber-400 text-amber-800' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-amber-50 hover:border-amber-300 hover:text-amber-700'}`}>
               Idle
             </button>
-            <button type="button" onClick={() => { setMachineStatus('breakdown'); setForm(f => ({ ...f, breakdown_hrs: String(SHIFT_MAX), breakdown_min: '0' })) }}
+            <button type="button" onClick={() => { setMachineStatus('breakdown'); setForm(f => ({ ...f, breakdown_hrs: String(SHIFT_MAX), breakdown_min: '0', remarks: '' })) }}
               className={`flex-1 text-[10px] font-semibold px-1.5 py-1 rounded border transition-colors ${machineStatus === 'breakdown' ? 'bg-red-100 border-red-400 text-red-800' : 'bg-gray-50 border-gray-200 text-gray-500 hover:bg-red-50 hover:border-red-300 hover:text-red-700'}`}>
               Bkdn
             </button>
@@ -537,13 +556,21 @@ function ShiftRow({
         )}
       </td>
 
-      {/* Remarks / Breakdown Reason */}
+      {/* Remarks / Idle Reason / Breakdown Reason */}
       <td className={`${thCls} w-28`}>
-        <input type="text"
-          placeholder={isZeroWork && machineStatus === 'breakdown' ? 'Breakdown reason…' : 'Remarks'}
-          value={form.remarks} onChange={readOnly ? undefined : set('remarks')}
-          readOnly={readOnly}
-          className={editInp(isZeroWork && machineStatus === 'breakdown' ? 'border-red-300' : 'border-gray-200')} />
+        {!readOnly && isZeroWork && machineStatus === 'idle' ? (
+          <select value={form.remarks} onChange={set('remarks')}
+            className={`${inp} border-amber-300 bg-amber-50 text-amber-900`}>
+            <option value="">— Select reason —</option>
+            {IDLE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+        ) : (
+          <input type="text"
+            placeholder={isZeroWork && machineStatus === 'breakdown' ? 'Breakdown reason *' : 'Remarks'}
+            value={form.remarks} onChange={readOnly ? undefined : set('remarks')}
+            readOnly={readOnly}
+            className={editInp(isZeroWork && machineStatus === 'breakdown' ? 'border-red-300' : 'border-gray-200')} />
+        )}
       </td>
 
       {/* Action */}
@@ -704,7 +731,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
 
   const mkReadings  = () => configs.map(rc => ({ reading_type_id: rc.reading_type_id, code: rc.code, reading_name: rc.reading_name, unit: rc.unit, open_value: '', close_value: '' }))
   const mkNReadings = () => configs.map(rc => ({ reading_type_id: rc.reading_type_id, close_value: '' }))
-  const mrEmpty     = { shift: '', readings: mkReadings(), n_readings: mkNReadings(), hsd: '', breakdown_hrs: '0', breakdown_min: '0', qty: '', work_done: '', n_hsd: '', n_breakdown_hrs: '0', n_breakdown_min: '0', n_qty: '', n_work_done: '', remarks: '', machine_status: null, n_machine_status: null }
+  const mrEmpty     = { shift: '', readings: mkReadings(), n_readings: mkNReadings(), hsd: '', breakdown_hrs: '0', breakdown_min: '0', qty: '', work_done: '', n_hsd: '', n_breakdown_hrs: '0', n_breakdown_min: '0', n_qty: '', n_work_done: '', remarks: '', n_remarks: '', machine_status: null, n_machine_status: null }
 
   const [form,          setForm]          = useState(editData || (isMultiReading ? mrEmpty : emptyForm))
   const [loading,       setLoading]       = useState(false)
@@ -849,8 +876,20 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
     if (isDayZeroWork && !form.machine_status) {
       setToast({ type: 'error', msg: `${isDual ? 'Day Shift' : 'Shift'}: readings are same — select Idle or Breakdown.` }); return
     }
+    if (isDayZeroWork && form.machine_status === 'breakdown' && !form.remarks?.trim()) {
+      setToast({ type: 'error', msg: `${isDual ? 'Day Shift' : 'Shift'}: Breakdown reason is required.` }); return
+    }
+    if (isDayZeroWork && form.machine_status === 'idle' && !form.remarks) {
+      setToast({ type: 'error', msg: `${isDual ? 'Day Shift' : 'Shift'}: Please select an idle reason.` }); return
+    }
     if (isNightZeroWork && !form.n_machine_status) {
       setToast({ type: 'error', msg: 'Night Shift: readings are same — select Idle or Breakdown.' }); return
+    }
+    if (isNightZeroWork && form.n_machine_status === 'breakdown' && !form.n_remarks?.trim()) {
+      setToast({ type: 'error', msg: 'Night Shift: Breakdown reason is required.' }); return
+    }
+    if (isNightZeroWork && form.n_machine_status === 'idle' && !form.n_remarks) {
+      setToast({ type: 'error', msg: 'Night Shift: Please select an idle reason.' }); return
     }
 
     const breakdownVal  = form.machine_status   === 'idle' ? 0 : brkHrsToDecimal(form.breakdown_hrs,   form.breakdown_min)
@@ -867,7 +906,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
     try {
       if (isMultiReading) {
         const dayPayload   = { readings: computedReadings.map(r => ({ reading_type_id: r.reading_type_id, open_value: r.open_value || null, close_value: r.close_value || null })), hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null, is_idle: isDayZeroWork && form.machine_status === 'idle' }
-        const nightPayload = { readings: nComputedReadings.map(r => ({ reading_type_id: r.reading_type_id, open_value: r.day_close || null, close_value: r.close_value || null })), hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.remarks || null, is_idle: isNightZeroWork && form.n_machine_status === 'idle' }
+        const nightPayload = { readings: nComputedReadings.map(r => ({ reading_type_id: r.reading_type_id, open_value: r.day_close || null, close_value: r.close_value || null })), hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.n_remarks || null, is_idle: isNightZeroWork && form.n_machine_status === 'idle' }
         if (isEditMode) {
           if (isDual && editIds.length >= 2) {
             await Promise.all([updateEntry(editIds[0], dayPayload), updateEntry(editIds[1], nightPayload)])
@@ -887,7 +926,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
           if (isDual && editIds.length >= 2) {
             await Promise.all([
               updateEntry(editIds[0], { r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null, is_idle: isDayZeroWork && form.machine_status === 'idle' }),
-              updateEntry(editIds[1], { r1_open: form.r1_close || null, r1_close: form.n_r1_close || null, r2_open: form.r2_close || null, r2_close: form.n_r2_close || null, hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.remarks || null, is_idle: isNightZeroWork && form.n_machine_status === 'idle' }),
+              updateEntry(editIds[1], { r1_open: form.r1_close || null, r1_close: form.n_r1_close || null, r2_open: form.r2_close || null, r2_close: form.n_r2_close || null, hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.n_remarks || null, is_idle: isNightZeroWork && form.n_machine_status === 'idle' }),
             ])
           } else {
             await updateEntry(editIds[0], { shift: form.shift, r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null, is_idle: isDayZeroWork && form.machine_status === 'idle' })
@@ -895,7 +934,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
         } else if (isDual) {
           await Promise.all([
             createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Day Shift',   r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null, is_idle: isDayZeroWork && form.machine_status === 'idle' }),
-            createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Night Shift',  r1_open: form.r1_close || null, r1_close: form.n_r1_close || null, r2_open: form.r2_close || null, r2_close: form.n_r2_close || null, hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.remarks || null, is_idle: isNightZeroWork && form.n_machine_status === 'idle' }),
+            createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Night Shift',  r1_open: form.r1_close || null, r1_close: form.n_r1_close || null, r2_open: form.r2_close || null, r2_close: form.n_r2_close || null, hsd: form.n_hsd || null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.n_remarks || null, is_idle: isNightZeroWork && form.n_machine_status === 'idle' }),
           ])
         } else {
           await createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: form.shift, r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, hsd: form.hsd || null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null, is_idle: isDayZeroWork && form.machine_status === 'idle' })
@@ -990,15 +1029,33 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
                   <p className="text-xs font-semibold text-amber-800 mb-2">Day Shift: readings are same — no working hours. Select machine status:</p>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setForm(f => ({ ...f, machine_status: 'idle', breakdown_hrs: '0', breakdown_min: '0' }))}
+                    <button type="button" onClick={() => setForm(f => ({ ...f, machine_status: 'idle', breakdown_hrs: '0', breakdown_min: '0', remarks: '' }))}
                       className={`flex-1 py-1.5 rounded-md text-xs font-semibold border transition-colors ${form.machine_status === 'idle' ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-100'}`}>
                       Machine was Idle
                     </button>
-                    <button type="button" onClick={() => setForm(f => ({ ...f, machine_status: 'breakdown', breakdown_hrs: String(SHIFT_MAX), breakdown_min: '0' }))}
+                    <button type="button" onClick={() => setForm(f => ({ ...f, machine_status: 'breakdown', breakdown_hrs: String(SHIFT_MAX), breakdown_min: '0', remarks: '' }))}
                       className={`flex-1 py-1.5 rounded-md text-xs font-semibold border transition-colors ${form.machine_status === 'breakdown' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}`}>
                       Breakdown
                     </button>
                   </div>
+                  {form.machine_status === 'idle' && (
+                    <div className="mt-3">
+                      <label className="block text-xs font-medium text-amber-800 mb-1">Idle Reason <span className="text-red-500">*</span></label>
+                      <select value={form.remarks} onChange={set('remarks')}
+                        className="border border-amber-300 rounded-md px-2 py-1.5 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+                        <option value="">— Select reason —</option>
+                        {IDLE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {form.machine_status === 'breakdown' && (
+                    <div className="mt-3">
+                      <label className="block text-xs font-medium text-red-700 mb-1">Breakdown Reason <span className="text-red-500">*</span></label>
+                      <textarea rows={2} value={form.remarks} onChange={set('remarks')}
+                        className="border border-red-300 rounded-md px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-red-400"
+                        placeholder="Enter breakdown reason…" />
+                    </div>
+                  )}
                 </div>
               )}
               <FuelBreakdown hsd={form.hsd} breakdownHrs={form.breakdown_hrs} breakdownMin={form.breakdown_min} qty={form.qty} workDone={form.work_done} fuelRate={dayFuelRate} machine={machine} onHsd={set('hsd')} onBreakdownHrs={set('breakdown_hrs')} onBreakdownMin={set('breakdown_min')} onQty={set('qty')} onWorkDone={set('work_done')} lbl={lbl} inp={inp} maxBreakdown={maxDayBreakdown} isIdle={isDayZeroWork && form.machine_status === 'idle'} breakdownLocked={isDayZeroWork && form.machine_status === 'breakdown'} />
@@ -1040,15 +1097,33 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
                   <p className="text-xs font-semibold text-amber-800 mb-2">Night Shift: readings are same — no working hours. Select machine status:</p>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setForm(f => ({ ...f, n_machine_status: 'idle', n_breakdown_hrs: '0', n_breakdown_min: '0' }))}
+                    <button type="button" onClick={() => setForm(f => ({ ...f, n_machine_status: 'idle', n_breakdown_hrs: '0', n_breakdown_min: '0', n_remarks: '' }))}
                       className={`flex-1 py-1.5 rounded-md text-xs font-semibold border transition-colors ${form.n_machine_status === 'idle' ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-100'}`}>
                       Machine was Idle
                     </button>
-                    <button type="button" onClick={() => setForm(f => ({ ...f, n_machine_status: 'breakdown', n_breakdown_hrs: String(SHIFT_MAX), n_breakdown_min: '0' }))}
+                    <button type="button" onClick={() => setForm(f => ({ ...f, n_machine_status: 'breakdown', n_breakdown_hrs: String(SHIFT_MAX), n_breakdown_min: '0', n_remarks: '' }))}
                       className={`flex-1 py-1.5 rounded-md text-xs font-semibold border transition-colors ${form.n_machine_status === 'breakdown' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}`}>
                       Breakdown
                     </button>
                   </div>
+                  {form.n_machine_status === 'idle' && (
+                    <div className="mt-3">
+                      <label className="block text-xs font-medium text-amber-800 mb-1">Idle Reason <span className="text-red-500">*</span></label>
+                      <select value={form.n_remarks} onChange={set('n_remarks')}
+                        className="border border-amber-300 rounded-md px-2 py-1.5 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+                        <option value="">— Select reason —</option>
+                        {IDLE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {form.n_machine_status === 'breakdown' && (
+                    <div className="mt-3">
+                      <label className="block text-xs font-medium text-red-700 mb-1">Breakdown Reason <span className="text-red-500">*</span></label>
+                      <textarea rows={2} value={form.n_remarks} onChange={set('n_remarks')}
+                        className="border border-red-300 rounded-md px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-red-400"
+                        placeholder="Enter breakdown reason…" />
+                    </div>
+                  )}
                 </div>
               )}
               <FuelBreakdown hsd={form.n_hsd} breakdownHrs={form.n_breakdown_hrs} breakdownMin={form.n_breakdown_min} qty={form.n_qty} workDone={form.n_work_done} fuelRate={nightFuelRate} machine={machine} onHsd={set('n_hsd')} onBreakdownHrs={set('n_breakdown_hrs')} onBreakdownMin={set('n_breakdown_min')} onQty={set('n_qty')} onWorkDone={set('n_work_done')} lbl={lbl} inp={inp} maxBreakdown={maxNightBreakdown} isIdle={isNightZeroWork && form.n_machine_status === 'idle'} breakdownLocked={isNightZeroWork && form.n_machine_status === 'breakdown'} />
@@ -1076,24 +1151,44 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
                 <div className="rounded-lg border border-amber-200 bg-amber-50 p-3">
                   <p className="text-xs font-semibold text-amber-800 mb-2">Readings are same — no working hours recorded. Select machine status:</p>
                   <div className="flex gap-2">
-                    <button type="button" onClick={() => setForm(f => ({ ...f, machine_status: 'idle', breakdown_hrs: '0', breakdown_min: '0' }))}
+                    <button type="button" onClick={() => setForm(f => ({ ...f, machine_status: 'idle', breakdown_hrs: '0', breakdown_min: '0', remarks: '' }))}
                       className={`flex-1 py-1.5 rounded-md text-xs font-semibold border transition-colors ${form.machine_status === 'idle' ? 'bg-amber-500 text-white border-amber-500' : 'bg-white text-amber-700 border-amber-300 hover:bg-amber-100'}`}>
                       Machine was Idle
                     </button>
-                    <button type="button" onClick={() => setForm(f => ({ ...f, machine_status: 'breakdown', breakdown_hrs: String(SHIFT_MAX), breakdown_min: '0' }))}
+                    <button type="button" onClick={() => setForm(f => ({ ...f, machine_status: 'breakdown', breakdown_hrs: String(SHIFT_MAX), breakdown_min: '0', remarks: '' }))}
                       className={`flex-1 py-1.5 rounded-md text-xs font-semibold border transition-colors ${form.machine_status === 'breakdown' ? 'bg-red-500 text-white border-red-500' : 'bg-white text-red-700 border-red-300 hover:bg-red-50'}`}>
                       Breakdown
                     </button>
                   </div>
+                  {form.machine_status === 'idle' && (
+                    <div className="mt-3">
+                      <label className="block text-xs font-medium text-amber-800 mb-1">Idle Reason <span className="text-red-500">*</span></label>
+                      <select value={form.remarks} onChange={set('remarks')}
+                        className="border border-amber-300 rounded-md px-2 py-1.5 text-sm w-full bg-white focus:outline-none focus:ring-2 focus:ring-amber-400">
+                        <option value="">— Select reason —</option>
+                        {IDLE_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+                      </select>
+                    </div>
+                  )}
+                  {form.machine_status === 'breakdown' && (
+                    <div className="mt-3">
+                      <label className="block text-xs font-medium text-red-700 mb-1">Breakdown Reason <span className="text-red-500">*</span></label>
+                      <textarea rows={2} value={form.remarks} onChange={set('remarks')}
+                        className="border border-red-300 rounded-md px-2 py-1.5 text-sm w-full focus:outline-none focus:ring-2 focus:ring-red-400"
+                        placeholder="Enter breakdown reason…" />
+                    </div>
+                  )}
                 </div>
               )}
               <FuelBreakdown hsd={form.hsd} breakdownHrs={form.breakdown_hrs} breakdownMin={form.breakdown_min} qty={form.qty} workDone={form.work_done} fuelRate={dayFuelRate} machine={machine} onHsd={set('hsd')} onBreakdownHrs={set('breakdown_hrs')} onBreakdownMin={set('breakdown_min')} onQty={set('qty')} onWorkDone={set('work_done')} lbl={lbl} inp={inp} maxBreakdown={maxDayBreakdown} isIdle={isDayZeroWork && form.machine_status === 'idle'} breakdownLocked={isDayZeroWork && form.machine_status === 'breakdown'} />
             </>
           )}
-          <div>
-            <label className={lbl}>{(isDayZeroWork && form.machine_status === 'breakdown') || (isNightZeroWork && form.n_machine_status === 'breakdown') ? 'Breakdown Reason' : 'Remarks'}</label>
-            <textarea rows={2} value={form.remarks} onChange={set('remarks')} className={`${inp} ${((isDayZeroWork && form.machine_status === 'breakdown') || (isNightZeroWork && form.n_machine_status === 'breakdown')) ? 'border-red-300' : ''}`} placeholder={((isDayZeroWork && form.machine_status === 'breakdown') || (isNightZeroWork && form.n_machine_status === 'breakdown')) ? 'Enter breakdown reason…' : 'Optional'} />
-          </div>
+          {!((isDayZeroWork && form.machine_status) || (isNightZeroWork && form.n_machine_status)) && (
+            <div>
+              <label className={lbl}>Remarks</label>
+              <textarea rows={2} value={form.remarks} onChange={set('remarks')} className={inp} placeholder="Optional" />
+            </div>
+          )}
           {toast && (
             <div className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm ${toast.type === 'success' ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>
               {toast.type === 'success' ? <CheckCircle size={16} /> : <AlertCircle size={16} />}
