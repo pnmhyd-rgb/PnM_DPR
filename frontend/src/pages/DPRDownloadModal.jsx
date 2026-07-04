@@ -327,9 +327,10 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
           : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
         : '—'
 
-      // Utilization: planned_hours is monthly total; actual = monthly/calendarDays × payableDays
-      const monthlyPlanned = parseFloat(m.planned_hours) || 0
-      const actualPlanned  = d.totalDays > 0 ? (monthlyPlanned / d.totalDays) * d.payableDays : 0
+      // Utilization: planned_hours is per-day; monthly = per-day × calDays; actual = per-day × payableDays
+      const plannedPerDay  = parseFloat(m.planned_hours) || 0
+      const monthlyPlanned = plannedPerDay * d.totalDays
+      const actualPlanned  = plannedPerDay * d.payableDays
       const workedVal      = isKmBasis ? s.totalR1 : s.workedTotal
       const utilPctActual  = actualPlanned > 0 ? ((workedVal / actualPlanned) * 100).toFixed(2) : '—'
       const unitLabel      = isKmBasis ? 'KMs' : 'Hrs'
@@ -567,9 +568,10 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
           : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
         : '—'
 
-      // Utilization: planned_hours is monthly total; actual = monthly/calendarDays × payableDays
-      const monthlyPlanned = parseFloat(m.planned_hours) || 0
-      const actualPlanned  = d.totalDays > 0 ? (monthlyPlanned / d.totalDays) * d.payableDays : 0
+      // Utilization: planned_hours is per-day; monthly = per-day × calDays; actual = per-day × payableDays
+      const plannedPerDay  = parseFloat(m.planned_hours) || 0
+      const monthlyPlanned = plannedPerDay * d.totalDays
+      const actualPlanned  = plannedPerDay * d.payableDays
       const workedVal      = isKmBasis ? s.totalR1 : s.workedTotal
       const utilPctActual  = actualPlanned > 0 ? ((workedVal / actualPlanned) * 100).toFixed(2) : '—'
       const unitLabel      = isKmBasis ? 'KMs' : 'Hrs'
