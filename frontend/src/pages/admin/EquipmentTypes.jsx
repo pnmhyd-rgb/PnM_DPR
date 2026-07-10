@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   getEquipmentTypes, createEquipmentType, bulkCreateEquipmentTypes,
   updateEquipmentType, deleteEquipmentType,
@@ -7,7 +8,8 @@ import {
 import { useAuth } from '../../context/AuthContext'
 import {
   Plus, Trash2, Pencil, Check, X, Search, List,
-  AlertTriangle, FileSpreadsheet, FileText, Download, Upload, Fuel,
+  AlertTriangle, FileSpreadsheet, FileText, Download, Upload, Fuel, Settings2,
+  LayoutList, FolderTree, ChevronRight, CheckCircle2,
 } from 'lucide-react'
 
 const CATEGORIES   = ['Measurable', 'Non-Measurable']
@@ -164,9 +166,118 @@ async function parseUploadFile(file) {
 }
 
 /* ── Component ────────────────────────────────────────────────────────────── */
+/* ── Category View (grouped by asset_cat) ────────────────────────────────── */
+function CategoryView({ types, navigate }) {
+  // Group by asset_cat (fall back to asset_group if no cat)
+  const catMap = {}
+  for (const t of types) {
+    const cat = t.asset_cat || t.asset_group || 'Uncategorised'
+    if (!catMap[cat]) catMap[cat] = []
+    catMap[cat].push(t)
+  }
+  const cats = Object.keys(catMap).sort()
+
+  if (cats.length === 0) {
+    return (
+      <div className="bg-white rounded-xl border border-gray-200 p-12 text-center text-sm text-gray-400">
+        No asset types defined yet.
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      {cats.map(cat => (
+        <div key={cat} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+          {/* Category header */}
+          <div className="flex items-center justify-between px-5 py-3 bg-slate-50 border-b border-slate-200">
+            <button
+              onClick={() => navigate(`/admin/asset-category/${encodeURIComponent(cat)}`)}
+              className="flex items-center gap-2 text-left hover:text-blue-700 transition-colors group"
+            >
+              <FolderTree size={15} className="text-slate-500 group-hover:text-blue-500" />
+              <h3 className="text-sm font-semibold text-slate-700 group-hover:text-blue-700">{cat}</h3>
+              <span className="ml-1 text-xs text-slate-400 font-normal">
+                {catMap[cat].length} asset type{catMap[cat].length !== 1 ? 's' : ''}
+              </span>
+              <ChevronRight size={12} className="text-slate-300 group-hover:text-blue-400 transition-colors" />
+            </button>
+            <span className="text-xs text-slate-400">
+              {catMap[cat].reduce((s, t) => s + (parseInt(t.usage_count) || 0), 0)} total machines
+            </span>
+          </div>
+
+          {/* Asset types in this category */}
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-gray-100 bg-gray-50/40">
+                <th className="text-left text-xs font-semibold text-gray-400 px-5 py-2">Asset Name</th>
+                <th className="text-left text-xs font-semibold text-gray-400 px-4 py-2">Measurability</th>
+                <th className="text-center text-xs font-semibold text-gray-400 px-4 py-2">Own</th>
+                <th className="text-center text-xs font-semibold text-gray-400 px-4 py-2">Hire</th>
+                <th className="text-center text-xs font-semibold text-gray-400 px-4 py-2">Total</th>
+                <th className="text-left text-xs font-semibold text-gray-400 px-4 py-2">Config</th>
+                <th className="px-4 py-2 w-32" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {catMap[cat].map(t => (
+                <tr key={t.id} className="hover:bg-blue-50/30 transition-colors group">
+                  <td className="px-5 py-2.5 font-medium text-gray-900">{t.name}</td>
+                  <td className="px-4 py-2.5">
+                    {t.asset_category ? (
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                        t.asset_category === 'Measurable'
+                          ? 'bg-emerald-100 text-emerald-700'
+                          : 'bg-purple-100 text-purple-700'
+                      }`}>{t.asset_category}</span>
+                    ) : <span className="text-gray-300 text-xs">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-center">
+                    {parseInt(t.own_count) > 0
+                      ? <span className="text-xs bg-blue-100 text-blue-700 font-medium px-2 py-0.5 rounded-full">{t.own_count}</span>
+                      : <span className="text-gray-300 text-xs">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-center">
+                    {parseInt(t.hire_count) > 0
+                      ? <span className="text-xs bg-amber-100 text-amber-700 font-medium px-2 py-0.5 rounded-full">{t.hire_count}</span>
+                      : <span className="text-gray-300 text-xs">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-center">
+                    {parseInt(t.usage_count) > 0
+                      ? <span className="text-xs bg-gray-200 text-gray-700 font-medium px-2 py-0.5 rounded-full">{t.usage_count}</span>
+                      : <span className="text-gray-300 text-xs">—</span>}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    {t.has_config
+                      ? <span className="flex items-center gap-1 text-xs text-green-600 font-medium"><CheckCircle2 size={12} />Configured</span>
+                      : <span className="text-xs text-gray-300">Not configured</span>}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button
+                      onClick={() => navigate(`/admin/asset-type-configs/${t.id}`)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition-colors ml-auto"
+                    >
+                      <Settings2 size={12} />Configure
+                      <ChevronRight size={11} className="opacity-50" />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/* ── Main Component ───────────────────────────────────────────────────────── */
 export default function EquipmentTypes() {
   const { isAdmin } = useAuth()
+  const navigate = useNavigate()
 
+  const [viewMode,   setViewMode]   = useState('list') // 'list' | 'category'
   const [types,      setTypes]      = useState([])
   const [search,     setSearch]     = useState('')
   const [loadError,  setLoadError]  = useState('')
@@ -383,15 +494,40 @@ export default function EquipmentTypes() {
       {/* ── Header ── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-bold text-gray-900">Asset Names</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{types.length} asset name{types.length !== 1 ? 's' : ''} defined — grouped by Asset Group › Asset Category</p>
+          <h1 className="text-xl font-bold text-gray-900">Asset Category</h1>
+          <p className="text-sm text-gray-500 mt-0.5">{types.length} asset type{types.length !== 1 ? 's' : ''} — grouped by Asset Category</p>
         </div>
-        <button
-          onClick={() => { setShowBulk(v => !v); resetBulk() }}
-          className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors"
-        >
-          <List size={14} />{showBulk ? 'Single Add' : 'Bulk Upload'}
-        </button>
+        <div className="flex items-center gap-2">
+          {/* View toggle */}
+          <div className="flex rounded-lg border border-gray-200 overflow-hidden">
+            <button
+              onClick={() => setViewMode('category')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors ${
+                viewMode === 'category'
+                  ? 'bg-blue-700 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <FolderTree size={13} />Category
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border-l border-gray-200 ${
+                viewMode === 'list'
+                  ? 'bg-blue-700 text-white'
+                  : 'bg-white text-gray-600 hover:bg-gray-50'
+              }`}
+            >
+              <LayoutList size={13} />List
+            </button>
+          </div>
+          <button
+            onClick={() => { setShowBulk(v => !v); resetBulk() }}
+            className="flex items-center gap-2 px-3 py-2 border border-gray-300 text-gray-700 text-sm rounded-lg hover:bg-gray-50 transition-colors"
+          >
+            <List size={14} />{showBulk ? 'Single Add' : 'Bulk Upload'}
+          </button>
+        </div>
       </div>
 
       {loadError && (
@@ -441,6 +577,12 @@ export default function EquipmentTypes() {
           {fuelOptError && <p className="text-xs text-red-600 mt-1">{fuelOptError}</p>}
         </div>
       )}
+
+      {/* ── Category View ── */}
+      {viewMode === 'category' && <CategoryView types={types} navigate={navigate} />}
+
+      {/* ── List View below ── */}
+      {viewMode === 'list' && <>
 
       {/* ── Single add ── */}
       {!showBulk && (
@@ -741,7 +883,16 @@ export default function EquipmentTypes() {
                           ? <span className="bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded text-xs">{t.asset_cat}</span>
                           : <span className="text-gray-300">—</span>}
                       </td>
-                      <td className="px-4 py-2.5 text-sm text-gray-800 font-medium">{t.name}</td>
+                      <td className="px-4 py-2.5">
+                        <button
+                          onClick={() => navigate(`/admin/asset-type-configs/${t.id}`)}
+                          className="group flex items-center gap-1 text-sm font-medium text-gray-800 hover:text-blue-700 transition-colors"
+                          title="Configure this asset type"
+                        >
+                          {t.name}
+                          <ChevronRight size={12} className="opacity-0 group-hover:opacity-60 transition-opacity flex-shrink-0" />
+                        </button>
+                      </td>
                       <td className="px-4 py-2.5">
                         {t.asset_category ? (
                           <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
@@ -812,6 +963,8 @@ export default function EquipmentTypes() {
           </table>
         </div>
       </div>
+
+      </>}
 
       {/* ── Force-delete dialog ── */}
       {forceConfirm && (

@@ -31,5 +31,11 @@ router.use('/machine-reading-configs', require('./machineReadingConfigs'));
 router.use('/asset-matrix',            require('./assetMatrix'));
 router.use('/fuel-records',            require('./fuelRecords'));
 router.use('/meter-resets',            require('./meterResets'));
+router.use('/meter-reset-requests',    require('./meterResetRequests'));
+router.use('/notifications',           require('./notifications'));
+router.use('/permissions',             require('./permissions'));
+router.use('/fuel-stations',           require('./fuelStations'));
+router.use('/asset-group-configs',     require('./assetGroupConfigs'));
+router.use('/equipment-type-configs',  require('./equipmentTypeConfigs'));
 
 module.exports = router;

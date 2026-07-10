@@ -56,6 +56,19 @@ const migrations = [
   '050_asset_matrix.sql',
   '051_machines_am_id.sql',
   '052_seed_asset_matrix.sql',
+  '053_machine_fuel_tank.sql',
+  '054_meter_reset_requests.sql',
+  '055_dpr_entry_reset_readings.sql',
+  '056_meter_reset_actual_reading.sql',
+  '057_meter_reset_shift.sql',
+  '058_user_permissions.sql',
+  '059_site_permissions.sql',
+  '060_fuel_stations.sql',
+  '061_dpr_diesel_rate.sql',
+  '062_dpr_diesel_cost.sql',
+  '063_asset_group_configs.sql',
+  '064_equipment_type_configs.sql',
+  '065_tm_fuel_split.sql',
 ];
 
 async function runMigrations() {

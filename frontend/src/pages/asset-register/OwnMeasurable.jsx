@@ -3,6 +3,7 @@ import { getMachines, getProjects } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
 import { Plus, Download } from 'lucide-react'
 import AddAssetModal from './AddAssetModal'
+import EditAssetModal from './EditAssetModal'
 import AssetRegisterDownloadModal from './AssetRegisterDownloadModal'
 import MachineDetailPanel from '../../components/MachineDetailPanel'
 
@@ -16,6 +17,7 @@ export default function OwnMeasurable() {
   const [showAdd, setShowAdd]     = useState(false)
   const [showDownload, setShowDownload] = useState(false)
   const [detailPanel, setDetailPanel] = useState(null)
+  const [editPanel, setEditPanel] = useState(null)
 
   useEffect(() => {
     getProjects().then(r => setProjects(r.data.data))
@@ -66,18 +68,23 @@ export default function OwnMeasurable() {
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-gray-50 border-b border-gray-200">
-                {['#','Project','SL No','Asset Group','Asset Category','Asset Name','Manufacturer','Model','Capacity / UOM','Reg No','Chassis No','Fuel Type','Shift','Meter','Fuel Min','Fuel Max','Planned Hrs/Day','Purchase Date','Price (₹)'].map(h => (
+                {['#','Project','Nickname','SL No','Asset Group','Asset Category','Asset Name','Manufacturer','Model','Capacity / UOM','Reg No','Chassis No','Fuel Type','Shift','Meter','Fuel Min','Fuel Max','Planned Hrs/Day','Purchase Date','Price (₹)'].map(h => (
                   <th key={h} className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {loading && <tr><td colSpan={19} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>}
-              {!loading && machines.length === 0 && <tr><td colSpan={19} className="px-4 py-10 text-center text-gray-400">No measurable own assets found</td></tr>}
+              {loading && <tr><td colSpan={20} className="px-4 py-10 text-center text-gray-400">Loading…</td></tr>}
+              {!loading && machines.length === 0 && <tr><td colSpan={20} className="px-4 py-10 text-center text-gray-400">No measurable own assets found</td></tr>}
               {!loading && machines.map((m, i) => (
                 <tr key={m.id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-3 py-2 text-gray-400">{i + 1}</td>
                   <td className="px-3 py-2"><span className="bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded text-xs">{m.project_code}</span></td>
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    {m.nickname
+                      ? <button onClick={() => setDetailPanel(m)} className="text-blue-700 font-medium hover:text-blue-900 hover:underline text-left">{m.nickname}</button>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
                   <td className="px-3 py-2">
                     <button onClick={() => setDetailPanel(m)} className="text-blue-600 hover:text-blue-800 hover:underline font-semibold text-left">
                       {m.slno}
@@ -113,7 +120,20 @@ export default function OwnMeasurable() {
 
       {showAdd && <AddAssetModal onClose={() => setShowAdd(false)} onSaved={load} />}
       {showDownload && <AssetRegisterDownloadModal onClose={() => setShowDownload(false)} />}
-      {detailPanel && <MachineDetailPanel machine={detailPanel} onClose={() => setDetailPanel(null)} />}
+      {detailPanel && (
+        <MachineDetailPanel
+          machine={detailPanel}
+          onClose={() => setDetailPanel(null)}
+          onEdit={isAdmin ? () => { setEditPanel(detailPanel); setDetailPanel(null) } : undefined}
+        />
+      )}
+      {editPanel && (
+        <EditAssetModal
+          machine={editPanel}
+          onClose={() => setEditPanel(null)}
+          onSaved={updated => { load(); setEditPanel(null); setDetailPanel(updated) }}
+        />
+      )}
     </div>
   )
 }

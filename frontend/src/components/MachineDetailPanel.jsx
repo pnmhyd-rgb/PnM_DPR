@@ -3,11 +3,12 @@ import { useNavigate } from 'react-router-dom'
 import {
   Edit2, X, Plus, Upload, Download, Eye, Trash2, RotateCcw,
   MoreVertical, Tag, Wrench, Calendar, IndianRupee, Clock, Info, MapPin,
-  ClipboardList, ExternalLink
+  ClipboardList, ExternalLink, CheckCircle, XCircle, Loader2,
 } from 'lucide-react'
 import {
   getMachineCompliance, batchUpsertCompliance, deleteCompliance,
   getMachineDocuments, createMachineDocument, deleteMachineDocument, getMachineDocumentUrl,
+  getMeterResetRequests, reviewMeterResetRequest,
 } from '../lib/api'
 
 export function fmt(val) { return val ?? '—' }
@@ -75,7 +76,7 @@ export function fmtCompDate(d) {
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-export default function MachineDetailPanel({ machine: m, onClose, onEdit }) {
+export default function MachineDetailPanel({ machine: m, onClose, onEdit, initialRightTab }) {
   const [compDocs,     setCompDocs]     = useState([])
   const [compLoading,  setCompLoading]  = useState(true)
   const [editingKey,   setEditingKey]   = useState(null)
@@ -86,7 +87,15 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit }) {
   const [menuOpen,     setMenuOpen]     = useState(null)
   const [deleting,     setDeleting]     = useState(null)
 
-  const [rightTab,     setRightTab]     = useState('compliance')
+  const [rightTab,     setRightTab]     = useState(initialRightTab || 'compliance')
+
+  const [resetReqs,       setResetReqs]       = useState([])
+  const [resetReqsLoading, setResetReqsLoading] = useState(false)
+  const [reviewingId,     setReviewingId]     = useState(null)
+  const [reviewNote,      setReviewNote]      = useState('')
+  const [reviewNoteOpen,  setReviewNoteOpen]  = useState(null) // { id, action }
+  const [reviewErr,       setReviewErr]       = useState(null) // { id, msg }
+  const [reviewSuccess,   setReviewSuccess]   = useState(null) // { id, action }
 
   const [docs,         setDocs]         = useState([])
   const [docsLoading,  setDocsLoading]  = useState(true)
@@ -110,6 +119,31 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit }) {
       .catch(() => {})
       .finally(() => setDocsLoading(false))
   }, [m.id])
+
+  const loadResetReqs = () => {
+    setResetReqsLoading(true)
+    getMeterResetRequests({ machine_id: m.id })
+      .then(r => setResetReqs(r.data.data || []))
+      .catch(() => setResetReqs([]))
+      .finally(() => setResetReqsLoading(false))
+  }
+  useEffect(() => { if (rightTab === 'counter-reset') loadResetReqs() }, [rightTab, m.id])
+
+  const handleReview = async (id, action) => {
+    setReviewingId(id)
+    setReviewErr(null)
+    setReviewSuccess(null)
+    try {
+      await reviewMeterResetRequest(id, { action, review_note: reviewNote || undefined })
+      setReviewNoteOpen(null); setReviewNote('')
+      setReviewSuccess({ id, action })
+      loadResetReqs()
+      window.dispatchEvent(new CustomEvent('resetRequestReviewed'))
+      setTimeout(() => setReviewSuccess(null), 4000)
+    } catch (e) {
+      setReviewErr({ id, msg: e.response?.data?.error || 'Failed to process request' })
+    } finally { setReviewingId(null) }
+  }
 
   const handleDocFileChange = (e) => {
     const file = e.target.files?.[0]
@@ -441,6 +475,20 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit }) {
                 )}
               </button>
               <button
+                onClick={() => setRightTab('counter-reset')}
+                className={`px-4 py-3 text-xs font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${
+                  rightTab === 'counter-reset'
+                    ? 'border-orange-600 text-orange-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}>
+                <RotateCcw size={12} />Counter Reset
+                {resetReqs.filter(r => r.status === 'pending').length > 0 && (
+                  <span className="bg-orange-100 text-orange-700 text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                    {resetReqs.filter(r => r.status === 'pending').length}
+                  </span>
+                )}
+              </button>
+              <button
                 onClick={goToLogEntry}
                 className="px-5 py-3 text-xs font-semibold border-b-2 border-transparent text-gray-500 hover:text-blue-700 transition-colors flex items-center gap-1.5">
                 <ClipboardList size={12} />Log Entry
@@ -679,6 +727,146 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit }) {
                         ))}
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* COUNTER RESET TAB */}
+            {rightTab === 'counter-reset' && (
+              <div className="flex-1 overflow-y-auto">
+                <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 bg-white flex-shrink-0">
+                  <div className="flex items-center gap-2">
+                    <div className="w-1 h-4 bg-orange-600 rounded-full" />
+                    <h3 className="text-sm font-semibold text-gray-800">Counter Log Reset Requests</h3>
+                  </div>
+                  <button onClick={loadResetReqs} className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors text-gray-400" title="Refresh">
+                    <RotateCcw size={13} className={resetReqsLoading ? 'animate-spin' : ''} />
+                  </button>
+                </div>
+
+                {resetReqsLoading ? (
+                  <div className="flex items-center justify-center py-12 text-gray-400 gap-2">
+                    <Loader2 size={18} className="animate-spin" /><span className="text-sm">Loading…</span>
+                  </div>
+                ) : resetReqs.length === 0 ? (
+                  <div className="px-5 py-10 text-center text-sm text-gray-400">No reset requests for this machine</div>
+                ) : (
+                  <div className="divide-y divide-gray-100">
+                    {resetReqs.map(req => (
+                      <div key={req.id} className={`px-5 py-4 ${req.status === 'pending' ? 'bg-orange-50/50' : ''}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className={`inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+                                req.status === 'pending'  ? 'bg-amber-100 text-amber-700' :
+                                req.status === 'approved' ? 'bg-green-100 text-green-700' :
+                                'bg-red-100 text-red-600'
+                              }`}>
+                                {req.status === 'approved' && <CheckCircle size={10} />}
+                                {req.status === 'rejected' && <XCircle size={10} />}
+                                {req.status.charAt(0).toUpperCase() + req.status.slice(1)}
+                              </span>
+                              <span className="text-xs text-gray-500">{req.reading_code || 'Hours'}</span>
+                            </div>
+                            <div className="text-xs text-gray-700 space-y-0.5">
+                              {req.actual_reading_before_reset != null && (
+                                <div>Actual Prev: <span className="font-mono font-medium">{req.actual_reading_before_reset}</span>
+                                  {req.old_reading != null && req.actual_reading_before_reset != null && (
+                                    <span className="text-[10px] text-amber-600 ml-1.5">(adj {parseFloat(req.old_reading) - parseFloat(req.actual_reading_before_reset) >= 0 ? '+' : ''}{(parseFloat(req.old_reading) - parseFloat(req.actual_reading_before_reset)).toFixed(2)})</span>
+                                  )}
+                                </div>
+                              )}
+                              <div>Reset Reading: <span className="font-mono font-medium">{req.old_reading ?? '—'}</span>
+                                <span className="mx-2 text-gray-300">→</span>
+                                New: <span className="font-mono font-medium text-orange-700">{req.new_reading ?? '—'}</span>
+                              </div>
+                              {req.old_reading != null && req.new_reading != null && (
+                                <div className="text-[11px] text-blue-700">Effective: <span className="font-mono font-semibold">{(parseFloat(req.old_reading) + parseFloat(req.new_reading)).toFixed(2)}</span> {req.reading_code || 'Hr'}</div>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-gray-400">
+                              Reset Date: {new Date(req.reset_date).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}
+                              {req.reset_shift && <span className="ml-2 text-orange-500 font-medium">({req.reset_shift})</span>}
+                            </div>
+                            {req.remark && <div className="text-xs text-gray-500 italic">"{req.remark}"</div>}
+                            <div className="text-[11px] text-gray-400">
+                              Requested by <span className="font-medium text-gray-600">{req.requested_by_name || 'Unknown'}</span>
+                              {' · '}{new Date(req.requested_at).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' })}
+                            </div>
+                            {req.status !== 'pending' && req.reviewed_by_name && (
+                              <div className="text-[11px] text-gray-400">
+                                {req.status === 'approved' ? 'Approved' : 'Rejected'} by <span className="font-medium text-gray-600">{req.reviewed_by_name}</span>
+                                {req.review_note && <span className="italic"> — "{req.review_note}"</span>}
+                              </div>
+                            )}
+                          </div>
+
+                          {req.status === 'pending' && (
+                            <div className="flex flex-col gap-1.5 flex-shrink-0">
+                              {reviewNoteOpen?.id === req.id ? (
+                                <div className="space-y-1.5">
+                                  <textarea rows={2} value={reviewNote} onChange={e => setReviewNote(e.target.value)}
+                                    placeholder="Note (optional)"
+                                    className="w-40 border border-gray-300 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-orange-400 resize-none" />
+                                  <div className="flex gap-1.5">
+                                    <button
+                                      disabled={reviewingId === req.id}
+                                      onClick={() => handleReview(req.id, reviewNoteOpen.action)}
+                                      className={`flex-1 text-[11px] font-semibold py-1 rounded-lg transition-colors disabled:opacity-50 ${
+                                        reviewNoteOpen.action === 'approve'
+                                          ? 'bg-green-600 hover:bg-green-700 text-white'
+                                          : 'bg-red-600 hover:bg-red-700 text-white'
+                                      }`}>
+                                      {reviewingId === req.id ? '…' : reviewNoteOpen.action === 'approve' ? 'Confirm Approve' : 'Confirm Reject'}
+                                    </button>
+                                    <button onClick={() => { setReviewNoteOpen(null); setReviewNote(''); setReviewErr(null) }}
+                                      className="px-2 py-1 text-[11px] text-gray-500 border border-gray-200 rounded-lg hover:bg-gray-50">✕</button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <>
+                                  <button
+                                    onClick={() => { setReviewNoteOpen({ id: req.id, action: 'approve' }); setReviewNote(''); setReviewErr(null) }}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors">
+                                    <CheckCircle size={11} /> Approve
+                                  </button>
+                                  <button
+                                    onClick={() => { setReviewNoteOpen({ id: req.id, action: 'reject' }); setReviewNote(''); setReviewErr(null) }}
+                                    className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] font-semibold bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 rounded-lg transition-colors">
+                                    <XCircle size={11} /> Reject
+                                  </button>
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Inline error for this request */}
+                        {reviewErr?.id === req.id && (
+                          <div className="mt-2 px-3 py-2 bg-red-50 border border-red-300 rounded-lg flex items-start gap-2">
+                            <XCircle size={13} className="text-red-500 flex-shrink-0 mt-0.5" />
+                            <div>
+                              <p className="text-[11px] font-semibold text-red-700">Cannot process request</p>
+                              <p className="text-[11px] text-red-600 mt-0.5">{reviewErr.msg}</p>
+                            </div>
+                            <button onClick={() => setReviewErr(null)} className="ml-auto text-red-400 hover:text-red-600 flex-shrink-0">
+                              <XCircle size={11} />
+                            </button>
+                          </div>
+                        )}
+
+                        {/* Success flash for this request */}
+                        {reviewSuccess?.id === req.id && (
+                          <div className="mt-2 px-3 py-2 bg-green-50 border border-green-300 rounded-lg flex items-center gap-2">
+                            <CheckCircle size={13} className="text-green-600 flex-shrink-0" />
+                            <p className="text-[11px] font-semibold text-green-700">
+                              {reviewSuccess.action === 'approve' ? 'Approved successfully' : 'Rejected successfully'} — bell will update
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )}
               </div>

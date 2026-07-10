@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useMemo, useRef } from 'react'
+import { useLocation } from 'react-router-dom'
 import {
   getProjects, getMachines, createMachine, bulkCreateMachines, updateMachine,
   deleteMachine, transferMachine, hardDeleteMachine, getEquipmentTypes,
@@ -74,7 +75,7 @@ const blank = {
   ownership: 'Own', asset_type: 'Measurable Asset',
   vendor: '', rate: '', rate_monthly: '',
   reading1_basis: 'Hours', reading2_basis: '', dual_reading: false,
-  fuel_min: '', fuel_max: '', fuel_min_km: '', fuel_max_km: '',
+  fuel_min: '', fuel_max: '', fuel_min_km: '', fuel_max_km: '', fuel_tank_l: '',
   planned_hours: '10', shift_type: '',
   date_of_purchase: '', po_number: '', price: '', nickname: ''
 }
@@ -101,12 +102,14 @@ function SortIcon({ col, sortCol, sortDir }) {
 }
 
 export default function Machines() {
+  const location = useLocation()
   const [projects,      setProjects]      = useState([])
   const [eqTypes,       setEqTypes]       = useState([])
   const [uomList,       setUomList]       = useState([])
   const [machines,      setMachines]      = useState([])
-  const [loadError,     setLoadError]     = useState('')
-  const [detailPanel,   setDetailPanel]   = useState(null)
+  const [loadError,       setLoadError]       = useState('')
+  const [detailPanel,     setDetailPanel]     = useState(null)
+  const [detailInitialTab, setDetailInitialTab] = useState(null)
 
   // Reading configs panel
   const [readingConfigModal,    setReadingConfigModal]    = useState(null)  // { machine }
@@ -195,6 +198,14 @@ export default function Machines() {
   }
 
   useEffect(() => { load() }, [filterProj, showInactive])
+
+  // Auto-open detail panel when navigated from notification bell
+  useEffect(() => {
+    const openId = location.state?.openMachineId
+    if (!openId || machines.length === 0) return
+    const m = machines.find(x => x.id === openId)
+    if (m) { setDetailPanel(m); setDetailInitialTab('counter-reset') }
+  }, [machines, location.state?.openMachineId])
 
   // ── Filtered + sorted list ─────────────────────────────────────────────────
   const displayed = useMemo(() => {
@@ -363,6 +374,7 @@ export default function Machines() {
       reading1_basis: m.reading1_basis, reading2_basis: m.reading2_basis || '',
       dual_reading: m.dual_reading, fuel_min: m.fuel_min || '', fuel_max: m.fuel_max || '',
       fuel_min_km: m.fuel_min_km || '', fuel_max_km: m.fuel_max_km || '',
+      fuel_tank_l: m.fuel_tank_l != null ? String(m.fuel_tank_l) : '',
       planned_hours: String(m.planned_hours || 10),
       shift_type: m.shift_type || 'Single Shift',
       date_of_purchase: m.date_of_purchase ? m.date_of_purchase.slice(0, 10) : '',
@@ -410,6 +422,7 @@ export default function Machines() {
         fuel_max:      form.fuel_max || null,
         fuel_min_km:   form.fuel_min_km || null,
         fuel_max_km:   form.fuel_max_km || null,
+        fuel_tank_l:   form.fuel_tank_l !== '' ? parseFloat(form.fuel_tank_l) : null,
         capacity:      form.capacity || null,
         vendor:        form.vendor || null,
         reg_no:        form.reg_no || null,
@@ -499,6 +512,7 @@ export default function Machines() {
     { label: 'Fuel Max L/hr', col: 'fuel_max' },
     { label: 'Fuel Min km',   col: 'fuel_min_km' },
     { label: 'Fuel Max km',   col: 'fuel_max_km' },
+    { label: 'Tank Cap (L)',  col: 'fuel_tank_l' },
     { label: 'Planned',       col: 'planned_hours' },
   ]
 
@@ -746,6 +760,12 @@ export default function Machines() {
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{m.fuel_min_km ?? '—'}</td>
                   {/* Fuel Max km */}
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{m.fuel_max_km ?? '—'}</td>
+                  {/* Tank Capacity */}
+                  <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">
+                    {m.fuel_tank_l != null
+                      ? <span className="font-semibold text-blue-700">{m.fuel_tank_l} L</span>
+                      : <span className="text-gray-300">—</span>}
+                  </td>
                   {/* Planned */}
                   <td className="px-3 py-2 text-right tabular-nums whitespace-nowrap">{m.planned_hours}</td>
                   <td className="px-3 py-2">
@@ -1461,9 +1481,16 @@ export default function Machines() {
                 </select>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-3">
-              <div><label className={lbl}>Fuel Min (L/hr)</label><input type="number" step="0.1" value={form.fuel_min} onChange={set('fuel_min')} className={inp} placeholder="Hours-basis" /></div>
-              <div><label className={lbl}>Fuel Max (L/hr)</label><input type="number" step="0.1" value={form.fuel_max} onChange={set('fuel_max')} className={inp} placeholder="Hours-basis" /></div>
+            <div className="grid grid-cols-3 gap-3">
+              <div><label className={lbl}>Fuel Min (L/hr)</label><input type="number" step="0.1" value={form.fuel_min} onChange={set('fuel_min')} className={inp} placeholder="e.g. 1.5" /></div>
+              <div><label className={lbl}>Fuel Max (L/hr)</label><input type="number" step="0.1" value={form.fuel_max} onChange={set('fuel_max')} className={inp} placeholder="e.g. 3.0" /></div>
+              <div>
+                <label className={lbl}>
+                  Fuel Tank Capacity (L)
+                  <span className="ml-1 text-blue-500 font-normal">← for HSD validation</span>
+                </label>
+                <input type="number" step="1" min="0" value={form.fuel_tank_l} onChange={set('fuel_tank_l')} className={inp} placeholder="e.g. 450" />
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div><label className={lbl}>Fuel Min (kms/ltr)</label><input type="number" step="0.1" value={form.fuel_min_km} onChange={set('fuel_min_km')} className={inp} placeholder="KM-basis" /></div>
@@ -1494,8 +1521,9 @@ export default function Machines() {
       {detailPanel && (
         <MachineDetailPanel
           machine={detailPanel}
-          onClose={() => setDetailPanel(null)}
-          onEdit={() => { openEdit(detailPanel); setDetailPanel(null) }}
+          onClose={() => { setDetailPanel(null); setDetailInitialTab(null) }}
+          onEdit={() => { openEdit(detailPanel); setDetailPanel(null); setDetailInitialTab(null) }}
+          initialRightTab={detailInitialTab}
         />
       )}
 

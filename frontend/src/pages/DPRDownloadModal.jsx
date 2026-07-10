@@ -77,11 +77,11 @@ function SearchableSelect({ options, value, onChange, placeholder, disabled }) {
 }
 
 const TOGGLE_COLS = [
-  { key: 'hsd',          label: 'HSD (Ltrs)',      def: true  },
-  { key: 'breakdown',    label: 'Breakdown Hrs',   def: true  },
+  { key: 'hsd',          label: 'HSD Issued (L)',  def: true  },
+  { key: 'breakdown',    label: 'Breakdown (Reason)',   def: true  },
   { key: 'status',       label: 'Status',          def: true  },
   { key: 'work_done',    label: 'Work Done',       def: true  },
-  { key: 'qty',          label: 'Quantity',        def: false },
+  { key: 'qty',          label: 'Quantity',        def: true  },
   { key: 'remarks',      label: 'Remarks',         def: false },
   { key: 'submitted_by', label: 'Submitted By',    def: true  },
 ]
@@ -201,8 +201,15 @@ function cellVal(e, key, idx) {
     case 'r1_open':      return e.r1_open ?? ''
     case 'r1_close':     return e.r1_close ?? ''
     case 'r1_total':     { const v = parseFloat(e.r1_total); return isNaN(v) ? '' : v.toFixed(2) }
-    case 'hsd':          { const v = parseFloat(e.hsd);      return isNaN(v) ? '' : v.toFixed(2) }
-    case 'breakdown':    return e.breakdown ?? 0
+    case 'hsd':          { const v = parseFloat(e.hsd); return isNaN(v) ? '' : v.toFixed(2) }
+    case 'breakdown': {
+      const bkVal = parseFloat(e.breakdown) || 0
+      if (bkVal <= 0) return ''
+      const bkH = Math.floor(bkVal)
+      const bkM = Math.round((bkVal - bkH) * 60)
+      const bkStr = bkM > 0 ? `${bkH}h ${String(bkM).padStart(2, '0')}m` : `${bkH}h`
+      return e.remarks?.trim() ? `${bkStr} (${e.remarks.trim()})` : bkStr
+    }
     case 'status':       return getStatus(e)
     case 'work_done':    return e.work_done || ''
     case 'qty':          return e.qty ?? ''
@@ -260,7 +267,7 @@ function calcDaysSummary(entries, machine, from, to) {
   return { totalDays, daysWorked, daysWorkedFmt, idleDays, totalBrkHrs, brkDays, netWorkDays, payableDays, utilPct }
 }
 
-async function buildExcel(machines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap = {}, meterResetsMap = {}) {
+async function buildExcel(machines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap = {}, meterResetsMap = {}, dieselRate = 0) {
   const XLSX = await import('xlsx')
   const wb   = XLSX.utils.book_new()
 
@@ -309,11 +316,12 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
     }
 
     if (sections.days || sections.utilization || sections.fuel) {
-      const d         = calcDaysSummary(entries, m, from, to)
-      const s         = calcSummary(entries)
-      const isKmBasis = /km/i.test(m.reading1_basis || '')
-      const rangeUnit = isKmBasis ? 'km/ltr' : 'ltr/hr'
-      const approvedRange = (m.fuel_min && m.fuel_max)
+      const d              = calcDaysSummary(entries, m, from, to)
+      const s              = calcSummary(entries)
+      const isTransitMixer = m.eq_type === 'Transit Mixer'
+      const isKmBasis      = !isTransitMixer && /km/i.test(m.reading1_basis || '')
+      const rangeUnit      = isKmBasis ? 'km/ltr' : 'ltr/hr'
+      const approvedRange  = (m.fuel_min && m.fuel_max)
         ? `${m.fuel_min} – ${m.fuel_max} ${rangeUnit}`
         : m.fuel_min ? `≥ ${m.fuel_min} ${rangeUnit}` : '—'
       const fr  = fuelRecordsMap[m.id] || null
@@ -326,6 +334,31 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
           ? `${(s.totalR1 / consumed).toFixed(2)} km/ltr`
           : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
         : '—'
+      // Transit Mixer: dual averages (L/Hr for drum engine hours, KM/L for KMS)
+      const tmConfigs     = isTransitMixer ? (m.reading_configs || []) : []
+      const tmHrsCfg      = tmConfigs.find(rc => rc.unit === 'Hrs')
+      const tmKmCfg       = tmConfigs.find(rc => rc.unit !== 'Hrs')
+      const tmDrumHrs     = tmHrsCfg ? entries.reduce((acc, e) => { const l = (e.reading_logs || []).find(rl => rl.reading_type_id === tmHrsCfg.reading_type_id); return acc + (parseFloat(l?.total) || 0) }, 0) : 0
+      const tmKm          = tmKmCfg  ? entries.reduce((acc, e) => { const l = (e.reading_logs || []).find(rl => rl.reading_type_id === tmKmCfg.reading_type_id);  return acc + (parseFloat(l?.total) || 0) }, 0) : 0
+      const tmSplitMode   = m.tm_split_mode  || null
+      const tmSplitVal    = parseFloat(m.tm_split_value) || 0
+      let tmAvgLtrPerHr = null, tmAvgKmPerLtr = null
+      if (consumed !== null && consumed > 0) {
+        if (tmSplitMode === 'drum_rate' && tmSplitVal > 0 && tmDrumHrs > 0) {
+          const drumDiesel    = tmDrumHrs * tmSplitVal
+          const vehicleDiesel = consumed - drumDiesel
+          tmAvgLtrPerHr = tmSplitVal.toFixed(3)
+          if (vehicleDiesel > 0 && tmKm > 0) tmAvgKmPerLtr = (tmKm / vehicleDiesel).toFixed(2)
+        } else if (tmSplitMode === 'vehicle_rate' && tmSplitVal > 0 && tmKm > 0) {
+          const vehicleDiesel = tmKm / tmSplitVal
+          const drumDiesel    = consumed - vehicleDiesel
+          tmAvgKmPerLtr = tmSplitVal.toFixed(2)
+          if (drumDiesel > 0 && tmDrumHrs > 0) tmAvgLtrPerHr = (drumDiesel / tmDrumHrs).toFixed(2)
+        } else {
+          if (tmDrumHrs > 0) tmAvgLtrPerHr = (consumed / tmDrumHrs).toFixed(2)
+          if (tmKm > 0)      tmAvgKmPerLtr = (tmKm / consumed).toFixed(2)
+        }
+      }
 
       // Utilization: planned_hours is per-day; monthly = per-day × calDays; actual = per-day × payableDays
       const plannedPerDay  = parseFloat(m.planned_hours) || 0
@@ -356,13 +389,34 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
         rightRows.push(['', ''])
       }
       if (sections.fuel) {
+        const storedCost = entries.reduce((sum, e) => {
+          if (parseFloat(e.diesel_cost) > 0) return sum + parseFloat(e.diesel_cost)
+          const h = parseFloat(e.hsd) || 0
+          const r = parseFloat(e.diesel_rate) || 0
+          return h > 0 && r > 0 ? sum + h * r : sum
+        }, 0)
+        const dieselQty  = consumed !== null ? consumed : s.hsdTotal
+        const dieselCost = storedCost > 0
+          ? storedCost
+          : (dieselRate > 0 ? dieselQty * dieselRate : null)
         rightRows.push(['Fuel Summary',          ''])
         rightRows.push(['Opening Fuel Balance',   ob !== null ? `${ob.toFixed(2)} Ltr` : '—'])
-        rightRows.push(['Total Issued (DPR)',     `${s.hsdTotal.toFixed(2)} Ltr`])
+        rightRows.push(['HSD Issued (DPR)',        `${s.hsdTotal.toFixed(2)} Ltr`])
         rightRows.push(['Closing Balance',        cb !== null ? `${cb.toFixed(2)} Ltr` : '—'])
         rightRows.push(['Consumed',               consumed !== null ? `${consumed.toFixed(2)} Ltr` : '—'])
-        rightRows.push(['Actual Average',         actualAvg])
-        rightRows.push(['Approved Range',         approvedRange])
+        if (isTransitMixer) {
+          if (tmAvgLtrPerHr) rightRows.push(['Actual Average (Drum Hrs)', `${tmAvgLtrPerHr} Ltr/Hr`])
+          if (m.fuel_min && m.fuel_max) rightRows.push(['Approved Range (Drum Hrs)', `${m.fuel_min} – ${m.fuel_max} ltr/hr`])
+          else if (m.fuel_min)          rightRows.push(['Approved Range (Drum Hrs)', `≥ ${m.fuel_min} ltr/hr`])
+          if (tmAvgKmPerLtr) rightRows.push(["Actual Average (Front km's)", `${tmAvgKmPerLtr} Km/Ltr`])
+          if (m.fuel_min_km) rightRows.push(["Approved Range (Front km's)", m.fuel_max_km ? `${m.fuel_min_km} – ${m.fuel_max_km} Km/Ltr` : `${m.fuel_min_km} Km/Ltr`])
+        } else {
+          rightRows.push(['Actual Average', actualAvg])
+          rightRows.push(['Approved Range', approvedRange])
+        }
+        if (dieselCost !== null) {
+          rightRows.push(['Total Diesel Cost', `${dieselCost.toFixed(2)} Rs.`])
+        }
       }
 
       const maxLen = Math.max(leftRows.length, rightRows.length)
@@ -452,7 +506,7 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
   XLSX.writeFile(wb, `DPR_${projName}_${date}.xlsx`)
 }
 
-async function buildPDF(machines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap = {}, meterResetsMap = {}) {
+async function buildPDF(machines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap = {}, meterResetsMap = {}, dieselRate = 0) {
   const { jsPDF }             = await import('jspdf')
   const { default: autoTable } = await import('jspdf-autotable')
 
@@ -550,11 +604,12 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
     }
 
     if (sections.days || sections.utilization || sections.fuel) {
-      const d         = calcDaysSummary(entries, m, from, to)
-      const s         = calcSummary(entries)
-      const isKmBasis = /km/i.test(m.reading1_basis || '')
-      const rangeUnit = isKmBasis ? 'km/ltr' : 'ltr/hr'
-      const approvedRange = (m.fuel_min && m.fuel_max)
+      const d              = calcDaysSummary(entries, m, from, to)
+      const s              = calcSummary(entries)
+      const isTransitMixer = m.eq_type === 'Transit Mixer'
+      const isKmBasis      = !isTransitMixer && /km/i.test(m.reading1_basis || '')
+      const rangeUnit      = isKmBasis ? 'km/ltr' : 'ltr/hr'
+      const approvedRange  = (m.fuel_min && m.fuel_max)
         ? `${m.fuel_min} – ${m.fuel_max} ${rangeUnit}`
         : m.fuel_min ? `≥ ${m.fuel_min} ${rangeUnit}` : '—'
       const fr  = fuelRecordsMap[m.id] || null
@@ -567,6 +622,31 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
           ? `${(s.totalR1 / consumed).toFixed(2)} km/ltr`
           : `${(consumed / s.workedTotal).toFixed(2)} ltr/hr`
         : '—'
+      // Transit Mixer: dual averages (L/Hr for drum engine hours, KM/L for KMS)
+      const tmConfigs     = isTransitMixer ? (m.reading_configs || []) : []
+      const tmHrsCfg      = tmConfigs.find(rc => rc.unit === 'Hrs')
+      const tmKmCfg       = tmConfigs.find(rc => rc.unit !== 'Hrs')
+      const tmDrumHrs     = tmHrsCfg ? entries.reduce((acc, e) => { const l = (e.reading_logs || []).find(rl => rl.reading_type_id === tmHrsCfg.reading_type_id); return acc + (parseFloat(l?.total) || 0) }, 0) : 0
+      const tmKm          = tmKmCfg  ? entries.reduce((acc, e) => { const l = (e.reading_logs || []).find(rl => rl.reading_type_id === tmKmCfg.reading_type_id);  return acc + (parseFloat(l?.total) || 0) }, 0) : 0
+      const tmSplitMode   = m.tm_split_mode  || null
+      const tmSplitVal    = parseFloat(m.tm_split_value) || 0
+      let tmAvgLtrPerHr = null, tmAvgKmPerLtr = null
+      if (consumed !== null && consumed > 0) {
+        if (tmSplitMode === 'drum_rate' && tmSplitVal > 0 && tmDrumHrs > 0) {
+          const drumDiesel    = tmDrumHrs * tmSplitVal
+          const vehicleDiesel = consumed - drumDiesel
+          tmAvgLtrPerHr = tmSplitVal.toFixed(3)
+          if (vehicleDiesel > 0 && tmKm > 0) tmAvgKmPerLtr = (tmKm / vehicleDiesel).toFixed(2)
+        } else if (tmSplitMode === 'vehicle_rate' && tmSplitVal > 0 && tmKm > 0) {
+          const vehicleDiesel = tmKm / tmSplitVal
+          const drumDiesel    = consumed - vehicleDiesel
+          tmAvgKmPerLtr = tmSplitVal.toFixed(2)
+          if (drumDiesel > 0 && tmDrumHrs > 0) tmAvgLtrPerHr = (drumDiesel / tmDrumHrs).toFixed(2)
+        } else {
+          if (tmDrumHrs > 0) tmAvgLtrPerHr = (consumed / tmDrumHrs).toFixed(2)
+          if (tmKm > 0)      tmAvgKmPerLtr = (tmKm / consumed).toFixed(2)
+        }
+      }
 
       // Utilization: planned_hours is per-day; monthly = per-day × calDays; actual = per-day × payableDays
       const plannedPerDay  = parseFloat(m.planned_hours) || 0
@@ -617,9 +697,22 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
         return ty + rowH * (rows.length + 1)
       }
 
+      const storedCost = entries.reduce((sum, e) => {
+        if (parseFloat(e.diesel_cost) > 0) return sum + parseFloat(e.diesel_cost)
+        const h = parseFloat(e.hsd) || 0
+        const r = parseFloat(e.diesel_rate) || 0
+        return h > 0 && r > 0 ? sum + h * r : sum
+      }, 0)
+      const dieselQty  = consumed !== null ? consumed : s.hsdTotal
+      const dieselCost = storedCost > 0
+        ? storedCost
+        : (dieselRate > 0 ? dieselQty * dieselRate : null)
+
       // estimate total height needed
       const leftRows  = sections.days ? 5 : 0
-      const rightRows = (sections.utilization ? 5 : 0) + (sections.fuel ? 7 : 0) + (sections.utilization && sections.fuel ? 1 : 0)
+      const tmFuelExtra   = isTransitMixer ? 2 : 0
+      const fuelExtraRows = (dieselCost !== null ? 1 : 0) + tmFuelExtra
+      const rightRows = (sections.utilization ? 5 : 0) + (sections.fuel ? 7 + fuelExtraRows : 0) + (sections.utilization && sections.fuel ? 1 : 0)
       const neededH   = Math.max(leftRows, rightRows) * rowH + rowH + 4
       addPageIfNeeded(neededH)
 
@@ -654,14 +747,26 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
 
       // ── Right: Fuel Summary ──
       if (sections.fuel) {
-        rightBottom = drawTable(rx, rightBottom, rLabelW, rValueW, 'Fuel Summary', [
+        const fuelRows = [
           ['Opening Fuel Balance', ob !== null ? `${ob.toFixed(2)} Ltr` : '—'],
-          ['Total Issued (DPR)',   `${s.hsdTotal.toFixed(2)} Ltr`],
+          ['HSD Issued (DPR)',     `${s.hsdTotal.toFixed(2)} Ltr`],
           ['Closing Balance',      cb !== null ? `${cb.toFixed(2)} Ltr` : '—'],
           ['Consumed',             consumed !== null ? `${consumed.toFixed(2)} Ltr` : '—'],
-          ['Actual Average',       actualAvg],
-          ['Approved Range',       approvedRange],
-        ])
+        ]
+        if (isTransitMixer) {
+          if (tmAvgLtrPerHr) fuelRows.push(['Actual Average (Drum Hrs)', `${tmAvgLtrPerHr} Ltr/Hr`])
+          if (m.fuel_min && m.fuel_max) fuelRows.push(['Approved Range (Drum Hrs)', `${m.fuel_min} – ${m.fuel_max} ltr/hr`])
+          else if (m.fuel_min)          fuelRows.push(['Approved Range (Drum Hrs)', `≥ ${m.fuel_min} ltr/hr`])
+          if (tmAvgKmPerLtr) fuelRows.push(["Actual Average (Front km's)", `${tmAvgKmPerLtr} Km/Ltr`])
+          if (m.fuel_min_km) fuelRows.push(["Approved Range (Front km's)", m.fuel_max_km ? `${m.fuel_min_km} – ${m.fuel_max_km} Km/Ltr` : `${m.fuel_min_km} Km/Ltr`])
+        } else {
+          fuelRows.push(['Actual Average', actualAvg])
+          fuelRows.push(['Approved Range', approvedRange])
+        }
+        if (dieselCost !== null) {
+          fuelRows.push(['Total Diesel Cost', `${dieselCost.toFixed(2)} Rs.`])
+        }
+        rightBottom = drawTable(rx, rightBottom, rLabelW, rValueW, 'Fuel Summary', fuelRows)
       }
 
       y = Math.max(leftBottom, rightBottom) + 4
@@ -699,7 +804,7 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
   doc.save(`DPR_${projName}_${date}.pdf`)
 }
 
-export async function downloadDPRForMachine(machine, entries, from, to, projName, format, fuelRecord = null) {
+export async function downloadDPRForMachine(machine, entries, from, to, projName, format, fuelRecord = null, dieselRate = 0) {
   const activeCols     = [...FIXED_COLS, ...TOGGLE_COLS.filter(c => c.def)]
   const sections       = { header: true, log: true, days: true, utilization: true, fuel: true }
   const shiftOrder     = { 'Day Shift': 0, 'Night Shift': 1, 'Dual Shift': 2 }
@@ -718,9 +823,9 @@ export async function downloadDPRForMachine(machine, entries, from, to, projName
   } catch {}
 
   if (format === 'excel') {
-    await buildExcel([machine], entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap)
+    await buildExcel([machine], entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap, dieselRate)
   } else {
-    await buildPDF([machine], entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap)
+    await buildPDF([machine], entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap, dieselRate)
   }
 }
 
@@ -739,6 +844,7 @@ export default function DPRDownloadModal({ onClose }) {
     () => Object.fromEntries(TOGGLE_COLS.map(c => [c.key, c.def]))
   )
   const [format,     setFormat]    = useState('excel')
+  const [dieselRate, setDieselRate] = useState('')
   const [loading,    setLoading]   = useState(false)
   const [error,      setError]     = useState('')
 
@@ -804,10 +910,11 @@ export default function DPRDownloadModal({ onClose }) {
         } catch {}
       }))
 
+      const rate = parseFloat(dieselRate) || 0
       if (format === 'excel') {
-        await buildExcel(targetMachines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap)
+        await buildExcel(targetMachines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap, rate)
       } else {
-        await buildPDF(targetMachines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap)
+        await buildPDF(targetMachines, entriesMap, from, to, activeCols, sections, projName, fuelRecordsMap, meterResetsMap, rate)
       }
 
       onClose()
@@ -861,7 +968,7 @@ export default function DPRDownloadModal({ onClose }) {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">From</label>
               <input type="date" value={from} onChange={e => setFrom(e.target.value)} className={inp} />
@@ -869,6 +976,17 @@ export default function DPRDownloadModal({ onClose }) {
             <div>
               <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">To</label>
               <input type="date" value={to} onChange={e => setTo(e.target.value)} className={inp} />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wide mb-1.5">
+                Diesel Rate (₹/Ltr)
+              </label>
+              <input
+                type="number" min="0" step="0.01" value={dieselRate}
+                onChange={e => setDieselRate(e.target.value)}
+                placeholder="Optional"
+                className={inp}
+              />
             </div>
           </div>
 

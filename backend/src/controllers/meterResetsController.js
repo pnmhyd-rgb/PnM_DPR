@@ -43,6 +43,19 @@ const createReset = async (req, res) => {
   try {
     const { machine_id, entry_date, shift, reading_code, previous_reading, new_reading, notes } = req.body;
     if (!machine_id || !entry_date) return res.status(400).json({ error: 'machine_id, entry_date required' });
+
+    // Block if DPR entries exist on or after the reset date — reading chain would be broken
+    const laterCheck = await db.query(
+      `SELECT TO_CHAR(MIN(entry_date), 'DD-Mon-YYYY') AS first_date
+       FROM dpr_entries WHERE machine_id = $1 AND entry_date >= $2::date`,
+      [machine_id, entry_date]
+    );
+    if (laterCheck.rows[0]?.first_date) {
+      return res.status(409).json({
+        error: `Cannot apply meter reset on this date: a DPR entry already exists from ${laterCheck.rows[0].first_date}. Delete all DPR entries on and after the reset date first, then apply the reset.`
+      });
+    }
+
     const result = await db.query(
       `INSERT INTO machine_meter_resets
          (machine_id, entry_date, shift, reading_code, previous_reading, new_reading, notes, reset_by)

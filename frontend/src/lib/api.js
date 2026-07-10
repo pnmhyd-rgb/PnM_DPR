@@ -29,7 +29,8 @@ export const createProject    = (data)        => client.post('/projects', data)
 export const updateProject    = (id, data)    => client.put(`/projects/${id}`, data)
 export const deleteProject    = (id)          => client.delete(`/projects/${id}`)
 
-export const getMachines        = (params)      => client.get('/machines', { params })
+export const getMachines            = (params)      => client.get('/machines', { params })
+export const getMachineLastEntry    = (id)          => client.get(`/machines/${id}/last-entry`)
 export const getFleetSummary    = (params)      => client.get('/machines/fleet-summary', { params })
 export const getFleetList       = (params)      => client.get('/machines/fleet-list',    { params })
 export const createMachine      = (data)        => client.post('/machines', data)
@@ -59,14 +60,19 @@ export const deleteVendor     = (id)          => client.delete(`/vendors/${id}`)
 export const chatWithKala        = (data)        => client.post('/kala/chat', data)
 
 export const getEntries          = (params)      => client.get('/entries', { params })
-export const getPreviousClosing  = (params)      => client.get('/entries/previous-closing', { params })
+export const getPreviousClosing      = (params) => client.get('/entries/previous-closing',      { params })
+export const getLatestReadingBefore  = (params) => client.get('/entries/latest-reading-before', { params })
+export const checkDprExistsAfter     = (params) => client.get('/entries/check-exists-after',    { params })
 export const getDprStatus              = (params) => client.get('/entries/dpr-status',              { params })
 export const getMonthlyStatus          = (params) => client.get('/entries/monthly-status',          { params })
 export const getMonthlyProjectStatus   = (params) => client.get('/entries/monthly-project-status',  { params })
 export const createEntry         = (data)        => client.post('/entries', data)
+export const bulkCreateEntries   = (data)        => client.post('/entries/bulk', data)
 export const updateEntry         = (id, data)    => client.put(`/entries/${id}`, data)
 export const updateEntryStatus   = (id, status)  => client.patch(`/entries/${id}/status`, { status })
-export const deleteEntry         = (id)          => client.delete(`/entries/${id}`)
+export const deleteEntry                = (id)         => client.delete(`/entries/${id}`)
+export const deleteAllEntriesForMachine  = (machineId)    => client.delete(`/entries/machine/${machineId}/all`)
+export const deleteAllEntriesForProject  = (projectCode)  => client.delete(`/entries/project/${projectCode}/all`)
 
 export const getUtilization   = (params)      => client.get('/reports/utilization', { params })
 export const getSummary       = (params)      => client.get('/reports/summary', { params })
@@ -102,6 +108,11 @@ export const upsertFuelRecord  = (data)       => client.post('/fuel-records', da
 export const getMeterResets    = (params)     => client.get('/meter-resets', { params })
 export const createMeterReset  = (data)       => client.post('/meter-resets', data)
 export const deleteMeterReset  = (id)         => client.delete(`/meter-resets/${id}`)
+
+export const getMeterResetRequests       = (params)   => client.get('/meter-reset-requests', { params })
+export const getAllPendingResetRequests  = ()          => client.get('/meter-reset-requests/pending-all')
+export const createMeterResetRequest     = (data)     => client.post('/meter-reset-requests', data)
+export const reviewMeterResetRequest     = (id, data) => client.patch(`/meter-reset-requests/${id}`, data)
 
 export const getServiceEntries  = (params)   => client.get('/service', { params })
 export const createServiceEntry = (data)     => client.post('/service', data)
@@ -235,3 +246,29 @@ export const getAssetMatrixOne      = (amId)        => client.get(`/asset-matrix
 export const getAssetMatrixTypes    = ()            => client.get('/asset-matrix/asset-types')
 export const createAssetMatrix      = (data)        => client.post('/asset-matrix', data)
 export const updateAssetMatrix      = (amId, data)  => client.put(`/asset-matrix/${amId}`, data)
+
+// Asset Group Configs
+export const getAssetGroups       = ()             => client.get('/asset-group-configs')
+export const getAssetGroupConfig  = (group)        => client.get(`/asset-group-configs/${encodeURIComponent(group)}`)
+export const saveAssetGroupConfig = (group, data)  => client.put(`/asset-group-configs/${encodeURIComponent(group)}`, data)
+
+// Equipment Type Configs (per-asset-type settings)
+export const getEquipmentTypeConfig  = (id)        => client.get(`/equipment-type-configs/${id}`)
+export const saveEquipmentTypeConfig = (id, data)  => client.put(`/equipment-type-configs/${id}`, data)
+
+// Unified notifications
+export const getNotifications = () => client.get('/notifications')
+
+// User permissions
+export const getUserPermissions  = (userId)       => client.get(`/permissions/${userId}`)
+export const saveUserPermissions = (userId, data) => client.put(`/permissions/${userId}`, data)
+
+// Site permissions
+export const getSitePermissions  = (code)       => client.get(`/permissions/site/${encodeURIComponent(code)}`)
+export const saveSitePermissions = (code, data) => client.put(`/permissions/site/${encodeURIComponent(code)}`, data)
+
+// Fuel stations
+export const getFuelStations    = ()         => client.get('/fuel-stations')
+export const createFuelStation  = (data)     => client.post('/fuel-stations', data)
+export const updateFuelStation  = (id, data) => client.put(`/fuel-stations/${id}`, data)
+export const deleteFuelStation  = (id)       => client.delete(`/fuel-stations/${id}`)

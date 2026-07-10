@@ -4,12 +4,14 @@ const getAll = async (req, res) => {
   try {
     const result = await db.query(`
       SELECT et.id, et.name, et.asset_group, et.asset_cat, et.asset_category, et.fuel_type,
-             COUNT(m.id) FILTER (WHERE m.active = true)                          AS usage_count,
-             COUNT(m.id) FILTER (WHERE m.active = true AND m.ownership = 'Own')  AS own_count,
-             COUNT(m.id) FILTER (WHERE m.active = true AND m.ownership = 'Hire') AS hire_count
+             (etc.id IS NOT NULL)                                                  AS has_config,
+             COUNT(m.id) FILTER (WHERE m.active = true)                           AS usage_count,
+             COUNT(m.id) FILTER (WHERE m.active = true AND m.ownership = 'Own')   AS own_count,
+             COUNT(m.id) FILTER (WHERE m.active = true AND m.ownership = 'Hire')  AS hire_count
       FROM equipment_types et
+      LEFT JOIN equipment_type_configs etc ON etc.eq_type_id = et.id
       LEFT JOIN machines m ON LOWER(m.eq_type) = LOWER(et.name)
-      GROUP BY et.id, et.name, et.asset_group, et.asset_cat, et.asset_category, et.fuel_type
+      GROUP BY et.id, et.name, et.asset_group, et.asset_cat, et.asset_category, et.fuel_type, etc.id
       ORDER BY et.asset_group NULLS LAST, et.asset_cat NULLS LAST, et.name
     `);
     res.json({ data: result.rows });

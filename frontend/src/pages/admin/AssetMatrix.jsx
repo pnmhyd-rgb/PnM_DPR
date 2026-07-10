@@ -381,6 +381,7 @@ export default function AssetMatrix() {
   const [loading,    setLoading]    = useState(false)
   const [editEntry,  setEditEntry]  = useState(null)
   const [showAdd,    setShowAdd]    = useState(false)
+  const [editTank,   setEditTank]   = useState(null) // { amId, value, saving }
 
   // Stale-load guard: only the latest request updates state
   const loadIdRef = useRef(0)
@@ -412,6 +413,19 @@ export default function AssetMatrix() {
   }, [])
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
+
+  const saveTankCap = async (row, value) => {
+    const num = value === '' ? null : parseFloat(value)
+    if (value !== '' && (isNaN(num) || num < 0)) { setEditTank(null); return }
+    setEditTank(et => et ? { ...et, saving: true } : null)
+    try {
+      const base = { ...(row.technical_specs || {}) }
+      if (num != null) base.fuel_tank_l = num; else delete base.fuel_tank_l
+      await updateAssetMatrix(row.am_id, { technical_specs: base })
+      setRows(rs => rs.map(r => r.am_id === row.am_id ? { ...r, technical_specs: base } : r))
+    } catch {}
+    setEditTank(null)
+  }
 
   const inp = 'border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white'
 
@@ -475,6 +489,10 @@ export default function AssetMatrix() {
                 <th className="text-left text-xs font-semibold text-gray-500 px-4 py-2.5">Manufacturer</th>
                 <th className="text-left text-xs font-semibold text-gray-500 px-4 py-2.5">Model</th>
                 <th className="text-left text-xs font-semibold text-gray-500 px-4 py-2.5">Fuel</th>
+                <th className="text-left text-xs font-semibold text-gray-500 px-4 py-2.5 whitespace-nowrap">
+                  Fuel Tank (L)
+                  <span className="ml-1 text-gray-300 font-normal">click to edit</span>
+                </th>
                 <th className="text-left text-xs font-semibold text-gray-500 px-4 py-2.5">Tech Specs</th>
                 <th className="px-4 py-2.5" />
               </tr>
@@ -482,11 +500,11 @@ export default function AssetMatrix() {
             <tbody className="divide-y divide-gray-100">
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-sm text-gray-400">Loading…</td>
+                  <td colSpan={8} className="text-center py-12 text-sm text-gray-400">Loading…</td>
                 </tr>
               ) : rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-sm text-gray-400">No entries found</td>
+                  <td colSpan={8} className="text-center py-12 text-sm text-gray-400">No entries found</td>
                 </tr>
               ) : rows.map(r => (
                 <tr key={r.id} className="hover:bg-gray-50/60 transition-colors">
@@ -495,6 +513,32 @@ export default function AssetMatrix() {
                   <td className="px-4 py-2.5 text-gray-800 font-medium">{r.manufacturer}</td>
                   <td className="px-4 py-2.5 text-gray-800">{r.model}</td>
                   <td className="px-4 py-2.5 text-gray-500 text-xs">{r.fuel_type || '—'}</td>
+                  <td className="px-4 py-2.5">
+                    {editTank?.amId === r.am_id ? (
+                      <input
+                        type="number" autoFocus min="0" step="1"
+                        value={editTank.value}
+                        disabled={editTank.saving}
+                        onChange={e => setEditTank(et => ({ ...et, value: e.target.value }))}
+                        onBlur={() => saveTankCap(r, editTank.value)}
+                        onKeyDown={e => { if (e.key === 'Enter') e.target.blur(); if (e.key === 'Escape') setEditTank(null) }}
+                        className="w-24 border border-blue-400 rounded-lg px-2 py-1 text-xs font-mono focus:outline-none focus:ring-2 focus:ring-blue-400 disabled:opacity-50"
+                        placeholder="e.g. 450"
+                      />
+                    ) : (
+                      <button
+                        onClick={() => setEditTank({ amId: r.am_id, value: r.technical_specs?.fuel_tank_l ?? '', saving: false })}
+                        className="group flex items-center gap-1 text-left"
+                        title="Click to set fuel tank capacity"
+                      >
+                        {r.technical_specs?.fuel_tank_l != null
+                          ? <span className="text-xs font-mono font-semibold text-gray-800 bg-blue-50 border border-blue-100 px-2 py-0.5 rounded-md">{r.technical_specs.fuel_tank_l} L</span>
+                          : <span className="text-xs text-gray-300 group-hover:text-blue-500 border border-dashed border-gray-200 group-hover:border-blue-300 px-2 py-0.5 rounded-md transition-colors">— set</span>
+                        }
+                        <Pencil size={10} className="text-gray-300 group-hover:text-blue-400 transition-colors flex-shrink-0" />
+                      </button>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5">{specBadge(r)}</td>
                   <td className="px-4 py-2.5 text-right">
                     <button

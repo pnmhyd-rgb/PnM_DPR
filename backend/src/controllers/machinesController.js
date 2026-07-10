@@ -111,7 +111,7 @@ const create = async (req, res) => {
       project_id, slno, asset_code, eq_type, manufacturer, model, capacity, uom,
       reg_no, chassis_no, engine_no, ownership, asset_type, vendor, rate, rate_monthly,
       fuel_type, reading1_basis, reading2_basis, dual_reading,
-      fuel_min, fuel_max, fuel_min_km, fuel_max_km, planned_hours, shift_type,
+      fuel_min, fuel_max, fuel_min_km, fuel_max_km, fuel_tank_l, planned_hours, shift_type,
       date_of_purchase, po_number, price, yom, nickname
     } = req.body;
 
@@ -136,9 +136,9 @@ const create = async (req, res) => {
         (project_id, slno, asset_code, eq_type, manufacturer, model, capacity, uom,
          reg_no, chassis_no, engine_no, ownership, asset_type, vendor, rate, rate_monthly,
          fuel_type, reading1_basis, reading2_basis, dual_reading,
-         fuel_min, fuel_max, fuel_min_km, fuel_max_km, planned_hours, shift_type,
+         fuel_min, fuel_max, fuel_min_km, fuel_max_km, fuel_tank_l, planned_hours, shift_type,
          date_of_purchase, po_number, price, yom, nickname)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32)
        RETURNING *`,
       [
         project_id, slno.trim(), asset_code?.trim() || null, eq_type.trim(),
@@ -151,7 +151,7 @@ const create = async (req, res) => {
         reading1_basis || 'Hours', reading2_basis || null,
         dual_reading || false,
         fuel_min || null, fuel_max || null,
-        fuel_min_km || null, fuel_max_km || null,
+        fuel_min_km || null, fuel_max_km || null, fuel_tank_l || null,
         planned_hours || 10, shift_type,
         date_of_purchase || null, po_number || null, price || null, yom || null, nickname || null
       ]
@@ -319,7 +319,7 @@ const update = async (req, res) => {
       slno, asset_code, eq_type, manufacturer, model, capacity, uom,
       reg_no, chassis_no, engine_no, ownership, asset_type, vendor, rate, rate_monthly,
       fuel_type, reading1_basis, reading2_basis, dual_reading,
-      fuel_min, fuel_max, fuel_min_km, fuel_max_km, planned_hours, shift_type, active,
+      fuel_min, fuel_max, fuel_min_km, fuel_max_km, fuel_tank_l, planned_hours, shift_type, active,
       date_of_purchase, po_number, price, yom, nickname
     } = req.body;
 
@@ -352,16 +352,17 @@ const update = async (req, res) => {
         fuel_max         = COALESCE($21, fuel_max),
         fuel_min_km      = COALESCE($22, fuel_min_km),
         fuel_max_km      = COALESCE($23, fuel_max_km),
-        planned_hours    = COALESCE($24, planned_hours),
-        shift_type       = COALESCE($25, shift_type),
-        active           = COALESCE($26, active),
-        date_of_purchase = COALESCE($27, date_of_purchase),
-        po_number        = COALESCE($28, po_number),
-        price            = COALESCE($29, price),
-        yom              = COALESCE($30, yom),
-        nickname         = COALESCE($31, nickname),
+        fuel_tank_l      = COALESCE($24, fuel_tank_l),
+        planned_hours    = COALESCE($25, planned_hours),
+        shift_type       = COALESCE($26, shift_type),
+        active           = COALESCE($27, active),
+        date_of_purchase = COALESCE($28, date_of_purchase),
+        po_number        = COALESCE($29, po_number),
+        price            = COALESCE($30, price),
+        yom              = COALESCE($31, yom),
+        nickname         = COALESCE($32, nickname),
         updated_at       = NOW()
-       WHERE id = $32
+       WHERE id = $33
        RETURNING *`,
       [
         slno || null, asset_code || null, eq_type || null,
@@ -375,6 +376,7 @@ const update = async (req, res) => {
         dual_reading !== undefined ? dual_reading : null,
         fuel_min || null, fuel_max || null,
         fuel_min_km || null, fuel_max_km || null,
+        fuel_tank_l != null ? parseFloat(fuel_tank_l) : null,
         planned_hours || null, shift_type || null,
         active !== undefined ? active : null,
         date_of_purchase || null, po_number || null, price || null, yom || null,
@@ -386,6 +388,21 @@ const update = async (req, res) => {
     res.json({ data: result.rows[0] });
   } catch (err) {
     console.error('Update machine error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+const getLastEntry = async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT TO_CHAR(entry_date, 'YYYY-MM-DD') AS last_entry_date
+       FROM dpr_entries WHERE machine_id = $1
+       ORDER BY entry_date DESC LIMIT 1`,
+      [req.params.id]
+    );
+    res.json({ last_entry_date: result.rows[0]?.last_entry_date || null });
+  } catch (err) {
+    console.error('Get last entry error:', err);
     res.status(500).json({ error: 'Server error' });
   }
 };
@@ -625,4 +642,4 @@ const regenerateNicknames = async (req, res) => {
   }
 };
 
-module.exports = { getAll, create, update, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames };
+module.exports = { getAll, create, update, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames, getLastEntry };

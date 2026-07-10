@@ -1,15 +1,17 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   LayoutDashboard, ClipboardList, BarChart2, FileText,
-  Settings, LogOut, Menu, X, ChevronDown, ChevronRight,
+  Settings, LogOut, Menu, X, ChevronDown, ChevronRight, ChevronUp,
   Fuel, Wrench, Users, Package, AlertTriangle, BookOpen,
   User, Camera, RefreshCw, KeyRound, Shield, Info, Layers, Home, Download,
-  FileSignature, Sparkles, ShieldAlert,
+  FileSignature, Sparkles, ShieldAlert, Bell, RotateCcw, Clock,
 } from 'lucide-react'
 import DPRDownloadModal from '../pages/DPRDownloadModal'
 import KalaPanel from '../pages/KalaPanel'
+import { getNotifications } from '../lib/api'
+import { APP_VERSION } from '../version'
 
 
 const NAV = [
@@ -17,14 +19,15 @@ const NAV = [
   { label: 'Dashboard',   href: '/dashboard',   icon: LayoutDashboard },
   { label: 'Utilization', href: '/utilization', icon: BarChart2 },
   { label: 'Summary',     href: '/summary',     icon: FileText },
-  { label: 'Fuel Issue',  href: '/fuel',        icon: Fuel },
+  { label: 'Fuel Station', href: '/fuel-station', icon: Fuel },
   { label: 'Service',     href: '/service',     icon: Wrench },
 ]
 
 const ADMIN_GENERAL_NAV = [
-  { label: 'Users',    href: '/admin/users' },
-  { label: 'Entries',  href: '/admin/entries' },
-  { label: 'Projects', href: '/admin/projects' },
+  { label: 'Users',       href: '/admin/users' },
+  { label: 'Entries',     href: '/admin/entries' },
+  { label: 'Projects',    href: '/admin/projects' },
+  { label: 'Permissions', href: '/admin/permissions' },
 ]
 
 const ADMIN_ASSET_NAV = [
@@ -272,6 +275,461 @@ function AboutModal({ onClose }) {
   )
 }
 
+const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+function LiveClock() {
+  const [clock, setClock] = useState(new Date())
+  useEffect(() => {
+    const id = setInterval(() => setClock(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const clockDate = `${DAYS[clock.getDay()]}, ${clock.getDate()} ${MONTHS[clock.getMonth()]} ${clock.getFullYear()}`
+  const clockTime = clock.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase()
+  return (
+    <div className="flex flex-col items-end leading-tight select-none">
+      <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 500, letterSpacing: '0.03em' }}>{clockDate}</span>
+      <span style={{ fontSize: 16, color: '#111827', fontWeight: 700, fontVariantNumeric: 'tabular-nums', letterSpacing: '0.03em' }}>{clockTime}</span>
+    </div>
+  )
+}
+
+const DOC_TYPE_LABELS = {
+  insurance:       'Insurance',
+  road_tax:        'Road Tax',
+  fitness:         'Fitness Certificate',
+  green_tax:       'Green Tax',
+  puc:             'Pollution Certificate (PUC)',
+  national_permit: 'National Permit',
+  state_permit:    'State Permit',
+  load_test:       'Load Test Certificate',
+}
+
+function NotificationBell({ notifications, isAdmin, loadError, loading, onNavigateToMachine, onNavigateToCompliance, onNavigateToEntries, onRefresh }) {
+  const [open, setOpen]                     = useState(false)
+  const [showReviewed, setShowReviewed]     = useState(false)
+
+  const pendingResets    = notifications.pending_resets    || []
+  const compliance       = notifications.compliance        || { expired: [], critical: [], warning: [] }
+  const breakdowns       = notifications.breakdowns        || []
+  const recentlyReviewed = notifications.recently_reviewed || []
+  const myReviews        = notifications.my_reviews        || []
+
+  // Badge: pending resets + expired + critical compliance + breakdowns (for admin)
+  //        or recently reviewed own requests (for user)
+  const urgentCount = isAdmin
+    ? pendingResets.length + compliance.expired.length + compliance.critical.length + breakdowns.length
+    : myReviews.length
+
+  const warningCount = isAdmin ? compliance.warning.length : 0
+
+  // Bell color: red if urgent, amber if warnings only, gray if all clear
+  const bellColor = urgentCount > 0
+    ? (pendingResets.length > 0 || compliance.expired.length > 0 || breakdowns.length > 0 ? '#ef4444' : '#f97316')
+    : warningCount > 0 ? '#d97706' : '#6b7280'
+
+  const fmtDate = (str) => {
+    if (!str) return '—'
+    return new Date(str).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+  }
+
+  const fmtDays = (d) => {
+    if (d < 0) return `Expired ${Math.abs(d)}d ago`
+    if (d === 0) return 'Expires today!'
+    return `${d}d left`
+  }
+
+  const handleOpen  = () => { setOpen(true); onRefresh() }
+  const handleClose = () => setOpen(false)
+
+  // Shared card styles
+  const cardBase = {
+    width: '100%', textAlign: 'left', padding: '11px 16px',
+    borderBottom: '1px solid #f3f4f6', background: 'transparent',
+    cursor: 'pointer', display: 'block', transition: 'background 0.1s', border: 'none',
+  }
+
+  const SectionHeader = ({ icon, title, count, color, bg }) => (
+    <div style={{
+      padding: '8px 16px', background: bg, borderBottom: '1px solid #f0f0f0',
+      display: 'flex', alignItems: 'center', gap: 7,
+      color, fontSize: 11, fontWeight: 700, letterSpacing: '0.05em', textTransform: 'uppercase',
+      flexShrink: 0,
+    }}>
+      {icon}
+      {title}
+      {count > 0 && (
+        <span style={{ marginLeft: 'auto', background: color, color: '#fff', fontSize: 10, fontWeight: 700, padding: '1px 7px', borderRadius: 99 }}>
+          {count}
+        </span>
+      )}
+    </div>
+  )
+
+  const SubHeader = ({ label, dotColor }) => (
+    <div style={{ padding: '5px 16px', background: '#fafafa', borderBottom: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, color: dotColor }}>
+      <span style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor, display: 'inline-block', flexShrink: 0 }} />
+      {label}
+    </div>
+  )
+
+  const EmptyNote = ({ text }) => (
+    <p style={{ fontSize: 11, color: '#9ca3af', fontStyle: 'italic', padding: '8px 16px', margin: 0 }}>{text}</p>
+  )
+
+  return (
+    <>
+      {/* Bell button */}
+      <button
+        onClick={handleOpen}
+        title="Notifications"
+        style={{
+          position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: 38, height: 38, borderRadius: 10, border: '1.5px solid #e5e7eb',
+          background: open ? '#fafafa' : '#fff', cursor: 'pointer',
+          color: bellColor, transition: 'all 0.15s',
+        }}
+      >
+        <Bell size={17} />
+        {urgentCount > 0 && (
+          <span style={{
+            position: 'absolute', top: -5, right: -5,
+            background: '#ef4444', color: '#fff',
+            fontSize: 10, fontWeight: 700, lineHeight: 1,
+            minWidth: 17, height: 17, borderRadius: 9,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            padding: '0 4px', border: '2px solid #fff',
+          }}>
+            {urgentCount > 9 ? '9+' : urgentCount}
+          </span>
+        )}
+      </button>
+
+      {/* Modal overlay */}
+      {open && (
+        <div
+          onClick={handleClose}
+          style={{
+            position: 'fixed', inset: 0, zIndex: 99999,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex', alignItems: 'flex-start', justifyContent: 'center',
+            paddingTop: 72,
+          }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              width: 480, maxWidth: '96vw', maxHeight: '82vh',
+              background: '#fff', borderRadius: 18,
+              boxShadow: '0 24px 64px rgba(0,0,0,0.22)',
+              display: 'flex', flexDirection: 'column', overflow: 'hidden',
+            }}
+          >
+            {/* Header */}
+            <div style={{
+              padding: '14px 18px 12px', borderBottom: '1px solid #f3f4f6',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              background: '#f9fafb', flexShrink: 0,
+            }}>
+              <span style={{ fontSize: 14, fontWeight: 700, color: '#111827', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Bell size={14} style={{ color: bellColor }} />
+                Notifications
+                {urgentCount > 0 && (
+                  <span style={{ background: '#ef4444', color: '#fff', fontSize: 11, fontWeight: 700, padding: '1px 8px', borderRadius: 99 }}>
+                    {urgentCount}
+                  </span>
+                )}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <button
+                  onClick={e => { e.stopPropagation(); onRefresh() }}
+                  disabled={loading}
+                  style={{ background: 'none', border: '1px solid #e5e7eb', cursor: loading ? 'not-allowed' : 'pointer', color: '#6b7280', padding: '4px 8px', borderRadius: 7, display: 'flex', alignItems: 'center', gap: 4, fontSize: 11 }}
+                >
+                  <RefreshCw size={12} style={{ animation: loading ? 'spin 1s linear infinite' : 'none' }} />
+                  Refresh
+                </button>
+                <button
+                  onClick={handleClose}
+                  style={{ background: 'none', border: '1px solid #e5e7eb', cursor: 'pointer', color: '#6b7280', padding: '4px 8px', borderRadius: 7, display: 'flex', alignItems: 'center', fontSize: 11 }}
+                >
+                  <X size={13} />
+                </button>
+              </div>
+            </div>
+
+            {/* Body */}
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {/* Error */}
+              {loadError && (
+                <div style={{ margin: 14, padding: '11px 14px', background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontSize: 12, color: '#dc2626' }}>⚠ Failed to load notifications.</span>
+                  <button onClick={e => { e.stopPropagation(); onRefresh() }} style={{ marginLeft: 'auto', fontSize: 11, color: '#dc2626', background: 'none', border: '1px solid #fca5a5', borderRadius: 5, padding: '3px 10px', cursor: 'pointer', whiteSpace: 'nowrap' }}>
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {loading && !loadError && (
+                <div style={{ padding: '36px 16px', textAlign: 'center', color: '#9ca3af', fontSize: 13 }}>Loading notifications…</div>
+              )}
+
+              {!loading && !loadError && (
+                isAdmin ? (
+                  <>
+                    {/* ── 1. Pending Approvals ── */}
+                    <SectionHeader
+                      icon={<RotateCcw size={12} />}
+                      title="Pending Approvals"
+                      count={pendingResets.length}
+                      color="#d97706"
+                      bg="#fffbeb"
+                    />
+                    {pendingResets.length === 0 ? <EmptyNote text="No pending approvals" /> : pendingResets.map(req => (
+                      <button
+                        key={`pr-${req.id}`}
+                        onClick={() => { handleClose(); onNavigateToMachine(req) }}
+                        style={cardBase}
+                        onMouseEnter={e => e.currentTarget.style.background = '#fffbeb'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                          <RotateCcw size={11} style={{ color: '#d97706', flexShrink: 0 }} />
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#d97706', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Counter Reset</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, background: '#fef3c7', color: '#92400e', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase' }}>Pending</span>
+                        </div>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#111827', margin: '0 0 4px' }}>{req.nickname || req.slno || 'Unknown Asset'}</p>
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                          {req.asset_code && <span style={{ fontSize: 11, color: '#6b7280' }}>Code: <strong style={{ color: '#374151' }}>{req.asset_code}</strong></span>}
+                          <span style={{ fontSize: 11, color: '#6b7280' }}>By: <strong style={{ color: '#374151' }}>{req.requested_by_name || '—'}</strong></span>
+                          <span style={{ fontSize: 11, color: '#6b7280' }}>Reset: <strong style={{ color: '#374151' }}>{fmtDate(req.reset_date)}</strong></span>
+                        </div>
+                        <p style={{ fontSize: 11, color: '#3b82f6', marginTop: 5, fontWeight: 500 }}>Open Asset Settings →</p>
+                      </button>
+                    ))}
+
+                    {/* ── 2. Breakdown Reports ── */}
+                    <SectionHeader
+                      icon={<Wrench size={12} />}
+                      title="Breakdown Reports"
+                      count={breakdowns.length}
+                      color="#dc2626"
+                      bg="#fef2f2"
+                    />
+                    {breakdowns.length === 0 ? <EmptyNote text="No pending breakdown entries" /> : breakdowns.map(b => (
+                      <button
+                        key={`bk-${b.id}`}
+                        onClick={() => { handleClose(); onNavigateToEntries() }}
+                        style={cardBase}
+                        onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      >
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                          <Wrench size={11} style={{ color: '#dc2626', flexShrink: 0 }} />
+                          <span style={{ fontSize: 10, fontWeight: 700, color: '#dc2626', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Breakdown</span>
+                          <span style={{ marginLeft: 'auto', fontSize: 9, fontWeight: 700, background: '#fecdd3', color: '#9f1239', padding: '2px 6px', borderRadius: 4, textTransform: 'uppercase' }}>{b.shift?.replace(' Shift','') || 'Day'} · Pending Review</span>
+                        </div>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#111827', margin: '0 0 4px' }}>{b.nickname || b.slno || 'Unknown Asset'}</p>
+                        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 11, color: '#6b7280' }}>Date: <strong style={{ color: '#374151' }}>{fmtDate(b.entry_date)}</strong></span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: '#dc2626' }}>⏱ {parseFloat(b.breakdown).toFixed(1)} Hrs</span>
+                          <span style={{ fontSize: 11, color: '#6b7280' }}>{b.project_code}</span>
+                        </div>
+                        {(b.remarks || b.work_done) && (
+                          <p style={{ fontSize: 11, color: '#374151', marginTop: 4, background: '#fff5f5', borderRadius: 5, padding: '3px 8px', borderLeft: '3px solid #fca5a5' }}>
+                            {b.remarks || b.work_done}
+                          </p>
+                        )}
+                        <p style={{ fontSize: 11, color: '#6b7280', marginTop: 4, fontStyle: 'italic' }}>By: {b.submitted_by_name || '—'} · View Entries →</p>
+                      </button>
+                    ))}
+
+                    {/* ── 3. Compliance Alerts ── */}
+                    <SectionHeader
+                      icon={<ShieldAlert size={12} />}
+                      title="Compliance Alerts"
+                      count={compliance.expired.length + compliance.critical.length + compliance.warning.length}
+                      color="#7c3aed"
+                      bg="#f5f3ff"
+                    />
+                    {compliance.expired.length === 0 && compliance.critical.length === 0 && compliance.warning.length === 0 ? (
+                      <EmptyNote text="All compliance documents are valid" />
+                    ) : (
+                      <>
+                        {compliance.expired.length > 0 && (
+                          <>
+                            <SubHeader label={`Expired (${compliance.expired.length})`} dotColor="#dc2626" />
+                            {compliance.expired.map(c => {
+                              const lbl = c.doc_type === 'custom' ? (c.doc_label || 'Custom') : (DOC_TYPE_LABELS[c.doc_type] || c.doc_type)
+                              return (
+                                <button key={`ce-${c.id}`} onClick={() => { handleClose(); onNavigateToCompliance() }} style={cardBase}
+                                  onMouseEnter={e => e.currentTarget.style.background = '#fef2f2'}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#dc2626', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#111827', flex: 1 }}>{c.nickname || c.slno} — {lbl}</span>
+                                    <span style={{ fontSize: 10, fontWeight: 700, color: '#dc2626', background: '#fee2e2', padding: '2px 7px', borderRadius: 5, flexShrink: 0 }}>{fmtDays(c.days_remaining)}</span>
+                                  </div>
+                                  <div style={{ paddingLeft: 16, marginTop: 3, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                    {c.reg_no && <span style={{ fontSize: 10, color: '#6b7280' }}>Reg: {c.reg_no}</span>}
+                                    <span style={{ fontSize: 10, color: '#6b7280' }}>Expiry: <strong>{fmtDate(c.expiry_date)}</strong></span>
+                                    <span style={{ fontSize: 10, color: '#9ca3af' }}>{c.project_code}</span>
+                                  </div>
+                                </button>
+                              )
+                            })}
+                          </>
+                        )}
+                        {compliance.critical.length > 0 && (
+                          <>
+                            <SubHeader label={`Expiring This Week (${compliance.critical.length})`} dotColor="#ea580c" />
+                            {compliance.critical.map(c => {
+                              const lbl = c.doc_type === 'custom' ? (c.doc_label || 'Custom') : (DOC_TYPE_LABELS[c.doc_type] || c.doc_type)
+                              return (
+                                <button key={`cc-${c.id}`} onClick={() => { handleClose(); onNavigateToCompliance() }} style={cardBase}
+                                  onMouseEnter={e => e.currentTarget.style.background = '#fff7ed'}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#ea580c', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#111827', flex: 1 }}>{c.nickname || c.slno} — {lbl}</span>
+                                    <span style={{ fontSize: 10, fontWeight: 700, color: '#ea580c', background: '#ffedd5', padding: '2px 7px', borderRadius: 5, flexShrink: 0 }}>{fmtDays(c.days_remaining)}</span>
+                                  </div>
+                                  <div style={{ paddingLeft: 16, marginTop: 3, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                    {c.reg_no && <span style={{ fontSize: 10, color: '#6b7280' }}>Reg: {c.reg_no}</span>}
+                                    <span style={{ fontSize: 10, color: '#6b7280' }}>Expiry: <strong>{fmtDate(c.expiry_date)}</strong></span>
+                                    <span style={{ fontSize: 10, color: '#9ca3af' }}>{c.project_code}</span>
+                                  </div>
+                                </button>
+                              )
+                            })}
+                          </>
+                        )}
+                        {compliance.warning.length > 0 && (
+                          <>
+                            <SubHeader label={`Expiring This Month (${compliance.warning.length})`} dotColor="#d97706" />
+                            {compliance.warning.map(c => {
+                              const lbl = c.doc_type === 'custom' ? (c.doc_label || 'Custom') : (DOC_TYPE_LABELS[c.doc_type] || c.doc_type)
+                              return (
+                                <button key={`cw-${c.id}`} onClick={() => { handleClose(); onNavigateToCompliance() }} style={cardBase}
+                                  onMouseEnter={e => e.currentTarget.style.background = '#fffbeb'}
+                                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <span style={{ width: 8, height: 8, borderRadius: '50%', background: '#d97706', flexShrink: 0 }} />
+                                    <span style={{ fontSize: 12, fontWeight: 600, color: '#111827', flex: 1 }}>{c.nickname || c.slno} — {lbl}</span>
+                                    <span style={{ fontSize: 10, fontWeight: 700, color: '#d97706', background: '#fef3c7', padding: '2px 7px', borderRadius: 5, flexShrink: 0 }}>{fmtDays(c.days_remaining)}</span>
+                                  </div>
+                                  <div style={{ paddingLeft: 16, marginTop: 3, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+                                    {c.reg_no && <span style={{ fontSize: 10, color: '#6b7280' }}>Reg: {c.reg_no}</span>}
+                                    <span style={{ fontSize: 10, color: '#6b7280' }}>Expiry: <strong>{fmtDate(c.expiry_date)}</strong></span>
+                                    <span style={{ fontSize: 10, color: '#9ca3af' }}>{c.project_code}</span>
+                                  </div>
+                                </button>
+                              )
+                            })}
+                          </>
+                        )}
+                      </>
+                    )}
+
+                    {/* ── 4. Recently Reviewed (collapsible) ── */}
+                    {recentlyReviewed.length > 0 && (
+                      <>
+                        <button
+                          onClick={() => setShowReviewed(v => !v)}
+                          style={{
+                            width: '100%', border: 'none', borderTop: '1px solid #f3f4f6', borderBottom: '1px solid #f3f4f6',
+                            padding: '8px 16px', background: '#f9fafb', cursor: 'pointer',
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                            fontSize: 11, fontWeight: 600, color: '#6b7280', letterSpacing: '0.04em', textTransform: 'uppercase',
+                          }}
+                        >
+                          <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <Clock size={11} /> Recently Reviewed ({recentlyReviewed.length})
+                          </span>
+                          {showReviewed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                        </button>
+                        {showReviewed && recentlyReviewed.map(req => (
+                          <button
+                            key={`rr-${req.id}`}
+                            onClick={() => { handleClose(); onNavigateToMachine(req) }}
+                            style={cardBase}
+                            onMouseEnter={e => e.currentTarget.style.background = '#f9fafb'}
+                            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, textTransform: 'uppercase',
+                                background: req.status === 'approved' ? '#dcfce7' : '#fee2e2',
+                                color: req.status === 'approved' ? '#166534' : '#991b1b' }}>
+                                {req.status === 'approved' ? '✓ Approved' : '✗ Rejected'}
+                              </span>
+                              <span style={{ marginLeft: 'auto', fontSize: 10, color: '#9ca3af' }}>{fmtDate(req.reviewed_at)}</span>
+                            </div>
+                            <p style={{ fontSize: 12, fontWeight: 600, color: '#111827', margin: '0 0 3px' }}>{req.nickname || req.slno} — Counter Reset</p>
+                            <p style={{ fontSize: 11, color: '#6b7280', margin: 0 }}>
+                              Requested by: <strong>{req.requested_by_name || '—'}</strong> · Reviewed by: <strong>{req.reviewed_by_name || 'Admin'}</strong>
+                            </p>
+                            {req.review_note && <p style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic', marginTop: 3 }}>"{req.review_note}"</p>}
+                          </button>
+                        ))}
+                      </>
+                    )}
+
+                    {/* All clear */}
+                    {pendingResets.length === 0 && breakdowns.length === 0 &&
+                     compliance.expired.length === 0 && compliance.critical.length === 0 &&
+                     compliance.warning.length === 0 && recentlyReviewed.length === 0 && (
+                      <div style={{ padding: '44px 16px', textAlign: 'center' }}>
+                        <Bell size={30} style={{ color: '#d1d5db', margin: '0 auto 10px', display: 'block' }} />
+                        <p style={{ fontSize: 14, color: '#9ca3af', margin: 0, fontWeight: 500 }}>All clear — nothing to action</p>
+                        <p style={{ fontSize: 12, color: '#d1d5db', margin: '4px 0 0' }}>No pending approvals, breakdowns, or compliance alerts</p>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  /* ── User view ── */
+                  <>
+                    <SectionHeader
+                      icon={<RotateCcw size={12} />}
+                      title="Your Request Updates"
+                      count={myReviews.length}
+                      color="#2563eb"
+                      bg="#eff6ff"
+                    />
+                    {myReviews.length === 0 ? (
+                      <div style={{ padding: '44px 16px', textAlign: 'center' }}>
+                        <Bell size={30} style={{ color: '#d1d5db', margin: '0 auto 10px', display: 'block' }} />
+                        <p style={{ fontSize: 14, color: '#9ca3af', margin: 0, fontWeight: 500 }}>No recent updates</p>
+                        <p style={{ fontSize: 12, color: '#d1d5db', margin: '4px 0 0' }}>No reset requests reviewed in the past 14 days</p>
+                      </div>
+                    ) : myReviews.map(req => (
+                      <div key={`mr-${req.id}`} style={{ ...cardBase, cursor: 'default' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4, textTransform: 'uppercase',
+                            background: req.status === 'approved' ? '#dcfce7' : '#fee2e2',
+                            color: req.status === 'approved' ? '#166534' : '#991b1b' }}>
+                            {req.status === 'approved' ? '✓ Approved' : '✗ Rejected'}
+                          </span>
+                          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#9ca3af' }}>{fmtDate(req.reviewed_at)}</span>
+                        </div>
+                        <p style={{ fontSize: 13, fontWeight: 600, color: '#111827', margin: '0 0 3px' }}>{req.nickname || req.slno} — Counter Reset</p>
+                        <p style={{ fontSize: 11, color: '#6b7280', margin: 0 }}>Reset Date: <strong>{fmtDate(req.reset_date)}</strong> · By: <strong>{req.reviewed_by_name || 'Admin'}</strong></p>
+                        {req.review_note && <p style={{ fontSize: 11, color: '#6b7280', fontStyle: 'italic', marginTop: 3 }}>Note: "{req.review_note}"</p>}
+                      </div>
+                    ))}
+                  </>
+                )
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
+}
+
 function UserMenu({ onClose, onOpenProfile, onOpenRoles, onOpenAbout }) {
   const { user, logout } = useAuth()
   const navigate = useNavigate()
@@ -343,6 +801,7 @@ function MenuItem({ icon: Icon, label, sub, onClick, danger }) {
 
 export default function Layout({ children }) {
   const { user, isAdmin } = useAuth()
+  const navigate = useNavigate()
   const [mobileOpen, setMobileOpen]           = useState(false)
   const [adminOpen, setAdminOpen]             = useState(false)
   const [assetMatrixOpen, setAssetMatrixOpen] = useState(false)
@@ -357,18 +816,30 @@ export default function Layout({ children }) {
   const [showRoles, setShowRoles]                 = useState(false)
   const [showAbout, setShowAbout]                 = useState(false)
   const [showDPRModal, setShowDPRModal]           = useState(false)
-  const [kalaOpen, setKalaOpen]                   = useState(false)
-  const [clock, setClock]                         = useState(new Date())
+  const [kalaOpen, setKalaOpen]                     = useState(false)
+  const [notifications,  setNotifications]  = useState({})
+  const [bellLoadError,  setBellLoadError]  = useState(false)
+  const [bellLoading,    setBellLoading]    = useState(false)
 
-  useEffect(() => {
-    const id = setInterval(() => setClock(new Date()), 1000)
-    return () => clearInterval(id)
+  const loadNotifications = useCallback(() => {
+    setBellLoading(true)
+    getNotifications()
+      .then(r => { setNotifications(r.data || {}); setBellLoadError(false) })
+      .catch(err => { console.error('Notification bell fetch error:', err); setBellLoadError(true) })
+      .finally(() => setBellLoading(false))
   }, [])
 
-  const DAYS   = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
-  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
-  const clockDate = `${DAYS[clock.getDay()]}, ${clock.getDate()} ${MONTHS[clock.getMonth()]} ${clock.getFullYear()}`
-  const clockTime = clock.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true }).toUpperCase()
+  // Poll notifications every 60s; also refresh immediately after a reset is reviewed
+  useEffect(() => {
+    loadNotifications()
+    const id = setInterval(loadNotifications, 60_000)
+    window.addEventListener('resetRequestReviewed', loadNotifications)
+    return () => { clearInterval(id); window.removeEventListener('resetRequestReviewed', loadNotifications) }
+  }, [loadNotifications])
+
+  const handleNotificationClick    = (req) => navigate('/admin/machines', { state: { openMachineId: req.machine_id } })
+  const handleComplianceClick      = ()    => navigate('/compliance')
+  const handleEntriesClick         = ()    => navigate('/admin/entries')
 
   const linkCls = ({ isActive }) =>
     `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
@@ -571,6 +1042,9 @@ export default function Layout({ children }) {
           </div>
         )}
       </nav>
+      <div className="px-3 py-2 border-t border-blue-800 flex-shrink-0">
+        <p className="text-xs text-blue-400 text-center select-none">PnM DPR {APP_VERSION}</p>
+      </div>
     </div>
   )
 
@@ -631,14 +1105,7 @@ export default function Layout({ children }) {
           {/* RIGHT: date/time + Kala + username + avatar */}
           <div className="hidden md:flex items-center" style={{ gap: 16, flexShrink: 0 }}>
 
-            <div className="flex flex-col items-end leading-tight select-none">
-              <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 500, letterSpacing: '0.03em' }}>
-                {clockDate}
-              </span>
-              <span style={{ fontSize: 16, color: '#111827', fontWeight: 700, fontVariantNumeric: 'tabular-nums', letterSpacing: '0.03em' }}>
-                {clockTime}
-              </span>
-            </div>
+            <LiveClock />
 
             <button
               onClick={() => setKalaOpen(v => !v)}
@@ -668,6 +1135,17 @@ export default function Layout({ children }) {
               <Sparkles size={14} />
               Ask Kala
             </button>
+
+            <NotificationBell
+              notifications={notifications}
+              isAdmin={isAdmin}
+              loadError={bellLoadError}
+              loading={bellLoading}
+              onNavigateToMachine={handleNotificationClick}
+              onNavigateToCompliance={handleComplianceClick}
+              onNavigateToEntries={handleEntriesClick}
+              onRefresh={loadNotifications}
+            />
 
             <span style={{ fontSize: 14, fontWeight: 600, color: '#111827', whiteSpace: 'nowrap' }}>
               {user?.name}

@@ -23,6 +23,9 @@ import Vendors from './pages/admin/Vendors'
 import ReadingMaster from './pages/admin/ReadingMaster'
 import ReadingMappings from './pages/admin/ReadingMappings'
 import AssetMatrix from './pages/admin/AssetMatrix'
+import AssetGroupConfig from './pages/admin/AssetGroupConfig'
+import AssetTypeConfig      from './pages/admin/AssetTypeConfig'
+import AssetCategoryDetail from './pages/admin/AssetCategoryDetail'
 import OwnMeasurable from './pages/asset-register/OwnMeasurable'
 import OwnNonMeasurable from './pages/asset-register/OwnNonMeasurable'
 import HireAssets from './pages/asset-register/HireAssets'
@@ -31,6 +34,8 @@ import HireWorkOrders from './pages/hire/HireWorkOrders'
 import HireIndents from './pages/hire/HireIndents'
 import HireBilling from './pages/hire/HireBilling'
 import Compliance from './pages/compliance/Compliance'
+import Permissions from './pages/admin/Permissions'
+import FuelStation from './pages/FuelStation'
 
 function ProtectedLayout() {
   const { user } = useAuth()
@@ -57,7 +62,8 @@ export default function App() {
             <Route path="dashboard"   element={<Dashboard />} />
             <Route path="utilization" element={<Utilization />} />
             <Route path="summary"     element={<Summary />} />
-            <Route path="fuel"        element={<FuelEntries />} />
+            <Route path="fuel"         element={<FuelEntries />} />
+            <Route path="fuel-station" element={<FuelStation />} />
             <Route path="compliance"  element={<Compliance />} />
             <Route path="hire/indents"     element={<HireIndents />} />
             <Route path="hire/work-orders" element={<HireWorkOrders defaultTab="wo" />} />
@@ -82,7 +88,11 @@ export default function App() {
               <Route path="vendors"          element={<Vendors />} />
               <Route path="reading-master"   element={<ReadingMaster />} />
               <Route path="reading-mappings" element={<ReadingMappings />} />
-              <Route path="asset-matrix"     element={<AssetMatrix />} />
+              <Route path="asset-matrix"              element={<AssetMatrix />} />
+              <Route path="asset-group-configs/:group" element={<AssetGroupConfig />} />
+              <Route path="asset-type-configs/:id"    element={<AssetTypeConfig />} />
+              <Route path="asset-category/:group"     element={<AssetCategoryDetail />} />
+              <Route path="permissions"               element={<Permissions />} />
             </Route>
           </Route>
         </Routes>
