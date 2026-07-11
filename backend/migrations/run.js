@@ -69,6 +69,7 @@ const migrations = [
   '063_asset_group_configs.sql',
   '064_equipment_type_configs.sql',
   '065_tm_fuel_split.sql',
+  '066_machine_config_overrides.sql',
 ];
 
 async function runMigrations() {

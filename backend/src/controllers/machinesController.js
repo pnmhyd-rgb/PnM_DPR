@@ -201,11 +201,18 @@ const bulkCreate = async (req, res) => {
         // Resolve project_code (or project name) to project_id
         let project_id = row.project_id;
         if (!project_id && row.project_code) {
+          const code = row.project_code.toString().trim();
           const pRes = await db.query(
-            'SELECT id FROM projects WHERE code = $1 OR LOWER(name) = LOWER($1)',
-            [row.project_code.toString().trim()]
+            `SELECT id FROM projects
+             WHERE LOWER(code) = LOWER($1) OR LOWER(name) = LOWER($1)
+             ORDER BY code LIMIT 1`,
+            [code]
           );
-          if (pRes.rows.length === 0) throw new Error(`Project "${row.project_code}" not found`);
+          if (pRes.rows.length === 0) {
+            const avail = await db.query('SELECT code FROM projects WHERE active = true ORDER BY code');
+            const list  = avail.rows.map(r => r.code).join(', ') || '(none)';
+            throw new Error(`Project "${code}" not found. Available project codes: ${list}`);
+          }
           project_id = pRes.rows[0].id;
         }
         if (!project_id) throw new Error('project_code or project_id is required');
@@ -618,6 +625,43 @@ const resetReadingConfigs = async (req, res) => {
   }
 };
 
+const updateOverrides = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      fuel_entry_override,
+      breakdown_entry_override,
+      closing_reading_override,
+      qty_mandatory_km_override,
+      qty_mandatory_hrs_override,
+    } = req.body;
+    const toBool = v => (v === true || v === false) ? v : null;
+    const result = await db.query(
+      `UPDATE machines SET
+         fuel_entry_override        = $1,
+         breakdown_entry_override   = $2,
+         closing_reading_override   = $3,
+         qty_mandatory_km_override  = $4,
+         qty_mandatory_hrs_override = $5,
+         updated_at = NOW()
+       WHERE id = $6 RETURNING *`,
+      [
+        toBool(fuel_entry_override),
+        toBool(breakdown_entry_override),
+        toBool(closing_reading_override),
+        toBool(qty_mandatory_km_override),
+        toBool(qty_mandatory_hrs_override),
+        id,
+      ]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Machine not found' });
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    console.error('Update overrides error:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
 const regenerateNicknames = async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
@@ -642,4 +686,4 @@ const regenerateNicknames = async (req, res) => {
   }
 };
 
-module.exports = { getAll, create, update, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames, getLastEntry };
+module.exports = { getAll, create, update, updateOverrides, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames, getLastEntry };

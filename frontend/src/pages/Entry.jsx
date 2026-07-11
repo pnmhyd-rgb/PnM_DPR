@@ -150,6 +150,44 @@ function buildEditForm(machine, dayEntry, nightEntry) {
   }
 }
 
+function buildShiftEditForm(machine, entry) {
+  const isMultiReading = machine.reading_configs?.length > 0
+  const configs        = machine.reading_configs || []
+  const { hrs, min }   = decimalToHrsMin(entry?.breakdown)
+  if (isMultiReading) {
+    return {
+      shift:         entry?.shift || '',
+      readings:      configs.map(rc => {
+        const log = entry?.reading_logs?.find(l => l.reading_type_id === rc.reading_type_id)
+        return { reading_type_id: rc.reading_type_id, code: rc.code, reading_name: rc.reading_name, unit: rc.unit,
+          open_value:  log?.open_value  != null ? String(log.open_value)  : '',
+          close_value: log?.close_value != null ? String(log.close_value) : '' }
+      }),
+      hsd:           entry?.hsd         != null ? String(entry.hsd)         : '',
+      diesel_rate:   entry?.diesel_rate != null ? String(entry.diesel_rate) : '',
+      breakdown_hrs: hrs, breakdown_min: min,
+      qty:           entry?.qty         != null ? String(entry.qty)         : '',
+      work_done:     entry?.work_done   || '',
+      remarks:       entry?.remarks     || '',
+      machine_status: entry?.is_idle ? 'idle' : (parseFloat(entry?.breakdown) > 0 ? 'breakdown' : null),
+    }
+  }
+  return {
+    shift:         entry?.shift       || '',
+    r1_open:       entry?.r1_open     != null ? String(entry.r1_open)     : '',
+    r1_close:      entry?.r1_close    != null ? String(entry.r1_close)    : '',
+    r2_open:       entry?.r2_open     != null ? String(entry.r2_open)     : '',
+    r2_close:      entry?.r2_close    != null ? String(entry.r2_close)    : '',
+    hsd:           entry?.hsd         != null ? String(entry.hsd)         : '',
+    diesel_rate:   entry?.diesel_rate != null ? String(entry.diesel_rate) : '',
+    breakdown_hrs: hrs, breakdown_min: min,
+    qty:           entry?.qty         != null ? String(entry.qty)         : '',
+    work_done:     entry?.work_done   || '',
+    remarks:       entry?.remarks     || '',
+    machine_status: entry?.is_idle ? 'idle' : (parseFloat(entry?.breakdown) > 0 ? 'breakdown' : null),
+  }
+}
+
 // ── Inline shift row ──────────────────────────────────────────────────────────
 
 function ShiftRow({
@@ -217,6 +255,7 @@ function ShiftRow({
       ? { old_reading: existingEntry.reset_old_reading, new_reading: existingEntry.reset_new_reading }
       : null
   )
+  const [openingMismatch, setOpeningMismatch] = useState(null)
   const initMachineStatus = () => existingEntry?.is_idle ? 'idle' : (parseFloat(existingEntry?.breakdown) > 0 ? 'breakdown' : null)
   const [machineStatus,  setMachineStatus] = useState(initMachineStatus)
 
@@ -372,14 +411,16 @@ function ShiftRow({
       return
     }
 
-    if (parseFloat(form.hsd) > 0 && !form.diesel_rate) {
-      setErrorMsg('Diesel Rate (₹/Ltr) is required when HSD Consumed is entered.')
-      return
-    }
-    const tankCap = machine?.fuel_tank_l ? parseFloat(machine.fuel_tank_l) : null
-    if (tankCap != null && form.hsd !== '' && parseFloat(form.hsd) > tankCap) {
-      setErrorMsg(`HSD (${form.hsd} L) exceeds fuel tank capacity (${tankCap} L).`)
-      return
+    if (machine?.fuel_entry_enabled !== false) {
+      if (parseFloat(form.hsd) > 0 && !form.diesel_rate) {
+        setErrorMsg('Diesel Rate (₹/Ltr) is required when HSD Consumed is entered.')
+        return
+      }
+      const tankCap = machine?.fuel_tank_l ? parseFloat(machine.fuel_tank_l) : null
+      if (tankCap != null && form.hsd !== '' && parseFloat(form.hsd) > tankCap) {
+        setErrorMsg(`HSD (${form.hsd} L) exceeds fuel tank capacity (${tankCap} L).`)
+        return
+      }
     }
     if (qtyRequired && !form.qty) {
       setErrorMsg('Quantity is required when Working KM or Hours is entered.')
@@ -516,8 +557,11 @@ function ShiftRow({
               value={effectiveOpen}
               onChange={isDualNight || readOnly || effectiveOpenLocked ? undefined : set('r1_open')}
               readOnly={isDualNight || readOnly || effectiveOpenLocked}
-              className={isDualNight || readOnly || effectiveOpenLocked ? roInp : `${inp} border-gray-200`}
+              className={`${isDualNight || readOnly || effectiveOpenLocked ? roInp : `${inp} border-gray-200`} ${openingMismatch ? 'border-amber-400 bg-amber-50' : ''}`}
             />
+            {openingMismatch && (
+              <div className="text-[9px] text-amber-600 mt-0.5 leading-tight whitespace-nowrap">↺ reset→{openingMismatch.expected}</div>
+            )}
           </td>
           {/* Close HMR */}
           <td className={`${thCls} w-20`}>
@@ -641,8 +685,59 @@ function ShiftRow({
             {!canAddDpr ? <><Lock size={9} /> Prev pending</> : <><Clock size={9} /> {effectiveShift === 'Day Shift' ? 'After 8 PM' : 'After 8 AM'}</>}
           </span>
         ) : readOnly ? (
-          <div className="flex gap-1">
-            <button onClick={() => setIsEditing(true)}
+          <div className="flex flex-col gap-1">
+            {openingMismatch && (
+              <button onClick={() => {
+                if (openingMismatch.readingTypeId) {
+                  setForm(f => ({
+                    ...f,
+                    readings: f.readings.map(r =>
+                      r.reading_type_id === openingMismatch.readingTypeId
+                        ? { ...r, open_value: openingMismatch.expected, ...(openingMismatch.fromReset ? { close_value: '' } : {}) }
+                        : r
+                    ),
+                  }))
+                } else {
+                  setForm(f => ({ ...f, r1_open: openingMismatch.expected, ...(openingMismatch.fromReset ? { r1_close: '' } : {}) }))
+                }
+                setOpeningMismatch(null)
+                setIsEditing(true)
+              }} title={`Meter reset: sync opening to ${openingMismatch.expected}`}
+                className="inline-flex items-center justify-center gap-1 text-[10px] font-semibold px-2 py-1.5 rounded-lg w-full bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-300 transition-colors">
+                <RefreshCw size={9} /> Sync {openingMismatch.expected}
+              </button>
+            )}
+            <div className="flex gap-1">
+            <button onClick={async () => {
+              if (existingEntry && machine?.id) {
+                const sh = shift || existingEntry.shift
+                if (sh) try {
+                  const r = await getPreviousClosing({ machine_id: machine.id, entry_date: date, shift: sh, machine_shift_type: machine.shift_type })
+                  const prev = r.data.data
+                  // r1_close mismatch (single-reading machines)
+                  if (prev?.r1_close != null) {
+                    const saved = parseFloat(existingEntry.r1_open)
+                    if (!isNaN(saved) && Math.abs(parseFloat(prev.r1_close) - saved) > 0.001) {
+                      setOpeningMismatch({ expected: String(prev.r1_close), fromReset: !!(prev.reset_applied || prev.mid_shift_reset) })
+                      return  // stay in readOnly so Sync button is visible
+                    }
+                  }
+                  // reading-code mismatch (multi-reading machines)
+                  if (isMultiReading && prev?.reset_applied && prev?.readings?.length > 0) {
+                    const bad = prev.readings.find(pr => {
+                      if (pr.close_value == null) return false
+                      const cur = form.readings?.find(r => r.reading_type_id === pr.reading_type_id)
+                      return cur && cur.open_value !== '' && Math.abs(parseFloat(pr.close_value) - parseFloat(cur.open_value)) > 0.001
+                    })
+                    if (bad) {
+                      setOpeningMismatch({ expected: String(bad.close_value), fromReset: true, readingTypeId: bad.reading_type_id })
+                      return  // stay in readOnly so Sync button is visible
+                    }
+                  }
+                } catch {}
+              }
+              setIsEditing(true)
+            }}
               className="inline-flex items-center justify-center gap-1 text-[11px] font-semibold px-2 py-1.5 rounded-lg flex-1 bg-gray-100 text-gray-600 hover:bg-amber-50 hover:text-amber-700 border border-gray-200 hover:border-amber-300 transition-colors">
               <Pencil size={10} /> Edit
             </button>
@@ -652,6 +747,7 @@ function ShiftRow({
                 {saving ? <Loader2 size={10} className="animate-spin" /> : <Trash2 size={10} />}
               </button>
             )}
+            </div>
           </div>
         ) : (
           <div className="flex flex-col gap-1">
@@ -774,17 +870,17 @@ function DprEntryTable({ machines, allEntries, date, isAdmin, canAddDpr, onSaved
 
 // ── Entry Form Modal (used inside MonthGridPanel) ─────────────────────────────
 
-function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, editIds, isLastEntry = true }) {
+function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, editIds, isLastEntry = true, targetShift = null }) {
   const isEditMode     = !!editData
   const isMultiReading = machine?.reading_configs?.length > 0
   const configs        = machine?.reading_configs || []
-  const isDual         = machine?.shift_type === 'Dual Shift'
+  const isDual         = machine?.shift_type === 'Dual Shift' && !targetShift
 
   const mkReadings  = () => configs.map(rc => ({ reading_type_id: rc.reading_type_id, code: rc.code, reading_name: rc.reading_name, unit: rc.unit, open_value: '', close_value: '' }))
   const mkNReadings = () => configs.map(rc => ({ reading_type_id: rc.reading_type_id, open_value: '', close_value: '' }))
-  const mrEmpty     = { shift: '', readings: mkReadings(), n_readings: mkNReadings(), hsd: '', breakdown_hrs: '0', breakdown_min: '0', qty: '', work_done: '', n_hsd: '', n_breakdown_hrs: '0', n_breakdown_min: '0', n_qty: '', n_work_done: '', n_r1_open: '', n_r2_open: '', remarks: '', n_remarks: '', machine_status: null, n_machine_status: null }
+  const mrEmpty     = { shift: targetShift || '', readings: mkReadings(), n_readings: mkNReadings(), hsd: '', breakdown_hrs: '0', breakdown_min: '0', qty: '', work_done: '', n_hsd: '', n_breakdown_hrs: '0', n_breakdown_min: '0', n_qty: '', n_work_done: '', n_r1_open: '', n_r2_open: '', remarks: '', n_remarks: '', machine_status: null, n_machine_status: null }
 
-  const [form,          setForm]          = useState(editData || (isMultiReading ? mrEmpty : emptyForm))
+  const [form,          setForm]          = useState(editData || (isMultiReading ? mrEmpty : { ...emptyForm, shift: targetShift || '' }))
   const [loading,       setLoading]       = useState(false)
   const [loadingPrev,   setLoadingPrev]   = useState(false)
   const [toast,         setToast]         = useState(null)
@@ -824,20 +920,40 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
               })
               if (bad) {
                 const formR = (editData.readings || []).find(x => x.reading_type_id === bad.reading_type_id)
-                setOpeningMismatch({ prevData: prev, stored: formR?.open_value, expected: bad.close_value, label: bad.code || 'Reading' })
+                setOpeningMismatch({ prevData: prev, stored: formR?.open_value, expected: bad.close_value, label: bad.code || 'Reading', fromReset: !!(prev.reset_applied || prev.mid_shift_reset) })
               }
             } else if (!isMultiReading && prev.r1_close != null && editData.r1_open != null) {
               if (Math.abs(parseFloat(prev.r1_close) - parseFloat(editData.r1_open)) > 0.001) {
-                setOpeningMismatch({ prevData: prev, stored: editData.r1_open, expected: prev.r1_close, label: 'Opening' })
+                setOpeningMismatch({ prevData: prev, stored: editData.r1_open, expected: prev.r1_close, label: 'Opening', fromReset: !!(prev.reset_applied || prev.mid_shift_reset) })
               }
             }
           }).catch(() => {})
       }
       return
     }
-    setForm(isMultiReading ? { ...mrEmpty, readings: mkReadings(), n_readings: mkNReadings() } : emptyForm)
+    setForm(isMultiReading ? { ...mrEmpty, readings: mkReadings(), n_readings: mkNReadings() } : { ...emptyForm, shift: targetShift || '' })
     setOpeningLocked(false); setMidShiftReset(null)
-    if (!machine || !isDual) return
+    if (!machine || !isDual) {
+      // For targetShift (per-shift add on a dual machine), auto-fetch previous closing
+      if (targetShift && machine) {
+        const timing = checkEntryTiming(date, targetShift)
+        if (!timing.allowed) return
+        setLoadingPrev(true)
+        getPreviousClosing({ machine_id: machine.id, entry_date: date, shift: targetShift, machine_shift_type: machine.shift_type })
+          .then(r => {
+            const prev = r.data.data
+            if (!prev) return
+            if (prev.mid_shift_reset) setMidShiftReset({ old_reading: prev.mid_shift_reset.old_reading, new_reading: prev.mid_shift_reset.new_reading })
+            if (isMultiReading && prev.readings?.length > 0) {
+              setForm(f => ({ ...f, readings: f.readings.map(r => { const p = prev.readings.find(pr => pr.reading_type_id === r.reading_type_id); return p?.close_value != null ? { ...r, open_value: String(p.close_value) } : r }) }))
+            } else if (!isMultiReading && prev.r1_close != null) {
+              setForm(f => ({ ...f, r1_open: String(prev.r1_close), ...(machine.dual_reading && prev.r2_close != null ? { r2_open: String(prev.r2_close) } : {}) }))
+            }
+            setOpeningLocked(true)
+          }).catch(() => {}).finally(() => setLoadingPrev(false))
+      }
+      return
+    }
     setLoadingPrev(true)
     getPreviousClosing({ machine_id: machine.id, entry_date: date, shift: 'Day Shift' })
       .then(r => {
@@ -977,12 +1093,12 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
   const handleSubmit = async e => {
     e.preventDefault()
     if (!isEditMode) {
-      const shift = isDual ? 'Dual Shift' : form.shift
+      const shift = isDual ? 'Dual Shift' : (targetShift || form.shift)
       if (shift) { const t = checkEntryTiming(date, shift); if (!t.allowed) { setToast({ type: 'error', msg: t.message }); return } }
     }
     const CLOSE_REQ_MSG = 'Closing Reading is mandatory when Opening Reading is entered. Please enter Closing Reading for all applicable reading types before saving the DPR.'
     if (isMultiReading) {
-      if (!isDual && !form.shift) { setToast({ type: 'error', msg: 'Please select a shift.' }); return }
+      if (!isDual && !(form.shift || targetShift)) { setToast({ type: 'error', msg: 'Please select a shift.' }); return }
       if (closeReqEnabled && computedReadings.some(r => r.open_value !== '' && (r.close_value ?? '') === '')) { setToast({ type: 'error', msg: `${isDual ? 'Day Shift: ' : ''}${CLOSE_REQ_MSG}` }); return }
       if (computedReadings.some(r => r.invalid)) { setToast({ type: 'error', msg: 'One or more readings: closing must be ≥ opening.' }); return }
       if (dayExceeded) { setToast({ type: 'error', msg: `Day readings exceed ${SHIFT_MAX}-hour shift limit.` }); return }
@@ -990,7 +1106,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
       if (isDual && nComputedReadings.some(r => r.invalid)) { setToast({ type: 'error', msg: 'Night readings: closing must be ≥ day closing.' }); return }
       if (isDual && nightExceeded) { setToast({ type: 'error', msg: `Night readings exceed ${SHIFT_MAX}-hour shift limit.` }); return }
     } else {
-      if (!isDual && !form.shift) { setToast({ type: 'error', msg: 'Please select Day Shift or Night Shift.' }); return }
+      if (!isDual && !(form.shift || targetShift)) { setToast({ type: 'error', msg: 'Please select Day Shift or Night Shift.' }); return }
       if (closeReqEnabled && form.r1_open !== '' && form.r1_close === '') { setToast({ type: 'error', msg: `${isDual ? 'Day Shift: ' : ''}${CLOSE_REQ_MSG}` }); return }
       if (closeReqEnabled && machine?.dual_reading && form.r2_open !== '' && form.r2_close === '') { setToast({ type: 'error', msg: `${isDual ? 'Day Shift: ' : ''}${CLOSE_REQ_MSG}` }); return }
       if (closeReqEnabled && isDual && nR1OpenBase !== '' && (form.n_r1_close ?? '') === '') { setToast({ type: 'error', msg: `Night Shift: ${CLOSE_REQ_MSG}` }); return }
@@ -1032,20 +1148,22 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
       setToast({ type: 'error', msg: `Night Shift breakdown (${nBreakdownVal.toFixed(2)} hrs) cannot exceed remaining shift time (${maxNightBreakdown.toFixed(2)} hrs).` })
       return
     }
-    if (parseFloat(form.hsd) > 0 && !form.diesel_rate) {
-      setToast({ type: 'error', msg: `${isDual ? 'Day Shift: ' : ''}Diesel Rate (₹/Ltr) is required when HSD Consumed is entered.` }); return
-    }
-    if (isDual && parseFloat(form.n_hsd) > 0 && !form.n_diesel_rate) {
-      setToast({ type: 'error', msg: 'Night Shift: Diesel Rate (₹/Ltr) is required when HSD Consumed is entered.' }); return
-    }
-    const tankCap = machine?.fuel_tank_l ? parseFloat(machine.fuel_tank_l) : null
-    if (tankCap != null && form.hsd !== '' && parseFloat(form.hsd) > tankCap) {
-      setToast({ type: 'error', msg: `${isDual ? 'Day Shift' : ''} HSD (${form.hsd} L) exceeds tank capacity (${tankCap} L). Please correct the value.` })
-      return
-    }
-    if (isDual && tankCap != null && form.n_hsd !== '' && parseFloat(form.n_hsd) > tankCap) {
-      setToast({ type: 'error', msg: `Night Shift HSD (${form.n_hsd} L) exceeds tank capacity (${tankCap} L). Please correct the value.` })
-      return
+    if (machine?.fuel_entry_enabled !== false) {
+      if (parseFloat(form.hsd) > 0 && !form.diesel_rate) {
+        setToast({ type: 'error', msg: `${isDual ? 'Day Shift: ' : ''}Diesel Rate (₹/Ltr) is required when HSD Consumed is entered.` }); return
+      }
+      if (isDual && parseFloat(form.n_hsd) > 0 && !form.n_diesel_rate) {
+        setToast({ type: 'error', msg: 'Night Shift: Diesel Rate (₹/Ltr) is required when HSD Consumed is entered.' }); return
+      }
+      const tankCap = machine?.fuel_tank_l ? parseFloat(machine.fuel_tank_l) : null
+      if (tankCap != null && form.hsd !== '' && parseFloat(form.hsd) > tankCap) {
+        setToast({ type: 'error', msg: `${isDual ? 'Day Shift' : ''} HSD (${form.hsd} L) exceeds tank capacity (${tankCap} L). Please correct the value.` })
+        return
+      }
+      if (isDual && tankCap != null && form.n_hsd !== '' && parseFloat(form.n_hsd) > tankCap) {
+        setToast({ type: 'error', msg: `Night Shift HSD (${form.n_hsd} L) exceeds tank capacity (${tankCap} L). Please correct the value.` })
+        return
+      }
     }
     if (dayQtyRequired && !form.qty) {
       setToast({ type: 'error', msg: `${isDual ? 'Day Shift: ' : ''}Quantity is required when Working KM or Hours is entered.` }); return
@@ -1072,7 +1190,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
             createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Night Shift', ...nightPayload }),
           ])
         } else {
-          await createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: form.shift, ...dayPayload })
+          await createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: targetShift || form.shift, ...dayPayload })
         }
       } else {
         const resetFields = midShiftReset ? { reset_old_reading: midShiftReset.old_reading, reset_new_reading: midShiftReset.new_reading } : {}
@@ -1093,7 +1211,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
             createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: 'Night Shift', r1_open: form.r1_close || null, r1_close: form.n_r1_close || null, r2_open: form.r2_close || null, r2_close: form.n_r2_close || null, hsd: form.n_hsd || null, diesel_rate: form.n_diesel_rate ? parseFloat(form.n_diesel_rate) : null, breakdown: nBreakdownVal || 0, qty: form.n_qty || null, work_done: form.n_work_done || null, remarks: form.n_remarks || null, is_idle: isNightZeroWork && form.n_machine_status === 'idle' }),
           ])
         } else {
-          await createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: form.shift, r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, ...resetFields, hsd: form.hsd || null, diesel_rate: form.diesel_rate ? parseFloat(form.diesel_rate) : null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null, is_idle: isDayZeroWork && form.machine_status === 'idle' })
+          await createEntry({ machine_id: machine.id, project_id: machine.project_id, entry_date: date, shift: targetShift || form.shift, r1_open: form.r1_open || null, r1_close: form.r1_close || null, r2_open: form.r2_open || null, r2_close: form.r2_close || null, ...resetFields, hsd: form.hsd || null, diesel_rate: form.diesel_rate ? parseFloat(form.diesel_rate) : null, breakdown: breakdownVal || 0, qty: form.qty || null, work_done: form.work_done || null, remarks: form.remarks || null, is_idle: isDayZeroWork && form.machine_status === 'idle' })
         }
       }
       onSave(); onClose()
@@ -1112,7 +1230,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
           <div>
             <p className="font-semibold text-gray-900">{machine.slno} · {machine.eq_type}</p>
             <p className="text-xs text-gray-400 mt-0.5">
-              {date} · {isDual ? 'Dual Shift' : 'Single Shift'}
+              {date} · {isDual ? 'Dual Shift' : targetShift ? targetShift : 'Single Shift'}
               {isEditMode && <span className="ml-2 text-amber-600 font-medium">· Editing</span>}
               {loadingPrev && <span className="ml-2 text-blue-500 animate-pulse">Loading previous reading…</span>}
             </p>
@@ -1147,9 +1265,10 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
               <div className="flex-1 min-w-0">
                 <p className="font-semibold text-amber-900">Opening reading mismatch</p>
                 <p className="text-xs mt-0.5">
-                  Stored opening <span className="font-mono font-bold">{openingMismatch.stored}</span> doesn't match
-                  previous entry's closing <span className="font-mono font-bold">{openingMismatch.expected}</span>.
-                  This happened because the previous entry was edited after this one was created.
+                  {openingMismatch.fromReset
+                    ? <>A meter reset was approved for this period. Opening should be <span className="font-mono font-bold">{openingMismatch.expected}</span>. Sync to apply the reset and re-enter the closing with new meter values.</>
+                    : <>Stored opening <span className="font-mono font-bold">{openingMismatch.stored}</span> doesn't match previous entry's closing <span className="font-mono font-bold">{openingMismatch.expected}</span>. The previous entry may have been edited after this one was saved.</>
+                  }
                 </p>
               </div>
               <button type="button" onClick={() => {
@@ -1158,11 +1277,16 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
                     ...f,
                     readings: f.readings.map(r => {
                       const p = openingMismatch.prevData.readings.find(pr => pr.reading_type_id === r.reading_type_id)
-                      return p?.close_value != null ? { ...r, open_value: String(p.close_value) } : r
-                    })
+                      return p?.close_value != null ? { ...r, open_value: String(p.close_value), ...(openingMismatch.fromReset ? { close_value: '' } : {}) } : r
+                    }),
+                    ...(openingMismatch.fromReset ? { n_readings: f.n_readings?.map(r => ({ ...r, close_value: '' })) } : {}),
                   }))
                 } else {
-                  setForm(f => ({ ...f, r1_open: String(openingMismatch.expected) }))
+                  setForm(f => ({
+                    ...f,
+                    r1_open: String(openingMismatch.expected),
+                    ...(openingMismatch.fromReset ? { r1_close: '', r2_close: '', n_r1_close: '', n_r2_close: '' } : {}),
+                  }))
                 }
                 setOpeningMismatch(null)
               }}
@@ -1174,8 +1298,8 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
           {!isDual && (
             <div>
               <label className={lbl}>Shift <span className="text-red-500">*</span></label>
-              {isEditMode ? (
-                <div className={`${inp} bg-gray-50 text-gray-700`}>{form.shift}</div>
+              {isEditMode || targetShift ? (
+                <div className={`${inp} bg-gray-50 text-gray-700`}>{form.shift || targetShift}</div>
               ) : (
                 <select value={form.shift} onChange={handleShiftChange} className={inp} required>
                   <option value="">— select shift —</option>
@@ -1273,7 +1397,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
                   )}
                 </div>
               )}
-              <FuelBreakdown hsd={form.hsd} dieselRate={form.diesel_rate} breakdownHrs={form.breakdown_hrs} breakdownMin={form.breakdown_min} qty={form.qty} workDone={form.work_done} fuelRate={dayFuelRate} kmFuelRate={dayKmFuelRate} machine={machine} onHsd={set('hsd')} onDieselRate={set('diesel_rate')} onBreakdownHrs={set('breakdown_hrs')} onBreakdownMin={set('breakdown_min')} onQty={set('qty')} onWorkDone={set('work_done')} lbl={lbl} inp={inp} maxBreakdown={maxDayBreakdown} isIdle={isDayZeroWork && form.machine_status === 'idle'} breakdownLocked={isDayZeroWork && form.machine_status === 'breakdown'} qtyRequired={dayQtyRequired} />
+              <FuelBreakdown hsd={form.hsd} dieselRate={form.diesel_rate} breakdownHrs={form.breakdown_hrs} breakdownMin={form.breakdown_min} qty={form.qty} workDone={form.work_done} fuelRate={dayFuelRate} kmFuelRate={dayKmFuelRate} machine={machine} onHsd={set('hsd')} onDieselRate={set('diesel_rate')} onBreakdownHrs={set('breakdown_hrs')} onBreakdownMin={set('breakdown_min')} onQty={set('qty')} onWorkDone={set('work_done')} lbl={lbl} inp={inp} maxBreakdown={maxDayBreakdown} isIdle={isDayZeroWork && form.machine_status === 'idle'} breakdownLocked={isDayZeroWork && form.machine_status === 'breakdown'} qtyRequired={dayQtyRequired} fuelEnabled={machine?.fuel_entry_enabled !== false} />
               {parseFloat(form.breakdown_hrs) > 0 && !(isDayZeroWork && form.machine_status === 'breakdown') && (
                 <div>
                   <label className="block text-xs font-medium text-red-700 mb-1">Day Shift — Breakdown Reason <span className="text-red-500">*</span></label>
@@ -1365,7 +1489,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
                   )}
                 </div>
               )}
-              <FuelBreakdown hsd={form.n_hsd} dieselRate={form.n_diesel_rate} breakdownHrs={form.n_breakdown_hrs} breakdownMin={form.n_breakdown_min} qty={form.n_qty} workDone={form.n_work_done} fuelRate={nightFuelRate} kmFuelRate={nightKmFuelRate} machine={machine} onHsd={set('n_hsd')} onDieselRate={set('n_diesel_rate')} onBreakdownHrs={set('n_breakdown_hrs')} onBreakdownMin={set('n_breakdown_min')} onQty={set('n_qty')} onWorkDone={set('n_work_done')} lbl={lbl} inp={inp} maxBreakdown={maxNightBreakdown} isIdle={isNightZeroWork && form.n_machine_status === 'idle'} breakdownLocked={isNightZeroWork && form.n_machine_status === 'breakdown'} qtyRequired={nightQtyRequired} />
+              <FuelBreakdown hsd={form.n_hsd} dieselRate={form.n_diesel_rate} breakdownHrs={form.n_breakdown_hrs} breakdownMin={form.n_breakdown_min} qty={form.n_qty} workDone={form.n_work_done} fuelRate={nightFuelRate} kmFuelRate={nightKmFuelRate} machine={machine} onHsd={set('n_hsd')} onDieselRate={set('n_diesel_rate')} onBreakdownHrs={set('n_breakdown_hrs')} onBreakdownMin={set('n_breakdown_min')} onQty={set('n_qty')} onWorkDone={set('n_work_done')} lbl={lbl} inp={inp} maxBreakdown={maxNightBreakdown} isIdle={isNightZeroWork && form.n_machine_status === 'idle'} breakdownLocked={isNightZeroWork && form.n_machine_status === 'breakdown'} qtyRequired={nightQtyRequired} fuelEnabled={machine?.fuel_entry_enabled !== false} />
               {parseFloat(form.n_breakdown_hrs) > 0 && !(isNightZeroWork && form.n_machine_status === 'breakdown') && (
                 <div>
                   <label className="block text-xs font-medium text-red-700 mb-1">Night Shift — Breakdown Reason <span className="text-red-500">*</span></label>
@@ -1460,7 +1584,7 @@ function EntryFormModal({ machine, date, onSave, onClose, isAdmin, editData, edi
                   )}
                 </div>
               )}
-              <FuelBreakdown hsd={form.hsd} dieselRate={form.diesel_rate} breakdownHrs={form.breakdown_hrs} breakdownMin={form.breakdown_min} qty={form.qty} workDone={form.work_done} fuelRate={dayFuelRate} kmFuelRate={dayKmFuelRate} machine={machine} onHsd={set('hsd')} onDieselRate={set('diesel_rate')} onBreakdownHrs={set('breakdown_hrs')} onBreakdownMin={set('breakdown_min')} onQty={set('qty')} onWorkDone={set('work_done')} lbl={lbl} inp={inp} maxBreakdown={maxDayBreakdown} isIdle={isDayZeroWork && form.machine_status === 'idle'} breakdownLocked={isDayZeroWork && form.machine_status === 'breakdown'} qtyRequired={dayQtyRequired} />
+              <FuelBreakdown hsd={form.hsd} dieselRate={form.diesel_rate} breakdownHrs={form.breakdown_hrs} breakdownMin={form.breakdown_min} qty={form.qty} workDone={form.work_done} fuelRate={dayFuelRate} kmFuelRate={dayKmFuelRate} machine={machine} onHsd={set('hsd')} onDieselRate={set('diesel_rate')} onBreakdownHrs={set('breakdown_hrs')} onBreakdownMin={set('breakdown_min')} onQty={set('qty')} onWorkDone={set('work_done')} lbl={lbl} inp={inp} maxBreakdown={maxDayBreakdown} isIdle={isDayZeroWork && form.machine_status === 'idle'} breakdownLocked={isDayZeroWork && form.machine_status === 'breakdown'} qtyRequired={dayQtyRequired} fuelEnabled={machine?.fuel_entry_enabled !== false} />
               {parseFloat(form.breakdown_hrs) > 0 && !(isDayZeroWork && form.machine_status === 'breakdown') && (
                 <div>
                   <label className="block text-xs font-medium text-red-700 mb-1">Breakdown Reason <span className="text-red-500">*</span></label>
@@ -1576,7 +1700,7 @@ function ReadingRow({ label, open, close, total, basis, invalid, onOpen, onClose
 
 // ── Fuel & Breakdown ──────────────────────────────────────────────────────────
 
-function FuelBreakdown({ hsd, dieselRate, breakdownHrs, breakdownMin, qty, workDone, fuelRate, kmFuelRate, machine, onHsd, onDieselRate, onBreakdownHrs, onBreakdownMin, onQty, onWorkDone, lbl, inp, maxBreakdown, isIdle, breakdownLocked, qtyRequired }) {
+function FuelBreakdown({ hsd, dieselRate, breakdownHrs, breakdownMin, qty, workDone, fuelRate, kmFuelRate, machine, onHsd, onDieselRate, onBreakdownHrs, onBreakdownMin, onQty, onWorkDone, lbl, inp, maxBreakdown, isIdle, breakdownLocked, qtyRequired, fuelEnabled = true }) {
   const breakdownTotal = brkHrsToDecimal(breakdownHrs, breakdownMin)
   const brkOver = !breakdownLocked && maxBreakdown != null && breakdownTotal > maxBreakdown + 0.01
   const tankCap = machine?.fuel_tank_l ? parseFloat(machine.fuel_tank_l) : null
@@ -1587,33 +1711,35 @@ function FuelBreakdown({ hsd, dieselRate, breakdownHrs, breakdownMin, qty, workD
   const dieselCost = hsdVal > 0 && rateVal > 0 ? hsdVal * rateVal : null
   return (
     <>
-      <div className={`grid gap-4 ${isIdle ? '' : 'grid-cols-2'}`}>
-        <div>
-          <label className={lbl}>
-            HSD Issued (litres)
-            {tankCap != null && <span className="font-normal text-gray-400 ml-1">(tank: {tankCap} L)</span>}
-          </label>
-          <input type="number" step="0.01" min="0" value={hsd} onChange={onHsd} className={`${inp} ${tankOver ? 'border-red-500 focus:border-red-500 focus:ring-red-200' : ''}`} placeholder="0.00" />
-          {tankOver
-            ? <p className="text-xs text-red-600 mt-1 font-medium">Exceeds tank capacity ({tankCap} L) — check the value</p>
-            : (fuelRate || kmFuelRate) && (
-              <div className="text-xs text-gray-500 mt-1 space-y-0.5">
-                {fuelRate && (
-                  <p>
-                    <span className="font-medium">{fuelRate} L/hr</span>
-                    {machine.fuel_min && machine.fuel_max && <span className="text-gray-400"> · norm {machine.fuel_min}–{machine.fuel_max} L/hr</span>}
-                  </p>
-                )}
-                {kmFuelRate && (
-                  <p>
-                    <span className="font-medium">{kmFuelRate} KM/L</span>
-                    {machine.fuel_min_km && machine.fuel_max_km && <span className="text-gray-400"> · norm {machine.fuel_min_km}–{machine.fuel_max_km} KM/L</span>}
-                  </p>
-                )}
-              </div>
-            )
-          }
-        </div>
+      <div className={`grid gap-4 ${!isIdle && fuelEnabled ? 'grid-cols-2' : ''}`}>
+        {fuelEnabled && (
+          <div>
+            <label className={lbl}>
+              HSD Issued (litres)
+              {tankCap != null && <span className="font-normal text-gray-400 ml-1">(tank: {tankCap} L)</span>}
+            </label>
+            <input type="number" step="0.01" min="0" value={hsd} onChange={onHsd} className={`${inp} ${tankOver ? 'border-red-500 focus:border-red-500 focus:ring-red-200' : ''}`} placeholder="0.00" />
+            {tankOver
+              ? <p className="text-xs text-red-600 mt-1 font-medium">Exceeds tank capacity ({tankCap} L) — check the value</p>
+              : (fuelRate || kmFuelRate) && (
+                <div className="text-xs text-gray-500 mt-1 space-y-0.5">
+                  {fuelRate && (
+                    <p>
+                      <span className="font-medium">{fuelRate} L/hr</span>
+                      {machine.fuel_min && machine.fuel_max && <span className="text-gray-400"> · norm {machine.fuel_min}–{machine.fuel_max} L/hr</span>}
+                    </p>
+                  )}
+                  {kmFuelRate && (
+                    <p>
+                      <span className="font-medium">{kmFuelRate} KM/L</span>
+                      {machine.fuel_min_km && machine.fuel_max_km && <span className="text-gray-400"> · norm {machine.fuel_min_km}–{machine.fuel_max_km} KM/L</span>}
+                    </p>
+                  )}
+                </div>
+              )
+            }
+          </div>
+        )}
         {!isIdle && (
           <div>
             <label className={lbl}>Breakdown{!breakdownLocked && maxBreakdown != null && <span className="font-normal text-gray-400 ml-1">(max {maxBreakdown.toFixed(2)} hrs)</span>}</label>
@@ -1637,19 +1763,21 @@ function FuelBreakdown({ hsd, dieselRate, breakdownHrs, breakdownMin, qty, workD
         )}
       </div>
       {/* Diesel Rate + Cost */}
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className={lbl}>
-            Diesel Rate (₹/Ltr)
-            {hsdVal > 0 && <span className="text-red-500 ml-1">*</span>}
-          </label>
-          <input type="number" step="0.01" min="0" value={dieselRate} onChange={onDieselRate} className={`${inp} ${hsdVal > 0 && !dieselRate ? 'border-amber-400 focus:ring-amber-300' : ''}`} placeholder={hsdVal > 0 ? 'Required' : 'Optional'} />
-          {dieselCost !== null && (
-            <p className="text-xs text-green-700 mt-1 font-medium">
-              Cost: ₹ {dieselCost.toFixed(2)}
-            </p>
-          )}
-        </div>
+      <div className={`grid gap-4 ${fuelEnabled ? 'grid-cols-2' : ''}`}>
+        {fuelEnabled && (
+          <div>
+            <label className={lbl}>
+              Diesel Rate (₹/Ltr)
+              {hsdVal > 0 && <span className="text-red-500 ml-1">*</span>}
+            </label>
+            <input type="number" step="0.01" min="0" value={dieselRate} onChange={onDieselRate} className={`${inp} ${hsdVal > 0 && !dieselRate ? 'border-amber-400 focus:ring-amber-300' : ''}`} placeholder={hsdVal > 0 ? 'Required' : 'Optional'} />
+            {dieselCost !== null && (
+              <p className="text-xs text-green-700 mt-1 font-medium">
+                Cost: ₹ {dieselCost.toFixed(2)}
+              </p>
+            )}
+          </div>
+        )}
         <div>
           <label className={lbl}>
             Quantity
@@ -2389,13 +2517,13 @@ function MonthGridPanel({ machine, onBack, onMinimize, onEntrySaved, isAdmin, ca
                           isDualMachine && !dsTiming.allowed ? (
                             <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title={dsTiming.message}><Clock size={9} /> After 8 AM ↑</span>
                           ) : (
-                            <button onClick={() => setFormOpen(ds)} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-full transition-colors shadow-sm whitespace-nowrap">+ Add Entry</button>
+                            <button onClick={() => setFormOpen({ date: ds, shift: null })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-full transition-colors shadow-sm whitespace-nowrap">+</button>
                           )
                         ) : (
                           <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"><Lock size={9} /> Prev Day Pending</span>
                         )
                       ) : isAdmin ? (
-                        <button onClick={() => setFormOpen(ds)} className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">+ Add</button>
+                        <button onClick={() => setFormOpen({ date: ds, shift: null })} className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">+</button>
                       ) : (
                         <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title="Contact admin to add past entries"><Lock size={9} /> Locked</span>
                       )
@@ -2425,12 +2553,7 @@ function MonthGridPanel({ machine, onBack, onMinimize, onEntrySaved, isAdmin, ca
                       const qty     = parseFloat(ent.qty) || 0
                       const canEditRangeDate = ds === machineLastEntry
                       const handleRangeEdit = () => {
-                        const isDual     = machine.shift_type === 'Dual Shift'
-                        const dayEntries = byDate[ds] || []
-                        const dayEnt     = isDual ? dayEntries.find(e => e.shift === 'Day Shift') || dayEntries[0] : dayEntries[0]
-                        const nightEnt   = isDual ? dayEntries.find(e => e.shift === 'Night Shift') : null
-                        const ids        = isDual && nightEnt ? [dayEnt.id, nightEnt.id] : [dayEnt.id]
-                        setEditOpen({ date: ds, editData: buildEditForm(machine, dayEnt, nightEnt), editIds: ids, isLastEntry: canEditRangeDate })
+                        setEditOpen({ date: ds, targetShift: ent.shift || null, editData: buildShiftEditForm(machine, ent), editIds: [ent.id], isLastEntry: canEditRangeDate })
                       }
                       rows.push(
                     <tr key={ent.id || `${ds}-${n}`} className="border-b border-gray-100 hover:bg-green-50/50 bg-green-50/20">
@@ -2590,6 +2713,9 @@ function MonthGridPanel({ machine, onBack, onMinimize, onEntrySaved, isAdmin, ca
                   const ids = isDual && nightEntry ? [dayEntry.id, nightEntry.id] : [dayEntry.id]
                   setEditOpen({ date: dateStr, editData: buildEditForm(machine, dayEntry, nightEntry), editIds: ids, isLastEntry: canEditDate })
                 }
+                const handleShiftEdit = (ent) => {
+                  setEditOpen({ date: dateStr, targetShift: ent.shift || null, editData: buildShiftEditForm(machine, ent), editIds: [ent.id], isLastEntry: canEditDate })
+                }
                 const dayShiftEnt   = isDualMachine ? (dayEnts.find(e => e.shift === 'Day Shift')   || null) : null
                 const nightShiftEnt = isDualMachine ? (dayEnts.find(e => e.shift === 'Night Shift') || null) : null
                 // For dual machines with any entry: always show Day row then Night row
@@ -2673,17 +2799,90 @@ function MonthGridPanel({ machine, onBack, onMinimize, onEntrySaved, isAdmin, ca
                             <td className={`px-3 py-2 text-right text-xs tabular-nums font-mono ${!isFuture && ent && parseFloat(ent.qty) > 0 ? 'text-gray-700' : textMuted}`}>
                               {ent && parseFloat(ent.qty) > 0 ? parseFloat(ent.qty).toFixed(2) : '—'}
                             </td>
-                            {isFirst && <td rowSpan={2} className="px-3 py-2.5 text-center align-top pt-3">
-                              <div className="flex flex-col items-center gap-1">
-                                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full whitespace-nowrap"><CheckCircle2 size={10} /> Submitted</span>
-                                {!isFuture && canEditDate && <button onClick={handleEdit} className="inline-flex items-center justify-center text-gray-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit readings, HSD and details"><Pencil size={12} /></button>}
-                                {!isFuture && !canEditDate && <button onClick={handleEdit} className="inline-flex items-center justify-center text-gray-400 hover:text-amber-700 hover:bg-amber-50 p-1 rounded transition-colors" title="Edit HSD / fuel and work details (readings locked)"><Pencil size={12} /></button>}
-                              </div>
+                            <td className="px-3 py-2 text-center">
+                              {ent ? (
+                                <div className="flex flex-col items-center gap-1">
+                                  <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full whitespace-nowrap"><CheckCircle2 size={10} /> Done</span>
+                                  {!isFuture && canEditDate && <button onClick={() => handleShiftEdit(ent)} className="inline-flex items-center justify-center text-gray-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit readings, HSD and details"><Pencil size={12} /></button>}
+                                  {!isFuture && !canEditDate && <button onClick={() => handleShiftEdit(ent)} className="inline-flex items-center justify-center text-gray-400 hover:text-amber-700 hover:bg-amber-50 p-1 rounded transition-colors" title="Edit HSD / fuel and work details (readings locked)"><Pencil size={12} /></button>}
+                                </div>
+                              ) : isFuture ? (
+                                <span className={`text-xs ${textMuted}`}>—</span>
+                              ) : isAdmin ? (
+                                <button onClick={() => setFormOpen({ date: dateStr, shift: shiftLabel })} className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">+</button>
+                              ) : canAddDpr && canEditDate ? (
+                                (() => { const tc = checkEntryTiming(dateStr, shiftLabel); return !tc.allowed
+                                  ? <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"><Clock size={9}/> {shiftLabel === 'Day Shift' ? 'After 8 PM' : 'After 8 AM'}</span>
+                                  : <button onClick={() => setFormOpen({ date: dateStr, shift: shiftLabel })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-full transition-colors shadow-sm whitespace-nowrap">+</button>
+                                })()
+                              ) : (
+                                <span className={`text-xs ${textMuted}`}>—</span>
+                              )}
+                            </td>
+                          </tr>
+                        )
+                      })
+                    ) : isDualMachine ? (
+                      // Dual Shift, no entries: separate rows for Day and Night with independent "+" buttons
+                      ['Day Shift', 'Night Shift'].map((dualShift, ei) => {
+                        const isFirstDual = ei === 0
+                        const shiftTc = checkEntryTiming(dateStr, dualShift)
+                        const dualAction = isFuture ? (
+                          <span className={`text-xs ${textMuted}`}>—</span>
+                        ) : (pendingResetDate && dateStr >= pendingResetDate) ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title="Counter Reset Request is pending Admin approval."><Lock size={9} /> Reset Pending</span>
+                        ) : (!machineLastEntry || dateStr <= machineLastEntry) ? (
+                          isToday ? (
+                            canAddDpr ? (
+                              !shiftTc.allowed ? (
+                                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"><Clock size={9} /> {dualShift === 'Day Shift' ? 'After 8 PM' : 'After 8 AM ↑'}</span>
+                              ) : (
+                                <button onClick={() => setFormOpen({ date: dateStr, shift: dualShift })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-full transition-colors shadow-sm whitespace-nowrap">+</button>
+                              )
+                            ) : (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"><Lock size={9} /> Prev Day Pending</span>
+                            )
+                          ) : isAdmin ? (
+                            <button onClick={() => setFormOpen({ date: dateStr, shift: dualShift })} className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">+</button>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"><Lock size={9} /> Locked</span>
+                          )
+                        ) : dateStr === globalNextAllowed ? (
+                          isToday ? (
+                            !shiftTc.allowed ? (
+                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"><Clock size={9} /> {dualShift === 'Day Shift' ? 'After 8 PM' : 'After 8 AM ↑'}</span>
+                            ) : (
+                              <button onClick={() => setFormOpen({ date: dateStr, shift: dualShift })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-full transition-colors shadow-sm whitespace-nowrap">+</button>
+                            )
+                          ) : isAdmin ? (
+                            <button onClick={() => setFormOpen({ date: dateStr, shift: dualShift })} className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">+</button>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"><Lock size={9} /> Locked</span>
+                          )
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-[11px] text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap"><Lock size={9} /> Fill previous first</span>
+                        )
+                        return (
+                          <tr key={ei} className={isFirstDual ? rowCls : `border-b border-gray-100 ${isFuture ? 'opacity-40' : ''}`}>
+                            {isFirstDual && <td rowSpan={2} className={`px-3 py-2.5 text-xs font-mono tabular-nums ${textMuted}`}>{d}</td>}
+                            {isFirstDual && <td rowSpan={2} className="px-3 py-2.5 whitespace-nowrap">
+                              <span className={`text-xs ${textNorm}`}><span className={`mr-1 ${textMuted}`}>{dayName}</span>{pad(d)} {MONTH_ABR[month - 1]}</span>
+                              {isToday && <span className="ml-2 text-[10px] bg-blue-600 text-white px-1.5 py-0.5 rounded-full font-bold tracking-wide">TODAY</span>}
                             </td>}
+                            <td className={`px-3 py-2 text-xs font-medium ${!isFuture ? (ei === 0 ? 'text-blue-700' : 'text-indigo-700') : textMuted}`}>{dualShift}</td>
+                            {isMultiReadingMachine
+                              ? readingConfigs.map(rc => <td key={rc.reading_type_id} className={`px-2 py-2 text-xs ${textMuted}`}>—</td>)
+                              : (<><td className={`px-2 py-2 text-xs ${textMuted}`}>—</td>{machine.dual_reading && <td className={`px-2 py-2 text-xs ${textMuted}`}>—</td>}</>)}
+                            <td className={`px-3 py-2 text-right text-xs ${textMuted}`}>—</td>
+                            <td className={`px-3 py-2 text-xs ${textMuted}`}>—</td>
+                            <td className={`px-3 py-2 text-xs ${textMuted}`}>—</td>
+                            <td className={`px-3 py-2 text-right text-xs ${textMuted}`}>—</td>
+                            <td className="px-3 py-2.5 text-center">{dualAction}</td>
                           </tr>
                         )
                       })
                     ) : (
+                      // Single Shift machine
                       <tr className={rowCls}>
                         <td className={`px-3 py-2.5 text-xs font-mono tabular-nums ${textMuted}`}>{d}</td>
                         <td className="px-3 py-2.5 whitespace-nowrap">
@@ -2755,40 +2954,30 @@ function MonthGridPanel({ machine, onBack, onMinimize, onEntrySaved, isAdmin, ca
                           ) : isFuture ? (
                             <span className="text-xs text-gray-300">—</span>
                           ) : (pendingResetDate && dateStr >= pendingResetDate) ? (
-                            // Counter reset is pending approval — block DPR entry on and after the reset date
                             <span className="inline-flex items-center gap-1 text-[11px] text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title="Counter Reset Request is pending Admin approval. DPR entry is disabled until the reset is approved.">
                               <Lock size={9} /> Reset Pending
                             </span>
                           ) : (!machineLastEntry || dateStr <= machineLastEntry) ? (
-                            // Backfill zone: no entries yet, OR this date is on/before the latest entry
                             isToday ? (
                               canAddDpr ? (
-                                isDualMachine && !todayTimingCheck.allowed ? (
-                                  <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title={todayTimingCheck.message}><Clock size={9} /> After 8 AM ↑</span>
-                                ) : (
-                                  <button onClick={() => setFormOpen(dateStr)} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-full transition-colors shadow-sm whitespace-nowrap">+ Add Entry</button>
-                                )
+                                <button onClick={() => setFormOpen({ date: dateStr, shift: null })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-full transition-colors shadow-sm whitespace-nowrap">+</button>
                               ) : (
                                 <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title={prevDayDate ? `${prevDayDate} DPR incomplete` : 'Previous day DPR not submitted'}><Lock size={9} /> Prev Day Pending</span>
                               )
                             ) : isAdmin ? (
-                              <button onClick={() => setFormOpen(dateStr)} className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">+ Add</button>
+                              <button onClick={() => setFormOpen({ date: dateStr, shift: null })} className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">+</button>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title="Contact admin to add past entries"><Lock size={9} /> Locked</span>
                             )
                           ) : dateStr === globalNextAllowed ? (
-                            // Next consecutive date after latest entry — the one unlocked forward slot
-                            isToday && isDualMachine && !todayTimingCheck.allowed ? (
-                              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title={todayTimingCheck.message}><Clock size={9} /> After 8 AM ↑</span>
-                            ) : isToday ? (
-                              <button onClick={() => setFormOpen(dateStr)} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-full transition-colors shadow-sm whitespace-nowrap">+ Add Entry</button>
+                            isToday ? (
+                              <button onClick={() => setFormOpen({ date: dateStr, shift: null })} className="inline-flex items-center gap-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 px-2.5 py-1 rounded-full transition-colors shadow-sm whitespace-nowrap">+</button>
                             ) : isAdmin ? (
-                              <button onClick={() => setFormOpen(dateStr)} className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">+ Add</button>
+                              <button onClick={() => setFormOpen({ date: dateStr, shift: null })} className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700 bg-amber-50 hover:bg-amber-100 border border-amber-200 px-2 py-0.5 rounded-full transition-colors whitespace-nowrap">+</button>
                             ) : (
                               <span className="inline-flex items-center gap-1 text-[11px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title="Contact admin to add past entries"><Lock size={9} /> Locked</span>
                             )
                           ) : (
-                            // Date is more than one step ahead of the latest entry — must fill sequentially
                             <span className="inline-flex items-center gap-1 text-[11px] text-orange-600 bg-orange-50 border border-orange-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title={`Fill ${globalNextAllowed} first`}><Lock size={9} /> Fill previous date first</span>
                           )}
                         </td>
@@ -2810,8 +2999,8 @@ function MonthGridPanel({ machine, onBack, onMinimize, onEntrySaved, isAdmin, ca
         </div>
       )}
 
-      {formOpen && <EntryFormModal machine={machine} date={formOpen} onSave={handleSaved} onClose={() => setFormOpen(null)} isAdmin={isAdmin} />}
-      {editOpen && <EntryFormModal machine={machine} date={editOpen.date} onSave={handleSaved} onClose={() => setEditOpen(null)} isAdmin={isAdmin} editData={editOpen.editData} editIds={editOpen.editIds} isLastEntry={editOpen.isLastEntry ?? true} />}
+      {formOpen && <EntryFormModal machine={machine} date={formOpen.date} onSave={handleSaved} onClose={() => setFormOpen(null)} isAdmin={isAdmin} targetShift={formOpen.shift} />}
+      {editOpen && <EntryFormModal machine={machine} date={editOpen.date} onSave={handleSaved} onClose={() => setEditOpen(null)} isAdmin={isAdmin} editData={editOpen.editData} editIds={editOpen.editIds} isLastEntry={editOpen.isLastEntry ?? true} targetShift={editOpen.targetShift || null} />}
       {resetReqOpen && <MeterResetRequestModal machine={machine} latestReading={latestReading} onClose={() => { setResetReqOpen(false); refreshPendingReset() }} />}
 {clearAllConfirm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">

@@ -323,10 +323,10 @@ function NotificationBell({ notifications, isAdmin, loadError, loading, onNaviga
 
   const warningCount = isAdmin ? compliance.warning.length : 0
 
-  // Bell color: red if urgent, amber if warnings only, gray if all clear
+  // Bell color: red if urgent, amber if warnings only, blue if all clear
   const bellColor = urgentCount > 0
     ? (pendingResets.length > 0 || compliance.expired.length > 0 || breakdowns.length > 0 ? '#ef4444' : '#f97316')
-    : warningCount > 0 ? '#d97706' : '#6b7280'
+    : warningCount > 0 ? '#d97706' : '#2563eb'
 
   const fmtDate = (str) => {
     if (!str) return '—'

@@ -163,7 +163,11 @@ export async function parseAssetFile(file) {
     const slno         = slnoRaw || assetCodeRaw
 
     if (!slno) {
-      skipped.push({ row: i + 1, reason: 'No Machine Sl no or Asset Code — row skipped' })
+      const eqLabel = typeCol >= 0 ? String(r[typeCol] ?? '').trim() : ''
+      skipped.push({
+        row: i + 1,
+        reason: `No Machine Sl no or Asset Code${eqLabel ? ` (Asset Name in row: "${eqLabel}")` : ''} — fill in column "Asset Code" or "Machine Sl no" and re-upload`,
+      })
       continue
     }
 

@@ -58,11 +58,16 @@ const createRequest = async (req, res) => {
       return res.status(400).json({ error: 'Old Meter Final Reading cannot be less than the Actual Previous Reading.' });
     }
 
-    // Block request if DPR entries already exist on or after the reset date
+    // Block request if DPR entries already exist on or after the reset date.
+    // For Night Shift resets: a Day Shift entry on the same date is OK — only block Night Shift entries on that date.
     const laterCheck = await db.query(
       `SELECT TO_CHAR(MIN(entry_date), 'DD-Mon-YYYY') AS first_date
-       FROM dpr_entries WHERE machine_id = $1 AND entry_date >= $2::date`,
-      [machine_id, reset_date]
+       FROM dpr_entries WHERE machine_id = $1
+       AND (
+         entry_date > $2::date
+         OR (entry_date = $2::date AND ($3 IS NULL OR $3 != 'Night Shift' OR shift IS NULL OR shift = 'Night Shift'))
+       )`,
+      [machine_id, reset_date, reset_shift || null]
     );
     if (laterCheck.rows[0]?.first_date) {
       return res.status(409).json({
@@ -109,12 +114,17 @@ const reviewRequest = async (req, res) => {
 
     if (rr.status !== 'pending') return res.status(409).json({ error: 'Request already reviewed' });
 
-    // Re-validate at approval time: block if DPR entries now exist on or after the reset date
+    // Re-validate at approval time: block if DPR entries now exist on or after the reset date.
+    // For Night Shift resets: Day Shift entries on the same date are OK.
     if (action === 'approve') {
       const laterCheck = await db.query(
         `SELECT TO_CHAR(MIN(entry_date), 'DD-Mon-YYYY') AS first_date
-         FROM dpr_entries WHERE machine_id = $1 AND entry_date >= $2::date`,
-        [rr.machine_id, rr.reset_date]
+         FROM dpr_entries WHERE machine_id = $1
+         AND (
+           entry_date > $2::date
+           OR (entry_date = $2::date AND ($3 IS NULL OR $3 != 'Night Shift' OR shift IS NULL OR shift = 'Night Shift'))
+         )`,
+        [rr.machine_id, rr.reset_date, rr.reset_shift || null]
       );
       if (laterCheck.rows[0]?.first_date) {
         return res.status(409).json({
@@ -140,11 +150,12 @@ const reviewRequest = async (req, res) => {
         // Create actual meter reset record
         await client.query(
           `INSERT INTO machine_meter_resets
-             (machine_id, entry_date, reading_code, actual_reading_before_reset, previous_reading, new_reading, notes, reset_by)
-           VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8)`,
+             (machine_id, entry_date, shift, reading_code, actual_reading_before_reset, previous_reading, new_reading, notes, reset_by)
+           VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8, $9)`,
           [
             rr.machine_id,
             rr.reset_date,
+            rr.reset_shift || null,
             rr.reading_code || null,
             rr.actual_reading_before_reset != null ? rr.actual_reading_before_reset : null,
             rr.old_reading  != null ? rr.old_reading  : null,

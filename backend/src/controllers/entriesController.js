@@ -94,7 +94,7 @@ const getPreviousClosing = async (req, res) => {
 
     if (machine_shift_type === 'Single Shift') {
       // Single shift: most recent entry (any shift), excluding the current shift being entered on the same date
-      entryQuery = `SELECT id, entry_date, r1_close, r2_close, reset_old_reading FROM dpr_entries
+      entryQuery = `SELECT id, entry_date, shift, r1_close, r2_close, reset_old_reading FROM dpr_entries
                     WHERE machine_id = $1
                       AND NOT (entry_date = $2::date AND shift = $3)
                     ORDER BY entry_date DESC,
@@ -103,12 +103,12 @@ const getPreviousClosing = async (req, res) => {
       params = [machine_id, entry_date, shift];
     } else if (shift === 'Night Shift') {
       // Dual shift night: same-day Day Shift closing
-      entryQuery = `SELECT id, entry_date, r1_close, r2_close, reset_old_reading FROM dpr_entries
+      entryQuery = `SELECT id, entry_date, shift, r1_close, r2_close, reset_old_reading FROM dpr_entries
                     WHERE machine_id = $1 AND entry_date = $2 AND shift = 'Day Shift'`;
       params = [machine_id, entry_date];
     } else {
       // Dual shift day: previous day's most recent entry
-      entryQuery = `SELECT id, entry_date, r1_close, r2_close, reset_old_reading FROM dpr_entries
+      entryQuery = `SELECT id, entry_date, shift, r1_close, r2_close, reset_old_reading FROM dpr_entries
                     WHERE machine_id = $1 AND entry_date = $2::date - INTERVAL '1 day'
                     ORDER BY CASE shift WHEN 'Night Shift' THEN 1 WHEN 'Dual Shift' THEN 2 ELSE 3 END
                     LIMIT 1`;
@@ -133,6 +133,7 @@ const getPreviousClosing = async (req, res) => {
     }
 
     // Helper: apply a reset record to prev (used for both Day/Single and Night Shift paths)
+    let resetApplied = false;
     const applyReset = async (reset) => {
       if (!reset || reset.new_reading == null) return;
 
@@ -141,9 +142,16 @@ const getPreviousClosing = async (req, res) => {
       const prevClose    = prev ? parseFloat(prev.r1_close) : null;
       const oldReading   = reset.previous_reading != null ? parseFloat(reset.previous_reading) : null;
 
-      // Mid-shift: reset happened ON the same date as the entry being created,
-      // AND the old meter reading at time of replacement exceeds the shift opening.
-      const isMidShift = sameDay && oldReading != null && prevClose != null && oldReading > prevClose + 0.001;
+      // Mid-shift: reset happened ON the same date AND the old meter reading at time of
+      // replacement exceeds the shift opening. Two additional guards:
+      // 1. If the reset has a shift column set, it was created via request-approval and
+      //    always targets a specific shift's OPENING (between-shift) — never mid-shift.
+      // 2. For Night Shift entries, getPreviousClosing provides the OPENING; a "mid-shift"
+      //    reset within the Night Shift cannot be detected here because the machine often
+      //    runs between Day Shift end and Night Shift start, making oldReading > prevClose
+      //    even for between-shift resets. Night Shift mid-shift resets are entered directly
+      //    in the DPR form, so always treat Night Shift same-date resets as between-shift.
+      const isMidShift = shift !== 'Night Shift' && !reset.shift && sameDay && oldReading != null && prevClose != null && oldReading > prevClose + 0.001;
 
       if (isMidShift) {
         const midShiftReset = {
@@ -157,13 +165,14 @@ const getPreviousClosing = async (req, res) => {
       }
 
       // Between-shift reset: override opening with new meter start reading.
-      // BUT skip the override when the prev DPR entry is itself on the reset date AND
-      // already has reset_old_reading set — that means the prev entry correctly
-      // accounted for the mid-shift. Its closing IS the new-meter closing; use it as-is.
+      // Skip the override when the previous DPR entry already accounted for this reset:
+      // (a) prev has reset_old_reading — it was a mid-shift reset absorbed by that entry, or
+      // (b) prev is a Night Shift on the same date as the reset — the reset was applied as
+      //     Night Shift's opening; the following Day Shift must use Night Shift's closing.
       const prevAlreadyAccountedForReset =
         prev &&
         String(prev.entry_date).slice(0, 10) === resetDateStr &&
-        prev.reset_old_reading != null;
+        (prev.reset_old_reading != null || prev.shift === 'Night Shift');
 
       if (prevAlreadyAccountedForReset) return false;
 
@@ -189,6 +198,7 @@ const getPreviousClosing = async (req, res) => {
       } else {
         prev = { ...prev, r1_close: reset.new_reading };
       }
+      resetApplied = true;
       return false;
     };
 
@@ -196,15 +206,19 @@ const getPreviousClosing = async (req, res) => {
     // Day Shift / Single Shift: look for resets between prev entry date and today.
     // Night Shift: opening comes from same-day Day Shift; also check for same-day mid-shift reset.
     if (shift !== 'Night Shift') {
+      // Exclude Night-Shift-specific resets — those target Night Shift opening and should
+      // not bleed into the following Day/Single Shift entry.
       let resetQuery, resetParams;
       if (prev) {
         resetQuery = `SELECT * FROM machine_meter_resets
                       WHERE machine_id = $1 AND entry_date >= $2 AND entry_date <= $3
+                        AND (shift IS NULL OR shift != 'Night Shift')
                       ORDER BY entry_date DESC, reset_at DESC LIMIT 1`;
         resetParams = [machine_id, prev.entry_date, entry_date];
       } else {
         resetQuery = `SELECT * FROM machine_meter_resets
                       WHERE machine_id = $1 AND entry_date <= $2
+                        AND (shift IS NULL OR shift != 'Night Shift')
                       ORDER BY entry_date DESC, reset_at DESC LIMIT 1`;
         resetParams = [machine_id, entry_date];
       }
@@ -212,21 +226,21 @@ const getPreviousClosing = async (req, res) => {
       const sent = await applyReset(resetResult.rows[0] || null);
       if (sent) return;
     } else {
-      // Night Shift: check for a mid-shift reset on this exact date
-      // (meter replaced during the night shift itself)
-      if (prev) {
-        const nsResetResult = await db.query(
-          `SELECT * FROM machine_meter_resets
-           WHERE machine_id = $1 AND entry_date = $2::date
-           ORDER BY reset_at DESC LIMIT 1`,
-          [machine_id, entry_date]
-        );
-        const sent = await applyReset(nsResetResult.rows[0] || null);
-        if (sent) return;
-      }
+      // Night Shift: check for a between-shift or mid-shift reset on this exact date.
+      // Exclude resets that target a different shift (e.g. Day Shift between-shift resets).
+      // Note: always check even when prev is null (no Day Shift) — applyReset handles it.
+      const nsResetResult = await db.query(
+        `SELECT * FROM machine_meter_resets
+         WHERE machine_id = $1 AND entry_date = $2::date
+           AND (shift IS NULL OR shift = 'Night Shift')
+         ORDER BY reset_at DESC LIMIT 1`,
+        [machine_id, entry_date]
+      );
+      const sent = await applyReset(nsResetResult.rows[0] || null);
+      if (sent) return;
     }
 
-    res.json({ data: prev ? { ...prev, readings } : null });
+    res.json({ data: prev ? { ...prev, readings, ...(resetApplied ? { reset_applied: true } : {}) } : null });
   } catch (err) {
     console.error('Get previous closing error:', err);
     res.status(500).json({ error: 'Server error' });
@@ -843,14 +857,15 @@ const getDprStatus = async (req, res) => {
               m.shift_type, m.ownership, m.dual_reading, m.planned_hours,
               m.reading1_basis, m.reading2_basis, m.fuel_min, m.fuel_max, m.fuel_min_km, m.fuel_max_km, m.fuel_tank_l,
               m.tm_split_mode, m.tm_split_value,
+              COALESCE(m.fuel_formula_type, etc.fuel_formula_type, 'L_per_Hr') AS fuel_formula_type,
               m.project_id,
-              COALESCE(etc.qty_mandatory_if_km,       false) AS qty_mandatory_if_km,
-              COALESCE(etc.qty_mandatory_if_hrs,      false) AS qty_mandatory_if_hrs,
-              COALESCE(etc.closing_reading_mandatory, true)  AS closing_reading_mandatory,
-              COALESCE(etc.allow_negative_reading,    false) AS allow_negative_reading,
-              COALESCE(etc.work_done_mandatory,       false) AS work_done_mandatory,
-              COALESCE(etc.fuel_entry_enabled,        true)  AS fuel_entry_enabled,
-              COALESCE(etc.breakdown_entry_enabled,   true)  AS breakdown_entry_enabled,
+              COALESCE(m.qty_mandatory_km_override,  etc.qty_mandatory_if_km,       false) AS qty_mandatory_if_km,
+              COALESCE(m.qty_mandatory_hrs_override, etc.qty_mandatory_if_hrs,      false) AS qty_mandatory_if_hrs,
+              COALESCE(m.closing_reading_override,   etc.closing_reading_mandatory, true)  AS closing_reading_mandatory,
+              COALESCE(etc.allow_negative_reading,                                  false) AS allow_negative_reading,
+              COALESCE(etc.work_done_mandatory,                                     false) AS work_done_mandatory,
+              COALESCE(m.fuel_entry_override,        etc.fuel_entry_enabled,        true)  AS fuel_entry_enabled,
+              COALESCE(m.breakdown_entry_override,   etc.breakdown_entry_enabled,   true)  AS breakdown_entry_enabled,
               COALESCE(
                 (SELECT JSON_AGG(JSON_BUILD_OBJECT(
                   'id', mrc.id, 'reading_type_id', rt.id, 'code', rt.code,

@@ -165,14 +165,15 @@ exports.upsert = async (req, res) => {
     // Propagate scalar fields to all active machines of this eq_type
     await db.query(`
       UPDATE machines SET
-        fuel_type      = COALESCE($2, fuel_type),
-        shift_type     = $3,
-        fuel_min       = $4,
-        fuel_max       = $5,
-        fuel_min_km    = $6,
-        fuel_max_km    = $7,
-        tm_split_mode  = $8,
-        tm_split_value = $9
+        fuel_type         = COALESCE($2, fuel_type),
+        shift_type        = $3,
+        fuel_min          = $4,
+        fuel_max          = $5,
+        fuel_min_km       = $6,
+        fuel_max_km       = $7,
+        tm_split_mode     = $8,
+        tm_split_value    = $9,
+        fuel_formula_type = $10
       WHERE LOWER(eq_type) = LOWER($1) AND active = true
     `, [
       eqTypeName,
@@ -184,6 +185,7 @@ exports.upsert = async (req, res) => {
       toNum(b.fuel_economy_max),
       b.tm_split_mode  || null,
       toNum(b.tm_split_value),
+      b.fuel_formula_type || 'L_per_Hr',
     ]);
 
     res.json({ data: saved.rows[0] });

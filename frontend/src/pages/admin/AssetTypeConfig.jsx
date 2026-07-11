@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
-  ChevronLeft, Save, Loader2, Plus, Trash2, CheckCircle2,
-  Settings, BookOpen, Fuel, ShieldCheck, RotateCcw,
+  ChevronLeft, Save, Loader2, CheckCircle2,
+  BookOpen, Fuel, ShieldCheck,
   ClipboardList, BarChart2, FileText, AlertCircle, Wrench, Bell, Lock,
 } from 'lucide-react'
 import { getEquipmentTypeConfig, saveEquipmentTypeConfig } from '../../lib/api'
@@ -56,7 +56,6 @@ function Section({ icon: Icon, title, color = 'blue', children }) {
   )
 }
 
-const UNIT_OPTIONS    = ['Hrs', 'Km', 'Ltr', 'Units']
 const SHIFT_OPTIONS   = ['Single Shift', 'Dual Shift']
 const FORMULA_OPTIONS = [
   { value: 'L_per_Hr', label: 'Fuel Consumption — Fuel ÷ Hours (L/Hr)' },
@@ -119,7 +118,6 @@ export default function AssetTypeConfig() {
   const [cfg,          setCfg]          = useState(defaultConfig)
   const [eqType,       setEqType]       = useState(null)
   const [machines,     setMachines]     = useState([])
-  const [readingTypes, setReadingTypes] = useState([])
   const [showTmPopup,  setShowTmPopup]  = useState(false)
   const [tmPopupMode,  setTmPopupMode]  = useState('drum_rate')
   const [tmPopupValue, setTmPopupValue] = useState('')
@@ -139,7 +137,6 @@ export default function AssetTypeConfig() {
         }
         setEqType(d.eqType)
         setMachines(d.machines      || [])
-        setReadingTypes(d.readingTypes || [])
       })
       .catch(e => setError(e.response?.data?.error || 'Failed to load'))
       .finally(() => setLoading(false))
@@ -168,36 +165,6 @@ export default function AssetTypeConfig() {
     set('tm_split_value', tmPopupValue)
     setShowTmPopup(false)
   }
-
-  /* ── Reading Configs ── */
-  const addReading = () =>
-    setCfg(c => ({
-      ...c,
-      reading_configs: [
-        ...c.reading_configs,
-        { code: '', name: '', unit: 'Hrs', mandatory: true, sort_order: c.reading_configs.length + 1 },
-      ],
-    }))
-
-  const setReadingField = (idx, key, val) =>
-    setCfg(c => ({
-      ...c,
-      reading_configs: c.reading_configs.map((r, i) => i === idx ? { ...r, [key]: val } : r),
-    }))
-
-  const removeReading = (idx) =>
-    setCfg(c => ({ ...c, reading_configs: c.reading_configs.filter((_, i) => i !== idx) }))
-
-  const toggleResetCode = (code) =>
-    setCfg(c => {
-      const codes = c.reset_reading_codes || []
-      return {
-        ...c,
-        reset_reading_codes: codes.includes(code)
-          ? codes.filter(x => x !== code)
-          : [...codes, code],
-      }
-    })
 
   /* ── Save ── */
   const handleSave = async () => {
@@ -327,77 +294,6 @@ export default function AssetTypeConfig() {
         )}
       </Section>
 
-      {/* Section 2 — Reading Configuration */}
-      <Section icon={Settings} title="Reading Configuration" color="blue">
-        <div className="space-y-3">
-          {cfg.reading_configs.map((r, idx) => (
-            <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-gray-50 rounded-lg px-3 py-2.5">
-              <div className="col-span-1 text-center">
-                <span className="text-xs font-bold text-gray-400">{idx + 1}</span>
-              </div>
-              <div className="col-span-3">
-                <label className="block text-xs text-gray-400 mb-0.5">Reading Code</label>
-                <select
-                  value={r.code}
-                  onChange={e => {
-                    const rt = readingTypes.find(t => t.code === e.target.value)
-                    setReadingField(idx, 'code', e.target.value)
-                    if (rt) { setReadingField(idx, 'name', rt.name); setReadingField(idx, 'unit', rt.unit) }
-                  }}
-                  className={inpSm + ' w-full'}
-                >
-                  <option value="">— Select —</option>
-                  {readingTypes.map(t => (
-                    <option key={t.code} value={t.code}>{t.code} — {t.name}</option>
-                  ))}
-                </select>
-              </div>
-              <div className="col-span-3">
-                <label className="block text-xs text-gray-400 mb-0.5">Display Name</label>
-                <input
-                  type="text" value={r.name}
-                  onChange={e => setReadingField(idx, 'name', e.target.value)}
-                  placeholder="e.g. Engine Hours"
-                  className={inpSm + ' w-full'}
-                />
-              </div>
-              <div className="col-span-2">
-                <label className="block text-xs text-gray-400 mb-0.5">Unit</label>
-                <select value={r.unit} onChange={e => setReadingField(idx, 'unit', e.target.value)} className={inpSm + ' w-full'}>
-                  {UNIT_OPTIONS.map(u => <option key={u} value={u}>{u}</option>)}
-                </select>
-              </div>
-              <div className="col-span-2 flex items-center gap-2 pt-4">
-                <label className="flex items-center gap-1.5 text-xs text-gray-600 cursor-pointer select-none">
-                  <input type="checkbox" checked={r.mandatory}
-                    onChange={e => setReadingField(idx, 'mandatory', e.target.checked)}
-                    className="w-3.5 h-3.5 accent-blue-600"
-                  />
-                  Mandatory
-                </label>
-              </div>
-              <div className="col-span-1 flex justify-end">
-                <button onClick={() => removeReading(idx)}
-                  className="p-1.5 text-gray-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors">
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            </div>
-          ))}
-
-          <button onClick={addReading}
-            className="flex items-center gap-2 px-3 py-2 border border-dashed border-blue-300 text-blue-600 hover:bg-blue-50 rounded-lg text-xs font-medium transition-colors w-full justify-center">
-            <Plus size={13} /> Add Reading
-          </button>
-
-          {cfg.reading_configs.length === 0 && (
-            <p className="text-xs text-gray-400 text-center py-2">
-              No readings configured. Click "Add Reading" to define readings for this asset type.
-            </p>
-          )}
-        </div>
-      </Section>
-
       {/* Section 3 — Fuel Configuration */}
       <Section icon={Fuel} title="Fuel Configuration" color="amber">
         <div className="space-y-4">
@@ -408,46 +304,11 @@ export default function AssetTypeConfig() {
             note="Disable for electric or non-fuel assets"
           />
           {cfg.fuel_applicable && (
-            <div className="grid grid-cols-2 gap-4 pt-2 border-t border-gray-100">
-              <div>
-                <label className={lbl}>Fuel Type</label>
-                <select value={cfg.fuel_type || ''} onChange={e => set('fuel_type', e.target.value)} className={inp}>
-                  <option value="">— Not specified —</option>
-                  {['Diesel', 'HS Diesel', 'Petrol', 'CNG', 'Electric', 'N/A'].map(f => (
-                    <option key={f} value={f}>{f}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className={lbl}>Fuel Tank Count</label>
-                <select value={cfg.fuel_tank_count || 1} onChange={e => set('fuel_tank_count', parseInt(e.target.value))} className={inp}>
-                  {[1, 2, 3].map(n => <option key={n} value={n}>{n} Tank{n > 1 ? 's' : ''}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className={lbl}>Approved Consumption — Min (L/Hr)</label>
-                <input type="number" step="0.01" min="0"
-                  value={cfg.fuel_consumption_min ?? ''} onChange={e => set('fuel_consumption_min', e.target.value)}
-                  placeholder="e.g. 2.00" className={inp} />
-              </div>
-              <div>
-                <label className={lbl}>Approved Consumption — Max (L/Hr)</label>
-                <input type="number" step="0.01" min="0"
-                  value={cfg.fuel_consumption_max ?? ''} onChange={e => set('fuel_consumption_max', e.target.value)}
-                  placeholder="e.g. 3.00" className={inp} />
-              </div>
-              <div>
-                <label className={lbl}>Approved Economy — Min (KM/L)</label>
-                <input type="number" step="0.01" min="0"
-                  value={cfg.fuel_economy_min ?? ''} onChange={e => set('fuel_economy_min', e.target.value)}
-                  placeholder="e.g. 1.00" className={inp} />
-              </div>
-              <div>
-                <label className={lbl}>Approved Economy — Max (KM/L)</label>
-                <input type="number" step="0.01" min="0"
-                  value={cfg.fuel_economy_max ?? ''} onChange={e => set('fuel_economy_max', e.target.value)}
-                  placeholder="e.g. 1.50" className={inp} />
-              </div>
+            <div className="pt-2 border-t border-gray-100">
+              <label className={lbl}>Fuel Tank Count</label>
+              <select value={cfg.fuel_tank_count || 1} onChange={e => set('fuel_tank_count', parseInt(e.target.value))} className={inp + ' max-w-xs'}>
+                {[1, 2, 3].map(n => <option key={n} value={n}>{n} Tank{n > 1 ? 's' : ''}</option>)}
+              </select>
             </div>
           )}
         </div>
@@ -722,60 +583,10 @@ export default function AssetTypeConfig() {
         </div>
       </Section>
 
-      {/* Section 6 — Counter Log Settings */}
-      <Section icon={RotateCcw} title="Counter Log Settings" color="purple">
-        <div className="space-y-4">
-          <Toggle checked={cfg.counter_reset_allowed} onChange={v => set('counter_reset_allowed', v)}
-            label="Counter Reset Allowed for this Asset Type" />
-          {cfg.counter_reset_allowed && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                Readings eligible for reset
-              </p>
-              {cfg.reading_configs.length === 0 && readingTypes.length === 0 ? (
-                <p className="text-xs text-gray-400 italic">Configure readings first in Section 2.</p>
-              ) : (
-                <div className="grid grid-cols-2 gap-2">
-                  {(cfg.reading_configs.length > 0 ? cfg.reading_configs : readingTypes).map(r => {
-                    const code = r.code
-                    const name = r.name || readingTypes.find(t => t.code === code)?.name || code
-                    if (!code) return null
-                    return (
-                      <label key={code} className="flex items-center gap-2.5 cursor-pointer select-none bg-gray-50 hover:bg-gray-100 rounded-lg px-3 py-2 transition-colors">
-                        <input type="checkbox"
-                          checked={(cfg.reset_reading_codes || []).includes(code)}
-                          onChange={() => toggleResetCode(code)}
-                          className="w-4 h-4 accent-purple-600"
-                        />
-                        <span className="text-sm text-gray-700">{name}</span>
-                        <span className="ml-auto text-xs text-gray-400">{r.unit}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </Section>
-
       {/* Section 7 — DPR Settings */}
       <Section icon={ClipboardList} title="DPR Settings" color="teal">
         <div className="space-y-4">
-          <div>
-            <label className={lbl}>Default Shift Type</label>
-            <div className="flex gap-2">
-              {SHIFT_OPTIONS.map(s => (
-                <button key={s} type="button" onClick={() => set('shift_type', s)}
-                  className={`flex-1 py-2 text-sm font-medium rounded-lg border transition-colors ${
-                    cfg.shift_type === s ? 'bg-teal-600 border-teal-600 text-white' : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                  }`}>
-                  {s}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="border-t border-gray-100 pt-4 space-y-3">
+          <div className="space-y-3">
             <Toggle checked={cfg.fuel_entry_enabled}      onChange={v => set('fuel_entry_enabled', v)}      label="Fuel Entry Enabled"      note="Allow HSD (fuel) entries in DPR" />
             <Toggle checked={cfg.breakdown_entry_enabled} onChange={v => set('breakdown_entry_enabled', v)} label="Breakdown Entry Enabled"  note="Allow breakdown hours in DPR" />
             <Toggle checked={cfg.work_done_mandatory}     onChange={v => set('work_done_mandatory', v)}     label="Work Done Description Mandatory" />
@@ -850,7 +661,7 @@ export default function AssetTypeConfig() {
       {/* Save footer */}
       <div className="sticky bottom-0 z-10 bg-white border-t border-gray-200 -mx-6 px-6 py-3 flex items-center justify-between gap-3">
         <p className="text-xs text-gray-400">
-          Saving will apply <strong>Fuel Type</strong>, <strong>Shift Type</strong>, and <strong>Fuel Ranges</strong> to all{' '}
+          Saving will apply <strong>Fuel Applicable</strong> setting to all{' '}
           <strong>{machines.length} active {eqType?.name || ''} machine{machines.length !== 1 ? 's' : ''}</strong>.
         </p>
         <div className="flex items-center gap-3 flex-shrink-0">

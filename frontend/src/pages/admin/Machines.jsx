@@ -286,9 +286,30 @@ export default function Machines() {
 
   const handleBulkUpload = async () => {
     if (!bulkPreview?.items?.length) return
+    // Pre-validate project codes — show clear error if code in file doesn't exactly match
+    const uploadItems = bulkPreview.items
+    if (projects.length > 0) {
+      const validCodes = new Set(projects.map(p => p.code.toUpperCase()))
+      const rawCodes = [...new Set(
+        uploadItems.map(i => i.project_code).filter(Boolean).map(c => c.toString().trim())
+      )]
+      const unknownCodes = rawCodes.filter(c => !validCodes.has(c.toUpperCase()))
+      if (unknownCodes.length > 0) {
+        const hints = unknownCodes.map(unk => {
+          const suggestion = projects.find(p =>
+            p.code.toUpperCase().split(/\s+/).includes(unk.toUpperCase())
+          )
+          return suggestion
+            ? `"${unk}" not found — did you mean "${suggestion.code}"?`
+            : `"${unk}" not found`
+        })
+        setBulkResult({ error: `Project code mismatch in file: ${hints.join('; ')}. Update column "Project Code" in your Excel file and re-upload. Available codes: ${projects.map(p => p.code).join(', ')}` })
+        return
+      }
+    }
     setBulkSaving(true); setBulkResult(null)
     try {
-      const res = await bulkCreateMachines(bulkPreview.items)
+      const res = await bulkCreateMachines(uploadItems)
       setBulkResult(res.data)
       if (res.data.created > 0 || res.data.updated > 0 || res.data.reactivated > 0) {
         load()
