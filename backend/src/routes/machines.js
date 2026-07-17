@@ -1,9 +1,10 @@
 const router = require('express').Router();
-const { getAll, create, update, updateOverrides, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames, getLastEntry } = require('../controllers/machinesController');
+const { getAll, create, update, updateOverrides, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames, getLastEntry, ageing } = require('../controllers/machinesController');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
 router.get('/fleet-summary',            requireAuth,              fleetSummary);
 router.get('/fleet-list',               requireAuth,              fleetList);
+router.get('/ageing',                   requireAuth,              ageing);
 router.get('/',                          requireAuth,              getAll);
 router.post('/',                         requireAuth,              create);
 router.post('/bulk',                          requireAuth,              bulkCreate);

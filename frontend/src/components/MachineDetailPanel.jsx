@@ -3,12 +3,14 @@ import { useNavigate } from 'react-router-dom'
 import {
   Edit2, X, Plus, Upload, Download, Eye, Trash2, RotateCcw,
   MoreVertical, Tag, Wrench, Calendar, IndianRupee, Clock, Info, MapPin,
-  ClipboardList, ExternalLink, CheckCircle, XCircle, Loader2,
+  ClipboardList, ExternalLink, CheckCircle, XCircle, Loader2, ClipboardCheck,
+  Check, Gauge, Settings, ArrowDownToLine,
 } from 'lucide-react'
 import {
   getMachineCompliance, batchUpsertCompliance, deleteCompliance,
   getMachineDocuments, createMachineDocument, deleteMachineDocument, getMachineDocumentUrl,
   getMeterResetRequests, reviewMeterResetRequest,
+  getMachineScs, updateMachineScs, inheritMachineScs,
 } from '../lib/api'
 
 export function fmt(val) { return val ?? '—' }
@@ -74,6 +76,240 @@ export const STATUS_DOT = {
 export function fmtCompDate(d) {
   if (!d) return ''
   return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+// ── Machine SCS Panel ─────────────────────────────────────────────────────────
+function MachineScsPanel({ machineId }) {
+  const [items,    setItems]    = useState([])
+  const [unsynced, setUnsynced] = useState([])
+  const [loading,  setLoading]  = useState(true)
+  const [inheriting, setInheriting] = useState(false)
+  const [menuId,   setMenuId]   = useState(null)
+  const [intervalModal, setIntervalModal] = useState(null)
+  const [saving,   setSaving]   = useState(false)
+
+  const load = () => {
+    setLoading(true)
+    getMachineScs({ machine_id: machineId })
+      .then(r => {
+        setItems(r.data.data || [])
+        setUnsynced(r.data.unsynced || [])
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false))
+  }
+  useEffect(() => { load() }, [machineId])
+
+  const handleToggle = async item => {
+    try {
+      await updateMachineScs(item.id, { ...item, enabled: !item.enabled })
+      load()
+    } catch {}
+  }
+
+  const handleIntervalSave = async form => {
+    setSaving(true)
+    try {
+      await updateMachineScs(intervalModal.id, {
+        ...intervalModal,
+        hours_enabled:  form.hours_enabled,
+        interval_hours: parseInt(form.interval_hours) || null,
+        km_enabled:     form.km_enabled,
+        interval_km:    parseInt(form.interval_km)    || null,
+        days_enabled:   form.days_enabled,
+        interval_days:  parseInt(form.interval_days)  || null,
+        is_inherited:   false,
+      })
+      setIntervalModal(null)
+      load()
+    } catch {}
+    finally { setSaving(false) }
+  }
+
+  const handleInherit = async () => {
+    setInheriting(true)
+    try {
+      await inheritMachineScs({ machine_id: machineId, eq_type_id: eqTypeId })
+      load()
+    } catch {}
+    finally { setInheriting(false) }
+  }
+
+  const inp = 'border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full'
+
+  return (
+    <div className="flex-1 overflow-y-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 bg-white flex-shrink-0 sticky top-0 z-10">
+        <div className="flex items-center gap-2">
+          <div className="w-1 h-4 bg-blue-600 rounded-full" />
+          <h3 className="text-sm font-semibold text-gray-800">Service Checksheets</h3>
+          {unsynced.length > 0 && (
+            <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full">{unsynced.length} unsynced</span>
+          )}
+        </div>
+        {unsynced.length > 0 && (
+          <button onClick={handleInherit} disabled={inheriting}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:opacity-60">
+            {inheriting ? <Loader2 size={11} className="animate-spin"/> : <ArrowDownToLine size={11}/>}
+            Inherit from Category
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12 text-gray-400">
+          <Loader2 size={18} className="animate-spin mr-2"/> Loading…
+        </div>
+      ) : items.length === 0 && unsynced.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-2">
+          <ClipboardCheck size={28} className="text-gray-300"/>
+          <p className="text-sm">No checksheets configured for this asset category.</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-gray-100">
+          {items.map(item => (
+            <div key={item.id} className={`flex items-start gap-3 px-5 py-3.5 hover:bg-gray-50 transition-colors ${!item.enabled ? 'opacity-60' : ''}`}>
+              {/* Enable toggle */}
+              <button onClick={() => handleToggle(item)}
+                className={`mt-0.5 w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${item.enabled ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
+                {item.enabled ? <Check size={13}/> : <X size={13}/>}
+              </button>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-gray-800 truncate">
+                  {item.custom_name || item.check_sheet_name || '—'}
+                  {item.is_inherited && <span className="ml-1.5 text-[10px] text-blue-400 font-normal">inherited</span>}
+                </p>
+                {item.custom_name && <p className="text-[10px] text-gray-400">{item.check_sheet_name}</p>}
+                <div className="flex flex-wrap gap-3 mt-1">
+                  {item.hours_enabled && (
+                    <span className="flex items-center gap-1 text-[10px] text-blue-600 font-semibold">
+                      <Clock size={10}/> {item.interval_hours ?? '—'} Hrs
+                    </span>
+                  )}
+                  {item.km_enabled && (
+                    <span className="flex items-center gap-1 text-[10px] text-green-600 font-semibold">
+                      <Gauge size={10}/> {item.interval_km ?? '—'} KM
+                    </span>
+                  )}
+                  {item.days_enabled && (
+                    <span className="flex items-center gap-1 text-[10px] text-orange-600 font-semibold">
+                      <Calendar size={10}/> {item.interval_days ?? '—'} Days
+                    </span>
+                  )}
+                  {!item.hours_enabled && !item.km_enabled && !item.days_enabled && (
+                    <span className="text-[10px] text-gray-400 italic">No interval set</span>
+                  )}
+                </div>
+              </div>
+              <div className="relative flex-shrink-0">
+                <button onClick={() => setMenuId(menuId === item.id ? null : item.id)}
+                  className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
+                  <MoreVertical size={13}/>
+                </button>
+                {menuId === item.id && (
+                  <div className="absolute right-8 top-0 z-20 bg-white border border-gray-200 rounded-xl shadow-xl w-40 py-1 text-xs text-left">
+                    <button onClick={() => { setIntervalModal(item); setMenuId(null) }}
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 text-gray-700">
+                      <Settings size={11}/> Change Interval
+                    </button>
+                    <button onClick={() => { handleToggle(item); setMenuId(null) }}
+                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 text-gray-700">
+                      {item.enabled ? <><X size={11}/> Disable</> : <><Check size={11}/> Enable</>}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ))}
+          {unsynced.length > 0 && (
+            <div className="px-5 py-3 bg-amber-50 border-t border-amber-100">
+              <p className="text-xs text-amber-700 font-semibold mb-1.5">{unsynced.length} category checksheet{unsynced.length !== 1 ? 's' : ''} not yet synced to this asset:</p>
+              <div className="space-y-1 mb-2">
+                {unsynced.map(u => (
+                  <p key={u.id} className="text-xs text-amber-600">• {u.custom_name || u.check_sheet_name}</p>
+                ))}
+              </div>
+              <button onClick={handleInherit} disabled={inheriting}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-lg disabled:opacity-60">
+                {inheriting ? <Loader2 size={11} className="animate-spin"/> : <ArrowDownToLine size={11}/>}
+                Inherit Missing Checksheets
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Interval Modal */}
+      {intervalModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-indigo-700 rounded-t-2xl">
+              <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                <Settings size={14}/> Change Interval
+              </h3>
+              <button onClick={() => setIntervalModal(null)} className="text-indigo-200 hover:text-white"><X size={18}/></button>
+            </div>
+            <div className="p-5 text-xs text-gray-500 font-medium mb-1 bg-indigo-50 border-b border-indigo-100 px-5 py-2.5">
+              {intervalModal.custom_name || intervalModal.check_sheet_name}
+              {intervalModal.is_inherited && <span className="ml-2 text-indigo-400">— override category default</span>}
+            </div>
+            <MachineIntervalEditor item={intervalModal} onSave={handleIntervalSave} onClose={() => setIntervalModal(null)} saving={saving} inp={inp}/>
+          </div>
+        </div>
+      )}
+      {menuId && <div className="fixed inset-0 z-10" onClick={() => setMenuId(null)}/>}
+    </div>
+  )
+}
+
+function MachineIntervalEditor({ item, onSave, onClose, saving, inp }) {
+  const [form, setForm] = useState({
+    hours_enabled: item?.hours_enabled ?? true,
+    interval_hours: item?.interval_hours ?? '',
+    km_enabled: item?.km_enabled ?? false,
+    interval_km: item?.interval_km ?? '',
+    days_enabled: item?.days_enabled ?? false,
+    interval_days: item?.interval_days ?? '',
+  })
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+  const rows = [
+    { key: 'hours', label: 'Hours', icon: Clock, unit: 'Hours', active: 'border-blue-300 bg-blue-50',   chk: 'accent-blue-600',   ic: 'text-blue-600'   },
+    { key: 'km',    label: 'KM',    icon: Gauge, unit: 'KM',    active: 'border-green-300 bg-green-50', chk: 'accent-green-600',  ic: 'text-green-600'  },
+    { key: 'days',  label: 'Days',  icon: Calendar, unit: 'Days', active: 'border-orange-300 bg-orange-50', chk: 'accent-orange-600', ic: 'text-orange-600' },
+  ]
+  return (
+    <div>
+      <div className="p-5 space-y-3">
+        {rows.map(({ key, label, icon: Icon, unit, active, chk, ic }) => (
+          <div key={key} className={`rounded-xl border p-3.5 ${form[`${key}_enabled`] ? active : 'border-gray-200'}`}>
+            <label className="flex items-center gap-3 cursor-pointer mb-2">
+              <input type="checkbox" className={`w-4 h-4 ${chk}`}
+                checked={form[`${key}_enabled`]} onChange={e => set(`${key}_enabled`, e.target.checked)}/>
+              <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-800">
+                <Icon size={14} className={ic}/> {label}-based
+              </span>
+            </label>
+            {form[`${key}_enabled`] && (
+              <div className="flex items-center gap-2 pl-7">
+                <input type="number" min="1" className={inp + ' max-w-[100px]'}
+                  value={form[`interval_${key}`]} onChange={e => set(`interval_${key}`, e.target.value)}/>
+                <span className="text-sm text-gray-500">{unit}</span>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      <div className="flex gap-3 px-5 py-4 bg-gray-50 border-t border-gray-100 rounded-b-2xl">
+        <button onClick={() => onSave(form)} disabled={saving}
+          className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-indigo-700 hover:bg-indigo-800 disabled:opacity-60 text-white font-semibold rounded-lg text-sm">
+          {saving ? <Loader2 size={13} className="animate-spin"/> : <Check size={13}/>}
+          {saving ? 'Saving…' : 'Apply'}
+        </button>
+        <button onClick={onClose} className="px-5 py-2.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50">Cancel</button>
+      </div>
+    </div>
+  )
 }
 
 export default function MachineDetailPanel({ machine: m, onClose, onEdit, initialRightTab }) {
@@ -489,6 +725,15 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit, initia
                 )}
               </button>
               <button
+                onClick={() => setRightTab('scs')}
+                className={`px-4 py-3 text-xs font-semibold border-b-2 transition-colors flex items-center gap-1.5 ${
+                  rightTab === 'scs'
+                    ? 'border-blue-700 text-blue-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}>
+                <ClipboardCheck size={12} />Checksheets
+              </button>
+              <button
                 onClick={goToLogEntry}
                 className="px-5 py-3 text-xs font-semibold border-b-2 border-transparent text-gray-500 hover:text-blue-700 transition-colors flex items-center gap-1.5">
                 <ClipboardList size={12} />Log Entry
@@ -870,6 +1115,11 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit, initia
                   </div>
                 )}
               </div>
+            )}
+
+            {/* SCS TAB */}
+            {rightTab === 'scs' && (
+              <MachineScsPanel machineId={m.id} />
             )}
 
             {/* LOG ENTRY TAB — navigates to Entry page */}

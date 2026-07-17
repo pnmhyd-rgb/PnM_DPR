@@ -686,4 +686,24 @@ const regenerateNicknames = async (req, res) => {
   }
 };
 
-module.exports = { getAll, create, update, updateOverrides, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames, getLastEntry };
+const ageing = async (req, res) => {
+  try {
+    const { project_code } = req.query;
+    let where = 'm.active = true';
+    const params = [];
+    if (project_code) { params.push(project_code); where += ` AND m.project_code = $${params.length}`; }
+    const result = await db.query(`
+      SELECT m.id, m.slno, m.nickname, m.eq_type, m.reg_no, m.yom, m.ownership,
+             m.project_code, m.monthly_rate,
+             DATE_PART('year', AGE(NOW(), MAKE_DATE(m.yom::int, 1, 1))) AS age_years
+      FROM machines m
+      WHERE ${where}
+      ORDER BY m.yom ASC NULLS LAST, m.eq_type
+    `, params);
+    res.json({ data: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getAll, create, update, updateOverrides, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames, getLastEntry, ageing };

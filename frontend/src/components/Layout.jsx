@@ -2,30 +2,31 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
-  LayoutDashboard, ClipboardList, BarChart2, FileText,
+  ClipboardList, BarChart2, FileText,
   Settings, LogOut, Menu, X, ChevronDown, ChevronRight, ChevronUp,
-  Fuel, Wrench, Users, Package, AlertTriangle, BookOpen,
-  User, Camera, RefreshCw, KeyRound, Shield, Info, Layers, Home, Download,
-  FileSignature, Sparkles, ShieldAlert, Bell, RotateCcw, Clock,
+  Fuel, Wrench, Users, Package, BookOpen,
+  User, Camera, RefreshCw, KeyRound, Shield, Info, Layers, Home,
+  FileSignature, Sparkles, ShieldAlert, Bell, RotateCcw, Clock, Receipt,
 } from 'lucide-react'
-import DPRDownloadModal from '../pages/DPRDownloadModal'
 import KalaPanel from '../pages/KalaPanel'
 import { getNotifications } from '../lib/api'
 import { APP_VERSION } from '../version'
 
 
 const NAV = [
-  { label: 'Log Entry',   href: '/entry',       icon: ClipboardList },
-  { label: 'Dashboard',   href: '/dashboard',   icon: LayoutDashboard },
-  { label: 'Utilization', href: '/utilization', icon: BarChart2 },
-  { label: 'Summary',     href: '/summary',     icon: FileText },
+  { label: 'Log Entry',    href: '/entry',        icon: ClipboardList },
+  { label: 'Reports',     href: '/reports',      icon: BarChart2 },
+  { label: 'Summary',     href: '/summary',      icon: FileText },
   { label: 'Fuel Station', href: '/fuel-station', icon: Fuel },
-  { label: 'Service',     href: '/service',     icon: Wrench },
+]
+
+const SERVICE_NAV = [
+  { label: 'Service Checksheet', href: '/service/check-sheets' },
+  { label: 'Tickets',              href: '/service/tickets' },
 ]
 
 const ADMIN_GENERAL_NAV = [
   { label: 'Users',       href: '/admin/users' },
-  { label: 'Entries',     href: '/admin/entries' },
   { label: 'Projects',    href: '/admin/projects' },
   { label: 'Permissions', href: '/admin/permissions' },
 ]
@@ -46,11 +47,16 @@ const HR_NAV = [
 ]
 
 const INVENTORY_NAV = [
-  { label: 'Spare Parts', href: '/inventory/spare-parts' },
-]
-
-const REPORTS_NAV = [
-  { label: 'Breakdown Report', href: '/reports/breakdown' },
+  { label: 'Dashboard',           href: '/inventory/dashboard' },
+  { label: 'Spare Parts',         href: '/inventory/items' },
+  { label: 'Categories',          href: '/inventory/categories' },
+  { label: 'Warehouses',          href: '/inventory/warehouses' },
+  { label: 'Goods Receipt (GRN)', href: '/inventory/grn' },
+  { label: 'Stock Transfer',      href: '/inventory/transfers' },
+  { label: 'Stock Adjustment',    href: '/inventory/adjustments' },
+  { label: 'Consumption',         href: '/inventory/consumption' },
+  { label: 'Parts Return',        href: '/inventory/returns' },
+  { label: 'Stock Ledger',        href: '/inventory/ledger' },
 ]
 
 function initials(name = '') {
@@ -807,15 +813,15 @@ export default function Layout({ children }) {
   const [assetMatrixOpen, setAssetMatrixOpen] = useState(false)
   const [hrOpen, setHrOpen]                   = useState(false)
   const [inventoryOpen, setInventoryOpen]     = useState(false)
-  const [reportsOpen, setReportsOpen]         = useState(false)
+  const [serviceOpen, setServiceOpen]         = useState(false)
   const [hireOpen, setHireOpen]               = useState(false)
+  const [accountsOpen, setAccountsOpen]       = useState(false)
   const [assetRegisterOpen, setAssetRegisterOpen] = useState(false)
   const [ownAssetOpen, setOwnAssetOpen]           = useState(false)
   const [userMenuOpen, setUserMenuOpen]           = useState(false)
   const [showProfile, setShowProfile]             = useState(false)
   const [showRoles, setShowRoles]                 = useState(false)
   const [showAbout, setShowAbout]                 = useState(false)
-  const [showDPRModal, setShowDPRModal]           = useState(false)
   const [kalaOpen, setKalaOpen]                     = useState(false)
   const [notifications,  setNotifications]  = useState({})
   const [bellLoadError,  setBellLoadError]  = useState(false)
@@ -907,6 +913,26 @@ export default function Layout({ children }) {
           <ShieldAlert size={17} />Compliance
         </NavLink>
 
+        {/* Service */}
+        <div className="pt-2">
+          <button
+            onClick={() => setServiceOpen(v => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-700/50 transition-colors"
+          >
+            <span className="flex items-center gap-3"><Wrench size={17} />Service</span>
+            {serviceOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </button>
+          {serviceOpen && (
+            <div className="ml-7 mt-1 space-y-0.5">
+              {SERVICE_NAV.map(({ label, href }) => (
+                <NavLink key={href} to={href} className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                  {label}
+                </NavLink>
+              ))}
+            </div>
+          )}
+        </div>
+
         {/* Hire */}
         <div className="pt-2">
           <button
@@ -927,8 +953,30 @@ export default function Layout({ children }) {
               <NavLink to="/hire/vendors" className={subLinkCls} onClick={() => setMobileOpen(false)}>
                 Vendors
               </NavLink>
-              <NavLink to="/hire/billing" className={subLinkCls} onClick={() => setMobileOpen(false)}>
-                Billing
+
+            </div>
+          )}
+        </div>
+
+        {/* Accounts */}
+        <div className="pt-2">
+          <button
+            onClick={() => setAccountsOpen(v => !v)}
+            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-700/50 transition-colors"
+          >
+            <span className="flex items-center gap-3"><Receipt size={17} />Accounts</span>
+            {accountsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+          </button>
+          {accountsOpen && (
+            <div className="ml-7 mt-1 space-y-0.5">
+              <NavLink to="/accounts/invoice-rules" className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                Invoice Rule
+              </NavLink>
+              <NavLink to="/accounts/invoice-calculation" className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                Invoice Calculation
+              </NavLink>
+              <NavLink to="/accounts/generated-invoices" className={subLinkCls} onClick={() => setMobileOpen(false)}>
+                Generated Invoices
               </NavLink>
             </div>
           )}
@@ -949,32 +997,6 @@ export default function Layout({ children }) {
                   {label}
                 </NavLink>
               ))}
-            </div>
-          )}
-        </div>
-
-        <div className="pt-2">
-          <button
-            onClick={() => setReportsOpen(v => !v)}
-            className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-sm font-medium text-blue-100 hover:bg-blue-700/50 transition-colors"
-          >
-            <span className="flex items-center gap-3"><AlertTriangle size={17} />Reports</span>
-            {reportsOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-          </button>
-          {reportsOpen && (
-            <div className="ml-7 mt-1 space-y-0.5">
-              {REPORTS_NAV.map(({ label, href }) => (
-                <NavLink key={href} to={href} className={subLinkCls} onClick={() => setMobileOpen(false)}>
-                  {label}
-                </NavLink>
-              ))}
-              <button
-                onClick={() => { setShowDPRModal(true); setMobileOpen(false) }}
-                className="w-full flex items-center gap-2 px-3 py-1.5 rounded text-sm text-blue-200 hover:bg-blue-700/50 transition-colors text-left"
-              >
-                <Download size={13} />
-                Download DPR
-              </button>
             </div>
           )}
         </div>
@@ -1220,7 +1242,6 @@ export default function Layout({ children }) {
       {showProfile  && <ProfileModal onClose={() => setShowProfile(false)} />}
       {showRoles    && <RolesModal user={user} onClose={() => setShowRoles(false)} />}
       {showAbout    && <AboutModal onClose={() => setShowAbout(false)} />}
-      {showDPRModal && <DPRDownloadModal onClose={() => setShowDPRModal(false)} />}
 
     </div>
   )

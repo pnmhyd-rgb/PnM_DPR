@@ -12,6 +12,7 @@ import Operators from './pages/hr/Operators'
 import Attendance from './pages/hr/Attendance'
 import SpareParts from './pages/inventory/SpareParts'
 import BreakdownReport from './pages/reports/BreakdownReport'
+import Reports from './pages/reports/Reports'
 import Payroll from './pages/hr/Payroll'
 import Projects from './pages/admin/Projects'
 import Machines from './pages/admin/Machines'
@@ -32,10 +33,25 @@ import HireAssets from './pages/asset-register/HireAssets'
 import MyDashboard from './pages/MyDashboard'
 import HireWorkOrders from './pages/hire/HireWorkOrders'
 import HireIndents from './pages/hire/HireIndents'
-import HireBilling from './pages/hire/HireBilling'
+
 import Compliance from './pages/compliance/Compliance'
 import Permissions from './pages/admin/Permissions'
 import FuelStation from './pages/FuelStation'
+import InvoiceRule from './pages/accounts/InvoiceRule'
+import InvoiceBilling from './pages/accounts/InvoiceBilling'
+import GeneratedInvoices from './pages/accounts/GeneratedInvoices'
+import InventoryDashboard from './pages/inventory/InventoryDashboard'
+import SparePartsInventory from './pages/inventory/SparePartsInventory'
+import SparePartsCategories from './pages/inventory/SparePartsCategories'
+import WarehouseManagement from './pages/inventory/WarehouseManagement'
+import GoodsReceipt from './pages/inventory/GoodsReceipt'
+import StockTransfer from './pages/inventory/StockTransfer'
+import StockAdjustment from './pages/inventory/StockAdjustment'
+import Consumption from './pages/inventory/Consumption'
+import SparePartsReturn from './pages/inventory/SparePartsReturn'
+import StockLedger from './pages/inventory/StockLedger'
+import ServiceCheckSheets from './pages/service/ServiceCheckSheets'
+import ServiceTickets from './pages/service/Tickets'
 
 function ProtectedLayout() {
   const { user } = useAuth()
@@ -68,12 +84,29 @@ export default function App() {
             <Route path="hire/indents"     element={<HireIndents />} />
             <Route path="hire/work-orders" element={<HireWorkOrders defaultTab="wo" />} />
             <Route path="hire/vendors"     element={<HireWorkOrders defaultTab="vendors" />} />
-            <Route path="hire/billing"     element={<HireBilling />} />
-            <Route path="service"     element={<ServiceEntries />} />
+
+            <Route path="accounts/invoice-rules"          element={<InvoiceRule />} />
+            <Route path="accounts/invoice-calculation"    element={<InvoiceBilling defaultTab="own" />} />
+            <Route path="accounts/invoice-calc-ownership" element={<InvoiceBilling defaultTab="own" />} />
+            <Route path="accounts/generated-invoices"     element={<GeneratedInvoices />} />
+            <Route path="inventory/dashboard"    element={<InventoryDashboard />} />
+            <Route path="inventory/items"        element={<SparePartsInventory />} />
+            <Route path="inventory/categories"   element={<SparePartsCategories />} />
+            <Route path="inventory/warehouses"   element={<WarehouseManagement />} />
+            <Route path="inventory/grn"          element={<GoodsReceipt />} />
+            <Route path="inventory/transfers"    element={<StockTransfer />} />
+            <Route path="inventory/adjustments"  element={<StockAdjustment />} />
+            <Route path="inventory/consumption"  element={<Consumption />} />
+            <Route path="inventory/returns"      element={<SparePartsReturn />} />
+            <Route path="inventory/ledger"       element={<StockLedger />} />
+            <Route path="service"               element={<ServiceEntries />} />
+            <Route path="service/check-sheets" element={<ServiceCheckSheets />} />
+            <Route path="service/tickets"      element={<ServiceTickets />} />
             <Route path="hr/operators"           element={<Operators />} />
             <Route path="hr/attendance"          element={<Attendance />} />
             <Route path="hr/payroll"             element={<Payroll />} />
             <Route path="inventory/spare-parts"       element={<SpareParts />} />
+            <Route path="reports"                       element={<Reports />} />
             <Route path="reports/breakdown"            element={<BreakdownReport />} />
             <Route path="asset-register/own/measurable"     element={<OwnMeasurable />} />
             <Route path="asset-register/own/non-measurable" element={<OwnNonMeasurable />} />

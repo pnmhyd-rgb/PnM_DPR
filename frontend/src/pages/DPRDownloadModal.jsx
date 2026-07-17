@@ -98,19 +98,25 @@ const FIXED_COLS = [
 // For multi-reading machines: replace r1 fixed cols with per-reading cols
 function getMachineCols(machine, activeCols) {
   const configs = machine.reading_configs || []
-  if (configs.length === 0) return activeCols
-  const baseCols = [
-    { key: 'sno', label: 'S.No' },
-    { key: 'date', label: 'Date' },
-    { key: 'shift', label: 'Shift' },
-  ]
-  const readingCols = configs.flatMap(rc => [
-    { key: `rl_open_${rc.reading_type_id}`,  label: `${rc.code} Open`,  rtId: rc.reading_type_id, field: 'open_value',  unit: rc.unit },
-    { key: `rl_close_${rc.reading_type_id}`, label: `${rc.code} Close`, rtId: rc.reading_type_id, field: 'close_value', unit: rc.unit },
-    { key: `rl_total_${rc.reading_type_id}`, label: `${rc.code} Total`, rtId: rc.reading_type_id, field: 'total',       unit: rc.unit },
-  ])
-  const toggleCols = activeCols.filter(c => !['sno','date','shift','r1_open','r1_close','r1_total'].includes(c.key))
-  return [...baseCols, ...readingCols, ...toggleCols]
+  let cols
+  if (configs.length === 0) {
+    cols = activeCols
+  } else {
+    const baseCols = [
+      { key: 'sno', label: 'S.No' },
+      { key: 'date', label: 'Date' },
+      { key: 'shift', label: 'Shift' },
+    ]
+    const readingCols = configs.flatMap(rc => [
+      { key: `rl_open_${rc.reading_type_id}`,  label: `${rc.code} Open`,  rtId: rc.reading_type_id, field: 'open_value',  unit: rc.unit },
+      { key: `rl_close_${rc.reading_type_id}`, label: `${rc.code} Close`, rtId: rc.reading_type_id, field: 'close_value', unit: rc.unit },
+      { key: `rl_total_${rc.reading_type_id}`, label: `${rc.code} Total`, rtId: rc.reading_type_id, field: 'total',       unit: rc.unit },
+    ])
+    const toggleCols = activeCols.filter(c => !['sno','date','shift','r1_open','r1_close','r1_total'].includes(c.key))
+    cols = [...baseCols, ...readingCols, ...toggleCols]
+  }
+  if (!machine.uom) return cols
+  return cols.map(c => c.key === 'qty' ? { ...c, label: `Quantity (${machine.uom})`, uom: machine.uom } : c)
 }
 
 function cellValForCol(e, col, idx) {
@@ -127,6 +133,10 @@ function cellValForCol(e, col, idx) {
     const v = log[col.field]
     if (col.field === 'total') return v != null ? Number(v).toFixed(2) : ''
     return v ?? ''
+  }
+  if (col.key === 'qty') {
+    const v = e.qty ?? ''
+    return v !== '' && col.uom ? `${v} ${col.uom}` : v
   }
   return cellVal(e, col.key, idx)
 }
@@ -320,8 +330,8 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
       const d              = calcDaysSummary(entries, m, from, to)
       const s              = calcSummary(entries)
       const isTransitMixer = m.eq_type === 'Transit Mixer'
-      const formulaType    = m.fuel_formula_type || (isTransitMixer ? 'both' : 'L_per_Hr')
-      const isBothFormula  = formulaType === 'both'
+      const formulaType    = m.fuel_formula_type || (isTransitMixer ? 'transit_mixer' : 'L_per_Hr')
+      const isBothFormula  = formulaType === 'both' || formulaType === 'transit_mixer'
       const isKmBasis      = formulaType === 'KM_per_L' || (!isBothFormula && /km/i.test(m.reading1_basis || ''))
       const rangeUnit      = isKmBasis ? 'km/ltr' : 'ltr/hr'
       const approvedRange  = (m.fuel_min && m.fuel_max)
@@ -344,21 +354,31 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
       const tmKm      = isBothFormula && kmRtId  !== null ? entries.reduce((acc, e) => { const l = (e.reading_logs || []).find(rl => rl.reading_type_id === kmRtId);  return acc + (parseFloat(l?.total) || 0) }, 0) : 0
       const tmSplitMode   = m.tm_split_mode  || null
       const tmSplitVal    = parseFloat(m.tm_split_value) || 0
+      // Fallback for legacy/single-reading machines (no reading_logs): derive from r1/r2 columns
+      const r1Basis = (m.reading1_basis || '').toLowerCase()
+      const r2Basis = (m.reading2_basis || '').toLowerCase()
+      const totalR2leg = isBothFormula && (tmDrumHrs === 0 || tmKm === 0)
+        ? entries.reduce((s, e) => s + (parseFloat(e.r2_total) || 0), 0) : 0
+      const legacyHrs = r1Basis.includes('hr') ? s.totalR1 : r2Basis.includes('hr') ? totalR2leg : 0
+      const legacyKm  = r1Basis.includes('km') ? s.totalR1 : r2Basis.includes('km') ? totalR2leg : 0
+      const effectiveHrs    = tmDrumHrs > 0 ? tmDrumHrs : legacyHrs
+      const effectiveKm     = tmKm > 0 ? tmKm : legacyKm
+      const effectiveDiesel = consumed !== null ? consumed : s.hsdTotal
       let tmAvgLtrPerHr = null, tmAvgKmPerLtr = null
-      if (isBothFormula && consumed !== null && consumed > 0) {
+      if (isBothFormula && effectiveDiesel > 0) {
         if (tmSplitMode === 'drum_rate' && tmSplitVal > 0 && tmDrumHrs > 0) {
           const drumDiesel    = tmDrumHrs * tmSplitVal
-          const vehicleDiesel = consumed - drumDiesel
+          const vehicleDiesel = effectiveDiesel - drumDiesel
           tmAvgLtrPerHr = tmSplitVal.toFixed(3)
           if (vehicleDiesel > 0 && tmKm > 0) tmAvgKmPerLtr = (tmKm / vehicleDiesel).toFixed(2)
         } else if (tmSplitMode === 'vehicle_rate' && tmSplitVal > 0 && tmKm > 0) {
           const vehicleDiesel = tmKm / tmSplitVal
-          const drumDiesel    = consumed - vehicleDiesel
+          const drumDiesel    = effectiveDiesel - vehicleDiesel
           tmAvgKmPerLtr = tmSplitVal.toFixed(2)
           if (drumDiesel > 0 && tmDrumHrs > 0) tmAvgLtrPerHr = (drumDiesel / tmDrumHrs).toFixed(2)
         } else {
-          if (tmDrumHrs > 0) tmAvgLtrPerHr = (consumed / tmDrumHrs).toFixed(2)
-          if (tmKm > 0)      tmAvgKmPerLtr = (tmKm / consumed).toFixed(2)
+          if (effectiveHrs > 0) tmAvgLtrPerHr = (effectiveDiesel / effectiveHrs).toFixed(2)
+          if (effectiveKm > 0)  tmAvgKmPerLtr = (effectiveKm / effectiveDiesel).toFixed(2)
         }
       }
 
@@ -369,6 +389,22 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
       const workedVal      = isKmBasis ? s.totalR1 : s.workedTotal
       const utilPctActual  = actualPlanned > 0 ? ((workedVal / actualPlanned) * 100).toFixed(2) : '—'
       const unitLabel      = isKmBasis ? 'KMs' : 'Hrs'
+      // Additional reading totals from reading_configs (multi-reading machines)
+      const rcConfigs = m.reading_configs || []
+      const perReadingTotals = rcConfigs
+        .map(rc => ({
+          name:  rc.reading_name || rc.code,
+          unit:  rc.unit || '',
+          total: entries.reduce((s, e) => {
+            const log = (e.reading_logs || []).find(l => l.reading_type_id === rc.reading_type_id)
+            return s + (parseFloat(log?.total) || 0)
+          }, 0)
+        }))
+        .filter(r => r.total > 0)
+      if (rcConfigs.length === 0 && m.dual_reading && m.reading2_basis) {
+        const r2Total = entries.reduce((s, e) => s + (parseFloat(e.r2_total) || 0), 0)
+        if (r2Total > 0) perReadingTotals.push({ name: m.reading2_basis, unit: '', total: r2Total })
+      }
 
       // Left column: Working Day Summary
       const leftRows = sections.days ? [
@@ -409,7 +445,8 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
         rightRows.push([`Utilization (${unitLabel})`,                       ''])
         rightRows.push([`Planned ${unitLabel} (Monthly)`,                   monthlyPlanned > 0 ? `${monthlyPlanned.toFixed(2)} ${unitLabel}` : '—'])
         rightRows.push([`Actual Planned (${d.payableDays.toFixed(2)} days)`, actualPlanned > 0  ? `${actualPlanned.toFixed(2)} ${unitLabel}`  : '—'])
-        rightRows.push([`Worked ${unitLabel}`,                              `${workedVal.toFixed(2)} ${unitLabel}`])
+        if (rcConfigs.length === 0) rightRows.push([`Worked ${unitLabel}`, `${workedVal.toFixed(2)} ${unitLabel}`])
+        perReadingTotals.forEach(r => rightRows.push([`Worked ${r.name}`, `${r.total.toFixed(2)}${r.unit ? ' ' + r.unit : ''}`]))
         rightRows.push(['Utilization %',                                    utilPctActual === '—' ? '—' : `${utilPctActual} %`])
         rightRows.push(['', ''])
       }
@@ -424,18 +461,16 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
           if (m.fuel_min && m.fuel_max) rightRows.push([isTransitMixer ? 'Approved Range (Drum Hrs)' : 'Approved Consumption', `${m.fuel_min} – ${m.fuel_max} ltr/hr`])
           else if (m.fuel_min)          rightRows.push([isTransitMixer ? 'Approved Range (Drum Hrs)' : 'Approved Consumption', `≥ ${m.fuel_min} ltr/hr`])
           if (tmAvgKmPerLtr) rightRows.push([isTransitMixer ? "Actual Avg (Front km's)" : 'Actual Economy', `${tmAvgKmPerLtr} Km/Ltr`])
-          if (m.fuel_min_km) rightRows.push([isTransitMixer ? "Approved Range (Front km's)" : 'Approved Economy', m.fuel_max_km ? `${m.fuel_min_km} – ${m.fuel_max_km} Km/Ltr` : `${m.fuel_min_km} Km/Ltr`])
+          if (m.fuel_min_km) { const kmLo = Math.min(parseFloat(m.fuel_min_km), parseFloat(m.fuel_max_km||m.fuel_min_km)); const kmHi = Math.max(parseFloat(m.fuel_min_km), parseFloat(m.fuel_max_km||m.fuel_min_km)); rightRows.push([isTransitMixer ? "Approved Range (Front km's)" : 'Approved Economy', m.fuel_max_km ? `${kmLo} – ${kmHi} Km/Ltr` : `${kmLo} Km/Ltr`]) }
         } else {
           rightRows.push(['Actual Average', actualAvg])
           rightRows.push(['Approved Range', approvedRange])
         }
-        if (dieselCost !== null) {
-          rightRows.push(['Total Diesel Cost', `${dieselCost.toFixed(2)} Rs.`])
-        }
       }
 
-      // Third column: Productivity Costing
-      const productivityRows = [
+      // Third column: Productivity Costing (only if enabled for this asset category)
+      const showProductivity = m.report_show_productivity_costing !== false
+      const productivityRows = showProductivity ? [
         ['Productivity Costing', '', ''],
         ['Production', totalQty.toFixed(2), qtyUnit],
         ['Fuel Expenses', Math.round(fuelExpenses).toString(), 'Rs.'],
@@ -449,7 +484,7 @@ async function buildExcel(machines, entriesMap, from, to, activeCols, sections, 
         ['Total Fuel Consumed', dieselConsumed.toFixed(2), 'Ltr'],
         ['Production', totalQty.toFixed(2), qtyUnit],
         ['Avg Fuel / productivity', fuelPerProd !== null ? fuelPerProd.toFixed(4) : '—', fuelPerProd !== null ? `Ltr${unitSuffix ? '/'+qtyUnit : ''}` : ''],
-      ]
+      ] : []
 
       const maxLen = Math.max(leftRows.length, rightRows.length, productivityRows.length)
       for (let i = 0; i < maxLen; i++) {
@@ -641,13 +676,13 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
       const d              = calcDaysSummary(entries, m, from, to)
       const s              = calcSummary(entries)
       const isTransitMixer = m.eq_type === 'Transit Mixer'
-      const formulaType    = m.fuel_formula_type || (isTransitMixer ? 'both' : 'L_per_Hr')
-      const isBothFormula  = formulaType === 'both'
+      const formulaType    = m.fuel_formula_type || (isTransitMixer ? 'transit_mixer' : 'L_per_Hr')
+      const isBothFormula  = formulaType === 'both' || formulaType === 'transit_mixer'
       const isKmBasis      = formulaType === 'KM_per_L' || (!isBothFormula && /km/i.test(m.reading1_basis || ''))
       const rangeUnit      = isKmBasis ? 'km/ltr' : 'ltr/hr'
       const approvedRange  = (m.fuel_min && m.fuel_max)
-        ? `${m.fuel_min} – ${m.fuel_max} ${rangeUnit}`
-        : m.fuel_min ? `≥ ${m.fuel_min} ${rangeUnit}` : '—'
+        ? `${m.fuel_min} - ${m.fuel_max} ${rangeUnit}`
+        : m.fuel_min ? `>= ${m.fuel_min} ${rangeUnit}` : '—'
       const fr  = fuelRecordsMap[m.id] || null
       const ob  = fr ? parseFloat(fr.opening_balance) : null
       const cb  = fr ? parseFloat(fr.closing_balance) : null
@@ -665,21 +700,31 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
       const tmKm      = isBothFormula && kmRtId  !== null ? entries.reduce((acc, e) => { const l = (e.reading_logs || []).find(rl => rl.reading_type_id === kmRtId);  return acc + (parseFloat(l?.total) || 0) }, 0) : 0
       const tmSplitMode   = m.tm_split_mode  || null
       const tmSplitVal    = parseFloat(m.tm_split_value) || 0
+      // Fallback for legacy/single-reading machines (no reading_logs): derive from r1/r2 columns
+      const r1Basis = (m.reading1_basis || '').toLowerCase()
+      const r2Basis = (m.reading2_basis || '').toLowerCase()
+      const totalR2leg = isBothFormula && (tmDrumHrs === 0 || tmKm === 0)
+        ? entries.reduce((s, e) => s + (parseFloat(e.r2_total) || 0), 0) : 0
+      const legacyHrs = r1Basis.includes('hr') ? s.totalR1 : r2Basis.includes('hr') ? totalR2leg : 0
+      const legacyKm  = r1Basis.includes('km') ? s.totalR1 : r2Basis.includes('km') ? totalR2leg : 0
+      const effectiveHrs    = tmDrumHrs > 0 ? tmDrumHrs : legacyHrs
+      const effectiveKm     = tmKm > 0 ? tmKm : legacyKm
+      const effectiveDiesel = consumed !== null ? consumed : s.hsdTotal
       let tmAvgLtrPerHr = null, tmAvgKmPerLtr = null
-      if (isBothFormula && consumed !== null && consumed > 0) {
+      if (isBothFormula && effectiveDiesel > 0) {
         if (tmSplitMode === 'drum_rate' && tmSplitVal > 0 && tmDrumHrs > 0) {
           const drumDiesel    = tmDrumHrs * tmSplitVal
-          const vehicleDiesel = consumed - drumDiesel
+          const vehicleDiesel = effectiveDiesel - drumDiesel
           tmAvgLtrPerHr = tmSplitVal.toFixed(3)
           if (vehicleDiesel > 0 && tmKm > 0) tmAvgKmPerLtr = (tmKm / vehicleDiesel).toFixed(2)
         } else if (tmSplitMode === 'vehicle_rate' && tmSplitVal > 0 && tmKm > 0) {
           const vehicleDiesel = tmKm / tmSplitVal
-          const drumDiesel    = consumed - vehicleDiesel
+          const drumDiesel    = effectiveDiesel - vehicleDiesel
           tmAvgKmPerLtr = tmSplitVal.toFixed(2)
           if (drumDiesel > 0 && tmDrumHrs > 0) tmAvgLtrPerHr = (drumDiesel / tmDrumHrs).toFixed(2)
         } else {
-          if (tmDrumHrs > 0) tmAvgLtrPerHr = (consumed / tmDrumHrs).toFixed(2)
-          if (tmKm > 0)      tmAvgKmPerLtr = (tmKm / consumed).toFixed(2)
+          if (effectiveHrs > 0) tmAvgLtrPerHr = (effectiveDiesel / effectiveHrs).toFixed(2)
+          if (effectiveKm > 0)  tmAvgKmPerLtr = (effectiveKm / effectiveDiesel).toFixed(2)
         }
       }
 
@@ -690,6 +735,22 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
       const workedVal      = isKmBasis ? s.totalR1 : s.workedTotal
       const utilPctActual  = actualPlanned > 0 ? ((workedVal / actualPlanned) * 100).toFixed(2) : '—'
       const unitLabel      = isKmBasis ? 'KMs' : 'Hrs'
+      // Additional reading totals from reading_configs (multi-reading machines)
+      const rcConfigs = m.reading_configs || []
+      const perReadingTotals = rcConfigs
+        .map(rc => ({
+          name:  rc.reading_name || rc.code,
+          unit:  rc.unit || '',
+          total: entries.reduce((s, e) => {
+            const log = (e.reading_logs || []).find(l => l.reading_type_id === rc.reading_type_id)
+            return s + (parseFloat(log?.total) || 0)
+          }, 0)
+        }))
+        .filter(r => r.total > 0)
+      if (rcConfigs.length === 0 && m.dual_reading && m.reading2_basis) {
+        const r2Total = entries.reduce((s, e) => s + (parseFloat(e.r2_total) || 0), 0)
+        if (r2Total > 0) perReadingTotals.push({ name: m.reading2_basis, unit: '', total: r2Total })
+      }
 
       // ── ERP-style bordered table renderer ──
       const rowH   = 5.5    // row height in mm
@@ -758,6 +819,7 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
 
       // 3-column layout: Working Day | Utilization+Fuel | Productivity+FuelVsProd
       // Page is A4 landscape (297mm wide); usable ≈ 10→277mm = 267mm across 3 cols
+      const showProductivity = m.report_show_productivity_costing !== false
       const lx = 10;   const lLabelW = 62; const lValueW = 25   // col 1 width = 87
       const rx = 102;  const rLabelW = 60; const rValueW = 25   // col 2 width = 85
       const px = 192;  const pLabelW = 55; const pValueW = 25   // col 3 width = 80
@@ -779,10 +841,9 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
 
       // estimate total height needed across all 3 columns
       const leftRowsH  = sections.days ? 5 : 0
-      const tmFuelExtra   = isTransitMixer ? 2 : 0
-      const fuelExtraRows = (dieselCost !== null ? 1 : 0) + tmFuelExtra
-      const rightRowsH = (sections.utilization ? 6 : 0) + (sections.fuel ? 8 + fuelExtraRows : 0)
-      const c3RowsH    = costRows.length + 2 + fuelProdRows.length + 2
+      const fuelExtraRows = isBothFormula ? 4 : 0
+      const rightRowsH = (sections.utilization ? (rcConfigs.length === 0 ? 6 : 5) + perReadingTotals.length : 0) + (sections.fuel ? 8 + fuelExtraRows : 0)
+      const c3RowsH    = showProductivity ? costRows.length + 2 + fuelProdRows.length + 2 : 0
       const neededH    = (Math.max(leftRowsH, rightRowsH, c3RowsH) + 1) * rowH + 8
       addPageIfNeeded(neededH)
 
@@ -807,7 +868,8 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
         rightBottom = drawTable(rx, startY, rLabelW, rValueW, `Utilization (${unitLabel})`, [
           [`Planned ${unitLabel} (Monthly)`,                   monthlyPlanned > 0 ? `${monthlyPlanned.toFixed(2)} ${unitLabel}` : '—'],
           [`Actual Planned (${d.payableDays.toFixed(2)} days)`, actualPlanned > 0  ? `${actualPlanned.toFixed(2)} ${unitLabel}`  : '—'],
-          [`Worked ${unitLabel}`,                              `${workedVal.toFixed(2)} ${unitLabel}`],
+          ...(rcConfigs.length === 0 ? [[`Worked ${unitLabel}`, `${workedVal.toFixed(2)} ${unitLabel}`]] : []),
+          ...perReadingTotals.map(r => [`Worked ${r.name}`, `${r.total.toFixed(2)}${r.unit ? ' ' + r.unit : ''}`]),
           ['Utilization %',                                    utilPctActual === '—' ? '—' : `${utilPctActual} %`],
         ])
         rightBottom += 2
@@ -823,24 +885,29 @@ async function buildPDF(machines, entriesMap, from, to, activeCols, sections, pr
         ]
         if (isTransitMixer) {
           if (tmAvgLtrPerHr) fuelRows.push(['Actual Average (Drum Hrs)', `${tmAvgLtrPerHr} Ltr/Hr`])
-          if (m.fuel_min && m.fuel_max) fuelRows.push(['Approved Range (Drum Hrs)', `${m.fuel_min} – ${m.fuel_max} ltr/hr`])
-          else if (m.fuel_min)          fuelRows.push(['Approved Range (Drum Hrs)', `≥ ${m.fuel_min} ltr/hr`])
+          if (m.fuel_min && m.fuel_max) fuelRows.push(['Approved Range (Drum Hrs)', `${m.fuel_min} - ${m.fuel_max} ltr/hr`])
+          else if (m.fuel_min)          fuelRows.push(['Approved Range (Drum Hrs)', `>= ${m.fuel_min} ltr/hr`])
           if (tmAvgKmPerLtr) fuelRows.push(["Actual Average (Front km's)", `${tmAvgKmPerLtr} Km/Ltr`])
-          if (m.fuel_min_km) fuelRows.push(["Approved Range (Front km's)", m.fuel_max_km ? `${m.fuel_min_km} – ${m.fuel_max_km} Km/Ltr` : `${m.fuel_min_km} Km/Ltr`])
+          if (m.fuel_min_km) { const kmLo = Math.min(parseFloat(m.fuel_min_km), parseFloat(m.fuel_max_km||m.fuel_min_km)); const kmHi = Math.max(parseFloat(m.fuel_min_km), parseFloat(m.fuel_max_km||m.fuel_min_km)); fuelRows.push(["Approved Range (Front km's)", m.fuel_max_km ? `${kmLo} - ${kmHi} Km/Ltr` : `${kmLo} Km/Ltr`]) }
+        } else if (isBothFormula) {
+          if (tmAvgLtrPerHr) fuelRows.push(['Actual Consumption', `${tmAvgLtrPerHr} Ltr/Hr`])
+          if (m.fuel_min && m.fuel_max) fuelRows.push(['Approved Consumption', `${m.fuel_min} - ${m.fuel_max} ltr/hr`])
+          else if (m.fuel_min)          fuelRows.push(['Approved Consumption', `>= ${m.fuel_min} ltr/hr`])
+          if (tmAvgKmPerLtr) fuelRows.push(['Actual Economy', `${tmAvgKmPerLtr} Km/Ltr`])
+          if (m.fuel_min_km) { const kmLo = Math.min(parseFloat(m.fuel_min_km), parseFloat(m.fuel_max_km||m.fuel_min_km)); const kmHi = Math.max(parseFloat(m.fuel_min_km), parseFloat(m.fuel_max_km||m.fuel_min_km)); fuelRows.push(['Approved Economy', m.fuel_max_km ? `${kmLo} - ${kmHi} Km/Ltr` : `${kmLo} Km/Ltr`]) }
         } else {
           fuelRows.push(['Actual Average', actualAvg])
           fuelRows.push(['Approved Range', approvedRange])
         }
-        if (dieselCost !== null) {
-          fuelRows.push(['Total Diesel Cost', `${dieselCost.toFixed(2)} Rs.`])
-        }
         rightBottom = drawTable(rx, rightBottom, rLabelW, rValueW, 'Fuel Summary', fuelRows)
       }
 
-      // ── Column 3: Productivity Costing + Fuel vs Productivity ──
-      prodColBottom = drawTable(px, startY, pLabelW, pValueW, 'Productivity Costing', costRows)
-      prodColBottom += 2
-      prodColBottom = drawTable(px, prodColBottom, pLabelW, pValueW, 'Fuel vs Productivity', fuelProdRows)
+      // ── Column 3: Productivity Costing + Fuel vs Productivity (if enabled) ──
+      if (showProductivity) {
+        prodColBottom = drawTable(px, startY, pLabelW, pValueW, 'Productivity Costing', costRows)
+        prodColBottom += 2
+        prodColBottom = drawTable(px, prodColBottom, pLabelW, pValueW, 'Fuel vs Productivity', fuelProdRows)
+      }
 
       y = Math.max(leftBottom, rightBottom, prodColBottom) + 4
     }

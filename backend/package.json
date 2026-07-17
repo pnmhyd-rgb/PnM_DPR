@@ -6,7 +6,8 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "migrate": "node migrations/run.js",
-    "seed": "node seeds/seed.js"
+    "seed": "node seeds/seed.js",
+    "test": "jest --testPathPattern=tests/"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.2",
@@ -25,6 +26,7 @@
     "pg": "^8.11.5"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "nodemon": "^3.1.4",
+    "jest": "^29.7.0"
   }
 }

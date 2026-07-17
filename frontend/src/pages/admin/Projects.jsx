@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { getProjects, createProject, updateProject, deleteProject, getUsers } from '../../lib/api'
-import { Plus, Edit2, Trash2, X, MapPin, Users, Hash } from 'lucide-react'
+import { Plus, Edit2, Trash2, X, MapPin, Users, Hash, Lock } from 'lucide-react'
 
-const blank = { name: '', address: '', code: '', user_ids: [] }
+const blank = { name: '', address: '', code: '', user_ids: [], transaction_lock_duration: '' }
 
 export default function Projects() {
   const [projects, setProjects] = useState([])
@@ -23,10 +23,11 @@ export default function Projects() {
 
   const openEdit = (p) => {
     setForm({
-      name:     p.name,
-      address:  p.address || '',
-      code:     p.code,
-      user_ids: p.linked_user_ids || [],
+      name:                     p.name,
+      address:                  p.address || '',
+      code:                     p.code,
+      user_ids:                 p.linked_user_ids || [],
+      transaction_lock_duration: p.transaction_lock_duration != null ? String(p.transaction_lock_duration) : '',
     })
     setError('')
     setModal({ edit: p })
@@ -44,6 +45,18 @@ export default function Projects() {
     setError('')
     if (!form.name.trim())    { setError('Project name is required'); return }
     if (!form.address.trim()) { setError('Site address is required'); return }
+    const tldRaw = form.transaction_lock_duration.trim()
+    let tldValue = undefined
+    if (tldRaw !== '') {
+      const tldNum = parseInt(tldRaw, 10)
+      if (isNaN(tldNum) || tldNum < 1 || tldNum > 365) {
+        setError('Transaction Lock Duration must be a number between 1 and 365')
+        return
+      }
+      tldValue = tldNum
+    } else {
+      tldValue = null
+    }
     setSaving(true)
     try {
       const payload = {
@@ -51,6 +64,7 @@ export default function Projects() {
         address:  form.address.trim(),
         code:     form.code.trim() || undefined,
         user_ids: form.user_ids,
+        transaction_lock_duration: tldValue,
       }
       if (modal === 'add') {
         await createProject(payload)
@@ -89,14 +103,14 @@ export default function Projects() {
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-gray-50 border-b border-gray-200">
-              {['Site Code', 'Project Name', 'Site Address', 'Linked Users', 'Status', ''].map(h => (
+              {['Site Code', 'Project Name', 'Site Address', 'Linked Users', 'Transaction Lock', 'Status', ''].map(h => (
                 <th key={h} className="px-4 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
               ))}
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100">
             {projects.length === 0 && (
-              <tr><td colSpan={6} className="px-4 py-10 text-center text-gray-400">No projects yet</td></tr>
+              <tr><td colSpan={7} className="px-4 py-10 text-center text-gray-400">No projects yet</td></tr>
             )}
             {projects.map(p => (
               <tr key={p.id} className="hover:bg-gray-50 transition-colors">
@@ -118,6 +132,16 @@ export default function Projects() {
                       ))}
                     </div>
                   ) : <span className="text-gray-400">None</span>}
+                </td>
+                <td className="px-4 py-3">
+                  {p.transaction_lock_duration != null ? (
+                    <span className="flex items-center gap-1 text-orange-700">
+                      <Lock size={11} />
+                      {p.transaction_lock_duration}d
+                    </span>
+                  ) : (
+                    <span className="text-gray-400">No lock</span>
+                  )}
                 </td>
                 <td className="px-4 py-3">
                   <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-xs">Active</span>
@@ -218,6 +242,23 @@ export default function Projects() {
                 {form.user_ids.length > 0 && (
                   <p className="text-xs text-blue-600 mt-1.5">{form.user_ids.length} user{form.user_ids.length !== 1 ? 's' : ''} selected</p>
                 )}
+              </div>
+
+              {/* Transaction Lock Duration */}
+              <div>
+                <label className={lbl}>
+                  <span className="flex items-center gap-1"><Lock size={11} />Transaction Lock Duration (Days)</span>
+                </label>
+                <input
+                  type="number" min={1} max={365}
+                  value={form.transaction_lock_duration}
+                  onChange={e => setForm(f => ({ ...f, transaction_lock_duration: e.target.value }))}
+                  className={inp}
+                  placeholder="Leave blank for No Restriction"
+                />
+                <p className="text-xs text-gray-400 mt-1">
+                  Non-admin users cannot create or edit transactions older than this many days. Leave blank to disable.
+                </p>
               </div>
 
               {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}

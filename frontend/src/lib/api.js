@@ -33,6 +33,7 @@ export const getMachines            = (params)      => client.get('/machines', {
 export const getMachineLastEntry    = (id)          => client.get(`/machines/${id}/last-entry`)
 export const getFleetSummary    = (params)      => client.get('/machines/fleet-summary', { params })
 export const getFleetList       = (params)      => client.get('/machines/fleet-list',    { params })
+export const getMachineAgeing   = (params)      => client.get('/machines/ageing',        { params })
 export const createMachine      = (data)        => client.post('/machines', data)
 export const bulkCreateMachines         = (rows) => client.post('/machines/bulk', { rows })
 export const regenerateMachineNicknames = ()     => client.post('/machines/regenerate-nicknames')
@@ -65,6 +66,7 @@ export const getPreviousClosing      = (params) => client.get('/entries/previous
 export const getLatestReadingBefore  = (params) => client.get('/entries/latest-reading-before', { params })
 export const checkDprExistsAfter     = (params) => client.get('/entries/check-exists-after',    { params })
 export const getDprStatus              = (params) => client.get('/entries/dpr-status',              { params })
+export const getDprTrend               = (params) => client.get('/entries/trend',                   { params })
 export const getMonthlyStatus          = (params) => client.get('/entries/monthly-status',          { params })
 export const getMonthlyProjectStatus   = (params) => client.get('/entries/monthly-project-status',  { params })
 export const createEntry         = (data)        => client.post('/entries', data)
@@ -75,8 +77,10 @@ export const deleteEntry                = (id)         => client.delete(`/entrie
 export const deleteAllEntriesForMachine  = (machineId)    => client.delete(`/entries/machine/${machineId}/all`)
 export const deleteAllEntriesForProject  = (projectCode)  => client.delete(`/entries/project/${projectCode}/all`)
 
-export const getUtilization   = (params)      => client.get('/reports/utilization', { params })
-export const getSummary       = (params)      => client.get('/reports/summary', { params })
+export const getUtilization         = (params) => client.get('/reports/utilization',           { params })
+export const getMonthlyUtilization  = (params) => client.get('/reports/monthly-utilization',   { params })
+export const getSummary             = (params) => client.get('/reports/summary',                { params })
+export const getDailyMachineUtil    = (params) => client.get('/reports/daily-machine-util',    { params })
 
 export const getEquipmentTypes        = ()          => client.get('/equipment-types')
 export const createEquipmentType      = (data)       => client.post('/equipment-types', data)
@@ -273,3 +277,126 @@ export const getFuelStations    = ()         => client.get('/fuel-stations')
 export const createFuelStation  = (data)     => client.post('/fuel-stations', data)
 export const updateFuelStation  = (id, data) => client.put(`/fuel-stations/${id}`, data)
 export const deleteFuelStation  = (id)       => client.delete(`/fuel-stations/${id}`)
+
+// Accounts — Invoice Rules
+export const getInvoiceRules   = (params)    => client.get('/invoice-rules', { params })
+export const getInvoiceRule    = (id)        => client.get(`/invoice-rules/${id}`)
+export const createInvoiceRule     = (data)      => client.post('/invoice-rules', data)
+export const bulkCreateInvoiceRules = (data)     => client.post('/invoice-rules/bulk', data)
+export const updateInvoiceRule = (id, data)  => client.put(`/invoice-rules/${id}`, data)
+export const deleteInvoiceRule = (id)        => client.delete(`/invoice-rules/${id}`)
+
+// Accounts — Invoice Calculations
+export const getOwnershipVendors  = ()              => client.get('/invoice-calculations/hire-vendors')
+export const getOwnershipMachines = (vendor_name)   => client.get('/invoice-calculations/vendor-machines', { params: { vendor_name } })
+export const getNextRaBillNo      = (vendor)        => client.get('/invoice-calculations/next-ra-bill', { params: { vendor } })
+export const getInvoiceCalcs   = (params)    => client.get('/invoice-calculations', { params })
+export const getInvoiceCalc    = (id)        => client.get(`/invoice-calculations/${id}`)
+export const getBillData         = (params)  => client.get('/invoice-calculations/bill-data', { params })
+export const getDirectPreview    = (payload) => client.post('/invoice-calculations/direct-preview', payload)
+export const createInvoiceCalc   = (data)    => client.post('/invoice-calculations', data)
+export const updateInvoiceCalc   = (id, data) => client.put(`/invoice-calculations/${id}`, data)
+export const deleteInvoiceCalc   = (id)       => client.delete(`/invoice-calculations/${id}`)
+
+// Inventory — Dashboard
+export const getInventoryDashboard = () => client.get('/inventory/dashboard')
+
+// Inventory — Categories
+export const getInventoryCategories    = ()          => client.get('/inventory/categories')
+export const createInventoryCategory   = (data)      => client.post('/inventory/categories', data)
+export const updateInventoryCategory   = (id, data)  => client.put(`/inventory/categories/${id}`, data)
+export const deleteInventoryCategory   = (id)        => client.delete(`/inventory/categories/${id}`)
+
+// Inventory — Warehouses
+export const getWarehouses          = ()             => client.get('/inventory/warehouses')
+export const createWarehouse        = (data)         => client.post('/inventory/warehouses', data)
+export const updateWarehouse        = (id, data)     => client.put(`/inventory/warehouses/${id}`, data)
+export const deleteWarehouse        = (id)           => client.delete(`/inventory/warehouses/${id}`)
+export const getWarehouseLocations  = (wid)          => client.get(`/inventory/warehouses/${wid}/locations`)
+export const createWarehouseLocation= (wid, data)    => client.post(`/inventory/warehouses/${wid}/locations`, data)
+export const deleteWarehouseLocation= (wid, lid)     => client.delete(`/inventory/warehouses/${wid}/locations/${lid}`)
+
+// Inventory — Items (Spare Parts)
+export const getInventoryItems   = (params)    => client.get('/inventory/items', { params })
+export const getInventoryItem    = (id)        => client.get(`/inventory/items/${id}`)
+export const createInventoryItem = (data)      => client.post('/inventory/items', data)
+export const updateInventoryItem = (id, data)  => client.put(`/inventory/items/${id}`, data)
+export const deleteInventoryItem = (id)        => client.delete(`/inventory/items/${id}`)
+
+// Inventory — GRN
+export const getGRNs      = (params)    => client.get('/inventory/grn', { params })
+export const getGRN       = (id)        => client.get(`/inventory/grn/${id}`)
+export const createGRN    = (data)      => client.post('/inventory/grn', data)
+export const approveGRN   = (id)        => client.patch(`/inventory/grn/${id}/approve`)
+export const deleteGRN    = (id)        => client.delete(`/inventory/grn/${id}`)
+
+// Inventory — Stock Transfers
+export const getStockTransfers   = (params)    => client.get('/inventory/transfers', { params })
+export const getStockTransfer    = (id)        => client.get(`/inventory/transfers/${id}`)
+export const createStockTransfer = (data)      => client.post('/inventory/transfers', data)
+export const approveStockTransfer= (id)        => client.patch(`/inventory/transfers/${id}/approve`)
+export const deleteStockTransfer = (id)        => client.delete(`/inventory/transfers/${id}`)
+
+// Inventory — Stock Adjustments
+export const getStockAdjustments   = (params)    => client.get('/inventory/adjustments', { params })
+export const getStockAdjustment    = (id)        => client.get(`/inventory/adjustments/${id}`)
+export const createStockAdjustment = (data)      => client.post('/inventory/adjustments', data)
+export const approveStockAdjustment= (id)        => client.patch(`/inventory/adjustments/${id}/approve`)
+export const deleteStockAdjustment = (id)        => client.delete(`/inventory/adjustments/${id}`)
+
+// Inventory — Consumption
+export const getConsumptions   = (params)    => client.get('/inventory/consumption', { params })
+export const getConsumption    = (id)        => client.get(`/inventory/consumption/${id}`)
+export const createConsumption = (data)      => client.post('/inventory/consumption', data)
+export const deleteConsumption = (id)        => client.delete(`/inventory/consumption/${id}`)
+
+// Inventory — Parts Returns
+export const getPartsReturns   = (params)    => client.get('/inventory/returns', { params })
+export const getPartsReturn    = (id)        => client.get(`/inventory/returns/${id}`)
+export const createPartsReturn = (data)      => client.post('/inventory/returns', data)
+
+// Inventory — Stock Ledger
+export const getStockLedger = (params) => client.get('/inventory/ledger', { params })
+
+// Service Module — Dashboard
+export const getServiceDashboard = () => client.get('/service/dashboard')
+
+// Service — Check Sheets
+export const getCheckSheets      = (params) => client.get('/service/check-sheets', { params })
+export const getCheckSheet       = (id)     => client.get(`/service/check-sheets/${id}`)
+export const createCheckSheet    = (data)   => client.post('/service/check-sheets', data)
+export const updateCheckSheet    = (id, data) => client.put(`/service/check-sheets/${id}`, data)
+export const deleteCheckSheet    = (id)     => client.delete(`/service/check-sheets/${id}`)
+
+// Service — Schedules
+export const getServiceSchedules    = (params) => client.get('/service/schedules', { params })
+export const createServiceSchedule  = (data)   => client.post('/service/schedules', data)
+export const updateServiceSchedule  = (id, data) => client.put(`/service/schedules/${id}`, data)
+
+// Service — Executions
+export const getServiceExecutions   = (params) => client.get('/service/executions', { params })
+export const createServiceExecution = (data)   => client.post('/service/executions', data)
+
+// Service — Tickets
+export const getServiceTickets    = (params) => client.get('/service/tickets', { params })
+export const getServiceTicket     = (id)     => client.get(`/service/tickets/${id}`)
+export const createServiceTicket  = (data)   => client.post('/service/tickets', data)
+export const updateServiceTicket  = (id, data) => client.put(`/service/tickets/${id}`, data)
+export const updateTicketStatus   = (id, data) => client.patch(`/service/tickets/${id}/status`, data)
+export const addTicketPart        = (id, data) => client.post(`/service/tickets/${id}/parts`, data)
+export const removeTicketPart     = (id, partId) => client.delete(`/service/tickets/${id}/parts/${partId}`)
+
+// Equipment Type SCS (Asset Category Service Checksheet)
+export const getEquipmentTypeScs     = (params)     => client.get('/equipment-type-scs', { params })
+export const getEquipmentTypeScsSegs = (params)     => client.get('/equipment-type-scs/sections', { params })
+export const createEquipmentTypeScs  = (data)       => client.post('/equipment-type-scs', data)
+export const updateEquipmentTypeScs  = (id, data)   => client.put(`/equipment-type-scs/${id}`, data)
+export const deleteEquipmentTypeScs  = (id)         => client.delete(`/equipment-type-scs/${id}`)
+export const syncEquipmentTypeScs    = (data)       => client.post('/equipment-type-scs/sync', data)
+
+// Machine SCS (Asset-level Service Checksheet)
+export const getMachineScs          = (params)     => client.get('/machine-scs', { params })
+export const createMachineScs       = (data)       => client.post('/machine-scs', data)
+export const updateMachineScs       = (id, data)   => client.put(`/machine-scs/${id}`, data)
+export const deleteMachineScs       = (id)         => client.delete(`/machine-scs/${id}`)
+export const inheritMachineScs      = (data)       => client.post('/machine-scs/inherit', data)

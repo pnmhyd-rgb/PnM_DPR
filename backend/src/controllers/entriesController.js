@@ -1383,4 +1383,25 @@ const bulkCreate = async (req, res) => {
   }
 };
 
-module.exports = { getAll, getPreviousClosing, getLatestReadingBefore, checkExistsAfter, create, update, updateStatus, remove, removeAllForMachine, removeAllForProject, getDprStatus, getMonthlyStatus, getMonthlyProjectStatus, bulkCreate };
+const getTrend = async (req, res) => {
+  try {
+    const { machine_id, from, to, metric = 'working_hours' } = req.query;
+    if (!machine_id) return res.status(400).json({ error: 'machine_id required' });
+    const allowed = ['working_hours', 'hsd', 'util_pct', 'breakdown'];
+    const col = allowed.includes(metric) ? metric : 'working_hours';
+    const params = [machine_id];
+    let dateWhere = '';
+    if (from) { params.push(from); dateWhere += ` AND entry_date >= $${params.length}`; }
+    if (to)   { params.push(to);   dateWhere += ` AND entry_date <= $${params.length}`; }
+    const result = await db.query(`
+      SELECT entry_date, ${col} AS value FROM dpr_entries
+      WHERE machine_id = $1 ${dateWhere}
+      ORDER BY entry_date
+    `, params);
+    res.json({ data: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getAll, getPreviousClosing, getLatestReadingBefore, checkExistsAfter, create, update, updateStatus, remove, removeAllForMachine, removeAllForProject, getDprStatus, getMonthlyStatus, getMonthlyProjectStatus, bulkCreate, getTrend };

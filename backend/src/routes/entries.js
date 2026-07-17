@@ -1,7 +1,8 @@
 const router = require('express').Router();
-const { getAll, getPreviousClosing, getLatestReadingBefore, checkExistsAfter, create, update, updateStatus, remove, removeAllForMachine, removeAllForProject, getDprStatus, getMonthlyStatus, getMonthlyProjectStatus, bulkCreate } = require('../controllers/entriesController');
+const { getAll, getPreviousClosing, getLatestReadingBefore, checkExistsAfter, create, update, updateStatus, remove, removeAllForMachine, removeAllForProject, getDprStatus, getMonthlyStatus, getMonthlyProjectStatus, bulkCreate, getTrend } = require('../controllers/entriesController');
 const { requireAuth, requireAdmin } = require('../middleware/auth');
 
+router.get('/trend',                   requireAuth, getTrend);
 router.get('/previous-closing',        requireAuth, getPreviousClosing);
 router.get('/latest-reading-before',   requireAuth, getLatestReadingBefore);
 router.get('/check-exists-after',      requireAuth, checkExistsAfter);

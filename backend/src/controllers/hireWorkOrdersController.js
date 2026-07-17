@@ -184,13 +184,14 @@ const BASE_SELECT = `
 
 const getWorkOrders = async (req, res) => {
   try {
-    const { project_id, vendor_id, status } = req.query;
+    const { project_id, vendor_id, vendor_name, status } = req.query;
     let query = BASE_SELECT + ' WHERE 1=1';
     const params = [];
 
-    if (project_id) { params.push(project_id); query += ` AND w.project_id=$${params.length}`; }
-    if (vendor_id)  { params.push(vendor_id);  query += ` AND w.vendor_id=$${params.length}`; }
-    if (status)     { params.push(status);     query += ` AND w.status=$${params.length}`; }
+    if (project_id)  { params.push(project_id);  query += ` AND w.project_id=$${params.length}`; }
+    if (vendor_id)   { params.push(vendor_id);   query += ` AND w.vendor_id=$${params.length}`; }
+    if (vendor_name) { params.push(vendor_name); query += ` AND LOWER(v.name)=LOWER($${params.length})`; }
+    if (status)      { params.push(status);      query += ` AND w.status=$${params.length}`; }
 
     if (req.user.role !== 'admin' && req.user.project_codes?.length) {
       params.push(req.user.project_codes);

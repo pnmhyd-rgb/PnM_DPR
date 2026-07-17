@@ -10,6 +10,7 @@ import {
   getTermsCategories, createTermsCategory, deleteTermsCategory,
   getSignatoryDesignations, createSignatoryDesignation, deleteSignatoryDesignation,
   getSignatories, createSignatory, updateSignatory, deleteSignatory,
+  getMachines, getInvoiceRules,
 } from '../../lib/api'
 import GSTVerifyField from '../../components/GSTVerifyField'
 import {
@@ -414,7 +415,10 @@ function VendorModal({ vendor, onClose, onSaved }) {
 
 // ── WO ITEM ROW ───────────────────────────────────────────────────────────────
 
-function ItemRow({ item, equipmentTypes, onChange, onRemove }) {
+function ItemRow({ item, equipmentTypes, machines, invoiceRules, onChange, onRemove }) {
+  const [machineSearch, setMachineSearch] = useState('')
+  const [machineOpen,   setMachineOpen]   = useState(false)
+
   const set = k => e => {
     const updated = { ...item, [k]: e.target.value }
     if (['quantity','rate'].includes(k)) {
@@ -422,6 +426,31 @@ function ItemRow({ item, equipmentTypes, onChange, onRemove }) {
     }
     onChange(updated)
   }
+
+  const selectedMachine   = machines.find(m => m.id === item.machine_id)
+  const selectedRule      = invoiceRules.find(r => r.id === parseInt(item.invoice_rule_id))
+  const filteredMachines  = machineSearch.trim()
+    ? machines.filter(m =>
+        (m.slno||'').toLowerCase().includes(machineSearch.toLowerCase()) ||
+        (m.nickname||'').toLowerCase().includes(machineSearch.toLowerCase()) ||
+        (m.eq_type_name||m.eq_type||'').toLowerCase().includes(machineSearch.toLowerCase())
+      )
+    : machines.slice(0, 50)
+
+  const pickMachine = (m) => {
+    onChange({
+      ...item,
+      machine_id:    m.id,
+      reg_no:        m.slno || item.reg_no,
+      equipment_desc:item.equipment_desc || m.nickname || m.slno || '',
+      eq_type:       m.eq_type_name || m.eq_type || item.eq_type,
+    })
+    setMachineOpen(false)
+    setMachineSearch('')
+  }
+
+  const clearMachine = () => onChange({ ...item, machine_id: null })
+
   return (
     <div className="border border-gray-200 rounded-xl p-3 space-y-2 bg-gray-50/50">
       <div className="grid grid-cols-12 gap-2">
@@ -430,6 +459,74 @@ function ItemRow({ item, equipmentTypes, onChange, onRemove }) {
         </div>
         <div className="col-span-1 pt-1 text-right">
           <button type="button" onClick={onRemove} className="text-red-400 hover:text-red-600 p-1"><X size={15} /></button>
+        </div>
+      </div>
+
+      {/* Machine + Invoice Rule row */}
+      <div className="grid grid-cols-2 gap-2">
+        {/* Machine picker */}
+        <div className="relative">
+          <label className="text-[10px] text-gray-400 uppercase">Linked Machine (for DPR)</label>
+          {selectedMachine ? (
+            <div className="flex items-center gap-1 border border-blue-300 bg-blue-50 rounded-lg px-2 py-1.5">
+              <span className="flex-1 text-xs font-medium text-blue-800 truncate">
+                {selectedMachine.slno} {selectedMachine.nickname ? `— ${selectedMachine.nickname}` : ''}
+              </span>
+              <button type="button" onClick={clearMachine} className="text-blue-400 hover:text-blue-700 shrink-0"><X size={11} /></button>
+            </div>
+          ) : (
+            <div>
+              <input
+                className={`${inp} text-xs`}
+                placeholder="Search machine reg no / name…"
+                value={machineSearch}
+                onFocus={() => setMachineOpen(true)}
+                onChange={e => { setMachineSearch(e.target.value); setMachineOpen(true) }}
+              />
+              {machineOpen && (
+                <div className="absolute z-30 w-full bg-white border border-gray-200 rounded-lg shadow-lg mt-0.5 max-h-44 overflow-y-auto">
+                  {filteredMachines.length === 0
+                    ? <p className="px-3 py-2 text-xs text-gray-400">No machines found</p>
+                    : filteredMachines.map(m => (
+                        <button key={m.id} type="button"
+                          className="w-full text-left px-3 py-2 hover:bg-blue-50 text-xs border-b border-gray-100 last:border-0"
+                          onMouseDown={() => pickMachine(m)}>
+                          <span className="font-medium text-gray-800">{m.slno}</span>
+                          {m.nickname && <span className="text-gray-500 ml-1">— {m.nickname}</span>}
+                          <span className="text-gray-400 ml-2 text-[10px]">{m.eq_type_name || m.eq_type}</span>
+                        </button>
+                      ))
+                  }
+                </div>
+              )}
+            </div>
+          )}
+          {machineOpen && !selectedMachine && (
+            <button type="button" className="absolute right-0 -top-0.5 text-[10px] text-gray-400 hover:text-gray-600"
+              onMouseDown={() => { setMachineOpen(false); setMachineSearch('') }}>close</button>
+          )}
+        </div>
+
+        {/* Invoice Rule picker */}
+        <div>
+          <label className="text-[10px] text-gray-400 uppercase">Invoice Rule</label>
+          <select
+            className={`${inp} text-xs ${selectedRule ? 'border-green-400 bg-green-50 text-green-900' : ''}`}
+            value={item.invoice_rule_id || ''}
+            onChange={e => onChange({ ...item, invoice_rule_id: e.target.value ? parseInt(e.target.value) : null })}
+          >
+            <option value="">— No rule —</option>
+            {invoiceRules.map(r => (
+              <option key={r.id} value={r.id}>
+                {r.rule_number} · {r.rule_name} · ₹{Number(r.basic_rate).toLocaleString('en-IN')}/{r.days}d
+              </option>
+            ))}
+          </select>
+          {selectedRule && (
+            <p className="text-[10px] text-green-700 mt-0.5">
+              Rate/Day: ₹{(parseFloat(selectedRule.basic_rate)/parseInt(selectedRule.days)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </p>
+          )}
         </div>
       </div>
 
@@ -549,6 +646,7 @@ const blankItem = () => ({
   machine_id: null, equipment_desc: '', eq_type: '', reg_no: '', manufacturer: '', model: '', yom: '',
   quantity: 1, unit: 'No.', rate: '', rate_type: 'per_month',
   rate_single_shift: '', rate_double_shift: '', amount: '0',
+  invoice_rule_id: null,
 })
 
 // ── MACHINE-SPECIFIC TERMS & CONDITIONS LIBRARY ─────────────────────────────
@@ -695,6 +793,8 @@ function WOModal({ wo, onClose, onSaved }) {
   const [vendors,  setVendors]  = useState([])
   const [projects, setProjects] = useState([])
   const [equipmentTypes, setEquipmentTypes] = useState([])
+  const [machinesList,   setMachinesList]   = useState([])
+  const [invoiceRules,   setInvoiceRules]   = useState([])
   const [termsLibrary, setTermsLibrary] = useState([])
   const [termsCategories, setTermsCategories] = useState([])
   const [showTermsPicker, setShowTermsPicker] = useState(false)
@@ -718,6 +818,8 @@ function WOModal({ wo, onClose, onSaved }) {
     getTermsCategories().then(r => setTermsCategories(r.data.data)).catch(() => {})
     getSignatories().then(r => setSignatories(r.data.data)).catch(() => {})
     getSignatoryDesignations().then(r => setSignatoryDesignations(r.data.data)).catch(() => {})
+    getMachines().then(r => setMachinesList(r.data.data || [])).catch(() => {})
+    getInvoiceRules().then(r => setInvoiceRules(r.data.data || [])).catch(() => {})
     Promise.all([getHireVendors(), getProjects()]).then(([v, p]) => {
       setVendors(v.data.data)
       setProjects(p.data.data)
@@ -904,6 +1006,7 @@ function WOModal({ wo, onClose, onSaved }) {
           <div className="space-y-3">
             {items.map((item, idx) => (
               <ItemRow key={idx} item={item} equipmentTypes={equipmentTypes}
+                machines={machinesList} invoiceRules={invoiceRules}
                 onChange={val => updateItem(idx, val)}
                 onRemove={() => removeItem(idx)} />
             ))}

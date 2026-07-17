@@ -130,4 +130,50 @@ const breakdownSummary = async (req, res) => {
   }
 };
 
-module.exports = { utilization, summary, breakdownSummary };
+const monthlyUtilization = async (req, res) => {
+  try {
+    const { project_code, year, month } = req.query;
+    const params = [];
+    let where = '1=1';
+    if (project_code) { params.push(project_code); where += ` AND p.code = $${params.length}`; }
+    if (year && month) {
+      params.push(year); params.push(month);
+      where += ` AND EXTRACT(YEAR FROM e.entry_date) = $${params.length-1} AND EXTRACT(MONTH FROM e.entry_date) = $${params.length}`;
+    }
+    const result = await db.query(`
+      SELECT e.slno, e.eq_type, e.ownership, p.code AS project_code,
+             COUNT(DISTINCT e.entry_date) AS days_reported,
+             ROUND(SUM(e.working_hours)::numeric, 2) AS total_working,
+             ROUND(AVG(e.util_pct)::numeric, 1) AS avg_util_pct
+      FROM dpr_entries e
+      JOIN projects p ON e.project_id = p.id
+      WHERE ${where}
+      GROUP BY e.slno, e.eq_type, e.ownership, p.code
+      ORDER BY e.eq_type, e.slno
+    `, params);
+    res.json({ data: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+const dailyMachineUtil = async (req, res) => {
+  try {
+    const { machine_id, from, to } = req.query;
+    if (!machine_id) return res.status(400).json({ error: 'machine_id required' });
+    const params = [machine_id];
+    let dateWhere = '';
+    if (from) { params.push(from); dateWhere += ` AND entry_date >= $${params.length}`; }
+    if (to)   { params.push(to);   dateWhere += ` AND entry_date <= $${params.length}`; }
+    const result = await db.query(`
+      SELECT entry_date, working_hours, util_pct, hsd, breakdown
+      FROM dpr_entries WHERE machine_id = $1 ${dateWhere}
+      ORDER BY entry_date
+    `, params);
+    res.json({ data: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { utilization, summary, breakdownSummary, monthlyUtilization, dailyMachineUtil };

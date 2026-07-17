@@ -77,7 +77,8 @@ const blank = {
   reading1_basis: 'Hours', reading2_basis: '', dual_reading: false,
   fuel_min: '', fuel_max: '', fuel_min_km: '', fuel_max_km: '', fuel_tank_l: '',
   planned_hours: '10', shift_type: '',
-  date_of_purchase: '', po_number: '', price: '', nickname: ''
+  date_of_purchase: '', po_number: '', price: '', nickname: '',
+  fleet_status: ''
 }
 
 function Modal({ title, onClose, children }) {
@@ -400,7 +401,8 @@ export default function Machines() {
       shift_type: m.shift_type || 'Single Shift',
       date_of_purchase: m.date_of_purchase ? m.date_of_purchase.slice(0, 10) : '',
       po_number: m.po_number || '', price: m.price || '',
-      nickname: m.nickname || ''
+      nickname: m.nickname || '',
+      fleet_status: m.fleet_status || ''
     })
     setError(''); setModal({ edit: m })
   }
@@ -453,7 +455,8 @@ export default function Machines() {
         date_of_purchase: form.date_of_purchase || null,
         po_number:     form.po_number || null,
         price:         form.price || null,
-        nickname:      form.nickname || null
+        nickname:      form.nickname || null,
+        fleet_status:  form.fleet_status || null
       }
       modal === 'add' ? await createMachine(payload) : await updateMachine(editId, payload)
       setModal(null)
@@ -1415,7 +1418,7 @@ export default function Machines() {
             </div>
 
             {/* Ownership */}
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 pb-1 pt-1">Ownership</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide border-b border-gray-100 pb-1 pt-1">Ownership & Status</p>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className={lbl}>Ownership</label>
@@ -1430,6 +1433,16 @@ export default function Machines() {
                   {SHIFT_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
+            </div>
+            <div>
+              <label className={lbl}>Fleet Status</label>
+              <select value={form.fleet_status} onChange={set('fleet_status')} className={inp + ' max-w-xs'}>
+                <option value="">Deployed (Active Use)</option>
+                <option value="Surplus">Surplus — Not required / standby</option>
+                <option value="Accident">Accident — Damaged / under investigation</option>
+                <option value="Scrap">Scrap — Written off / disposed</option>
+              </select>
+              <p className="text-xs text-gray-400 mt-0.5">Leave blank for machines in active deployment. Surplus/Accident/Scrap machines are tracked separately in the dashboard.</p>
             </div>
 
             {form.ownership === 'Own' && (

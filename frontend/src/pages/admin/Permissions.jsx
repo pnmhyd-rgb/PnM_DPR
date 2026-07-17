@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { getProjects, getUsers, getSitePermissions, saveSitePermissions } from '../../lib/api'
-import { Shield, Save, Loader2, CheckCircle, Building2, Search, Users } from 'lucide-react'
+import { Shield, Save, Loader2, CircleCheck, Building2, Search, Users, FileText, LayoutGrid } from 'lucide-react'
 
 const MODULE_GROUPS = [
   {
@@ -15,9 +15,8 @@ const MODULE_GROUPS = [
   {
     group: 'DPR Operations',
     modules: [
-      { key: 'dpr_log_entry',   label: 'DPR Log Entry' },
-      { key: 'fuel_issue',      label: 'Fuel Issue' },
-      { key: 'service_records', label: 'Service Records' },
+      { key: 'dpr_log_entry', label: 'DPR Log Entry' },
+      { key: 'fuel_issue',    label: 'Fuel Issue / Fuel Station' },
     ],
   },
   {
@@ -30,11 +29,25 @@ const MODULE_GROUPS = [
     ],
   },
   {
+    group: 'Service',
+    modules: [
+      { key: 'service_check_sheets', label: 'Service Check Sheets' },
+      { key: 'service_tickets',      label: 'Service Tickets' },
+    ],
+  },
+  {
     group: 'Hire',
     modules: [
       { key: 'hire_indents',     label: 'Hire Indents' },
       { key: 'hire_work_orders', label: 'Hire Work Orders' },
       { key: 'hire_billing',     label: 'Hire Billing' },
+    ],
+  },
+  {
+    group: 'Accounts',
+    modules: [
+      { key: 'accounts_invoice_rules',       label: 'Invoice Rules' },
+      { key: 'accounts_invoice_calculation', label: 'Invoice Calculation' },
     ],
   },
   {
@@ -48,7 +61,50 @@ const MODULE_GROUPS = [
   {
     group: 'Inventory',
     modules: [
+      { key: 'inventory_dashboard',   label: 'Dashboard' },
       { key: 'inventory_spare_parts', label: 'Spare Parts' },
+      { key: 'inventory_categories',  label: 'Categories' },
+      { key: 'inventory_warehouses',  label: 'Warehouses' },
+      { key: 'inventory_grn',         label: 'Goods Receipt (GRN)' },
+      { key: 'inventory_transfers',   label: 'Stock Transfer' },
+      { key: 'inventory_adjustments', label: 'Stock Adjustment' },
+      { key: 'inventory_consumption', label: 'Consumption' },
+      { key: 'inventory_returns',     label: 'Parts Return' },
+      { key: 'inventory_ledger',      label: 'Stock Ledger' },
+    ],
+  },
+]
+
+const REPORT_GROUPS = [
+  {
+    section: 'DPR Reports',
+    reports: [
+      { key: 'rpt_dpr',         label: 'Daily Progress Report (DPR)' },
+      { key: 'rpt_utilization', label: 'Utilization & Availability Report' },
+      { key: 'rpt_summary',     label: 'Summary Report' },
+      { key: 'rpt_breakdown',   label: 'Breakdown Analysis Report' },
+    ],
+  },
+  {
+    section: 'Service Reports',
+    reports: [
+      { key: 'rpt_service_checksheet', label: 'Service Check Sheet Report' },
+      { key: 'rpt_service_ticket',     label: 'Service Ticket Report' },
+    ],
+  },
+  {
+    section: 'Hire Reports',
+    reports: [
+      { key: 'rpt_hire_wo',      label: 'Hire Work Order Report' },
+      { key: 'rpt_hire_billing', label: 'Hire Billing Report' },
+    ],
+  },
+  {
+    section: 'Inventory Reports',
+    reports: [
+      { key: 'rpt_inv_stock',   label: 'Stock Ledger Report' },
+      { key: 'rpt_inv_grn',     label: 'Goods Receipt (GRN) Report' },
+      { key: 'rpt_inv_consume', label: 'Consumption Report' },
     ],
   },
 ]
@@ -75,6 +131,14 @@ function emptyPerms() {
   return p
 }
 
+function emptyReportPerms() {
+  const p = {}
+  for (const g of REPORT_GROUPS)
+    for (const r of g.reports)
+      p[r.key] = { can_view: false, can_download: false }
+  return p
+}
+
 function initials(name = '') {
   return name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase()).join('')
 }
@@ -85,6 +149,8 @@ export default function Permissions() {
   const [search,        setSearch]        = useState('')
   const [selectedSite,  setSelectedSite]  = useState(null)
   const [perms,         setPerms]         = useState(emptyPerms())
+  const [reportPerms,   setReportPerms]   = useState(emptyReportPerms())
+  const [activeTab,     setActiveTab]     = useState('modules')
   const [loading,       setLoading]       = useState(false)
   const [saving,        setSaving]        = useState(false)
   const [saved,         setSaved]         = useState(false)
@@ -105,18 +171,28 @@ export default function Permissions() {
     setSaved(false)
     try {
       const r = await getSitePermissions(site.code)
+      const raw = r.data.data || {}
+
       const base = emptyPerms()
-      const saved = r.data.data || {}
       for (const key of Object.keys(base)) {
-        if (saved[key]) base[key] = {
-          full_access: !!saved[key].full_access,
-          can_view:    !!saved[key].can_view,
-          can_add:     !!saved[key].can_add,
-          can_edit:    !!saved[key].can_edit,
-          can_delete:  !!saved[key].can_delete,
+        if (raw[key]) base[key] = {
+          full_access: !!raw[key].full_access,
+          can_view:    !!raw[key].can_view,
+          can_add:     !!raw[key].can_add,
+          can_edit:    !!raw[key].can_edit,
+          can_delete:  !!raw[key].can_delete,
         }
       }
       setPerms(base)
+
+      const rbase = emptyReportPerms()
+      for (const key of Object.keys(rbase)) {
+        if (raw[key]) rbase[key] = {
+          can_view:     !!raw[key].can_view,
+          can_download: !!raw[key].can_download,
+        }
+      }
+      setReportPerms(rbase)
     } catch {
       setError('Failed to load permissions')
     } finally {
@@ -138,11 +214,28 @@ export default function Permissions() {
     setSaved(false)
   }
 
+  const toggleReport = (key, col) => {
+    setReportPerms(prev => ({ ...prev, [key]: { ...prev[key], [col]: !prev[key][col] } }))
+    setSaved(false)
+  }
+
+  const selectAllReports = (col, val) => {
+    setReportPerms(prev => {
+      const next = { ...prev }
+      for (const key of Object.keys(next)) next[key] = { ...next[key], [col]: val }
+      return next
+    })
+    setSaved(false)
+  }
+
+  const allReportChecked = (col) => Object.values(reportPerms).every(r => r[col])
+
   const handleSave = async () => {
     if (!selectedSite) return
     setSaving(true); setError(''); setSaved(false)
     try {
-      await saveSitePermissions(selectedSite.code, { permissions: perms })
+      const combined = { ...perms, ...reportPerms }
+      await saveSitePermissions(selectedSite.code, { permissions: combined })
       setSaved(true)
       setTimeout(() => setSaved(false), 3000)
     } catch (err) {
@@ -260,7 +353,7 @@ export default function Permissions() {
                 {error && <p className="text-xs text-red-600">{error}</p>}
                 {saved && (
                   <span className="flex items-center gap-1 text-xs text-green-700 font-medium">
-                    <CheckCircle size={12} /> Saved
+                    <CircleCheck size={12} /> Saved
                   </span>
                 )}
                 <button
@@ -273,12 +366,36 @@ export default function Permissions() {
               </div>
             </div>
 
+            {/* Tabs */}
+            <div className="flex gap-0 border-b border-gray-200 bg-white px-6 flex-shrink-0">
+              <button
+                onClick={() => setActiveTab('modules')}
+                className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+                  activeTab === 'modules'
+                    ? 'border-blue-600 text-blue-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <LayoutGrid size={13} /> Module Permissions
+              </button>
+              <button
+                onClick={() => setActiveTab('reports')}
+                className={`flex items-center gap-1.5 px-4 py-2.5 text-xs font-semibold border-b-2 transition-colors ${
+                  activeTab === 'reports'
+                    ? 'border-blue-600 text-blue-700'
+                    : 'border-transparent text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <FileText size={13} /> Report Permissions
+              </button>
+            </div>
+
             {/* Matrix */}
             {loading ? (
               <div className="flex-1 flex items-center justify-center gap-2 text-gray-400">
                 <Loader2 size={18} className="animate-spin" /><span className="text-sm">Loading…</span>
               </div>
-            ) : (
+            ) : activeTab === 'modules' ? (
               <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
                 {MODULE_GROUPS.map(group => (
                   <div key={group.group} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
@@ -307,6 +424,61 @@ export default function Permissions() {
                               type="checkbox"
                               checked={!!perms[mod.key]?.[col.key]}
                               onChange={() => toggle(mod.key, col.key)}
+                              className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              /* ── Report Permissions Tab ── */
+              <div className="flex-1 overflow-y-auto px-6 py-4 space-y-5">
+                {REPORT_GROUPS.map(group => (
+                  <div key={group.section} className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                    {/* Group header with Select All */}
+                    <div className="grid bg-gray-100 border-b border-gray-200"
+                      style={{ gridTemplateColumns: '80px 1fr 120px 120px' }}>
+                      <div className="px-4 py-2.5 text-xs font-bold text-gray-700 uppercase tracking-wide">
+                        Section
+                      </div>
+                      <div className="px-4 py-2.5 text-xs font-bold text-gray-700 uppercase tracking-wide">
+                        {group.section}
+                      </div>
+                      {['can_view', 'can_download'].map(col => (
+                        <div key={col} className="px-2 py-2 flex flex-col items-center gap-1">
+                          <span className="text-[10px] font-bold text-gray-600 uppercase">
+                            {col === 'can_view' ? 'View' : 'Download'}
+                          </span>
+                          <label className="flex items-center gap-1 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={allReportChecked(col)}
+                              onChange={e => selectAllReports(col, e.target.checked)}
+                              className="w-3.5 h-3.5 accent-blue-600 cursor-pointer"
+                            />
+                            <span className="text-[10px] text-gray-500">All</span>
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+
+                    {group.reports.map((rpt, idx) => (
+                      <div
+                        key={rpt.key}
+                        className={`grid items-center border-b border-gray-100 last:border-0 hover:bg-blue-50/30 transition-colors ${idx % 2 === 1 ? 'bg-gray-50/40' : ''}`}
+                        style={{ gridTemplateColumns: '80px 1fr 120px 120px' }}
+                      >
+                        <div className="px-4 py-3 text-xs text-gray-400 font-medium">{group.section}</div>
+                        <div className="px-4 py-3 text-sm text-gray-800">{rpt.label}</div>
+                        {['can_view', 'can_download'].map(col => (
+                          <div key={col} className="flex items-center justify-center py-3">
+                            <input
+                              type="checkbox"
+                              checked={!!reportPerms[rpt.key]?.[col]}
+                              onChange={() => toggleReport(rpt.key, col)}
                               className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
                             />
                           </div>

@@ -193,3 +193,88 @@ exports.upsert = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+
+exports.getSCS = async (req, res) => {
+  const eqTypeId = parseInt(req.params.eqTypeId);
+  try {
+    const result = await db.query(`
+      SELECT s.*, cs.name AS check_sheet_name, cs.category AS check_sheet_category
+      FROM equipment_type_scs s
+      LEFT JOIN check_sheets cs ON cs.id = s.check_sheet_id
+      WHERE s.equipment_type_id = $1
+      ORDER BY s.sort_order, s.id
+    `, [eqTypeId]);
+    res.json({ data: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.addSCS = async (req, res) => {
+  const eqTypeId = parseInt(req.params.eqTypeId);
+  const { check_sheet_id, custom_name, enabled, interval_hours, hours_enabled, interval_days, days_enabled, sort_order } = req.body;
+  try {
+    const result = await db.query(`
+      INSERT INTO equipment_type_scs
+        (equipment_type_id, check_sheet_id, custom_name, enabled,
+         interval_hours, hours_enabled, interval_days, days_enabled, sort_order)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+      RETURNING *
+    `, [
+      eqTypeId,
+      check_sheet_id || null,
+      custom_name || null,
+      enabled ?? true,
+      interval_hours || null,
+      hours_enabled ?? true,
+      interval_days || null,
+      days_enabled ?? false,
+      sort_order || 0,
+    ]);
+    res.status(201).json({ data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.updateSCS = async (req, res) => {
+  const scsId = parseInt(req.params.scsId);
+  const { custom_name, enabled, interval_hours, hours_enabled, interval_days, days_enabled, sort_order } = req.body;
+  try {
+    const result = await db.query(`
+      UPDATE equipment_type_scs SET
+        custom_name     = $1,
+        enabled         = $2,
+        interval_hours  = $3,
+        hours_enabled   = $4,
+        interval_days   = $5,
+        days_enabled    = $6,
+        sort_order      = $7
+      WHERE id = $8
+      RETURNING *
+    `, [
+      custom_name || null,
+      enabled ?? true,
+      interval_hours || null,
+      hours_enabled ?? true,
+      interval_days || null,
+      days_enabled ?? false,
+      sort_order || 0,
+      scsId,
+    ]);
+    if (!result.rows[0]) return res.status(404).json({ error: 'SCS entry not found' });
+    res.json({ data: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.removeSCS = async (req, res) => {
+  const scsId = parseInt(req.params.scsId);
+  try {
+    await db.query('DELETE FROM equipment_type_scs WHERE id = $1', [scsId]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

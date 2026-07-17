@@ -57,9 +57,10 @@ function Section({ icon: Icon, title, color = 'blue', children }) {
 const UNIT_OPTIONS = ['Hrs', 'Km', 'Ltr', 'Units']
 const SHIFT_OPTIONS = ['Single Shift', 'Dual Shift']
 const FORMULA_OPTIONS = [
-  { value: 'L_per_Hr',  label: 'Fuel Consumption — Fuel ÷ Hours (L/Hr)' },
-  { value: 'KM_per_L',  label: 'Fuel Economy — KM ÷ Fuel (KM/L)' },
-  { value: 'both',      label: 'Both — L/Hr + KM/L (Transit Mixer style)' },
+  { value: 'L_per_Hr',       label: 'Fuel Consumption — Fuel ÷ Hours (L/Hr)'            },
+  { value: 'KM_per_L',       label: 'Fuel Economy — KM ÷ Fuel (KM/L)'                  },
+  { value: 'both',           label: 'Both — L/Hr + KM/L'                               },
+  { value: 'transit_mixer',  label: 'Transit Mixer — Both L/Hr + KM/L (Split Formula)' },
 ]
 
 function defaultConfig() {
@@ -87,6 +88,8 @@ function defaultConfig() {
     report_show_quantity: true,
     report_show_reading_details: true,
     report_show_work_done: true,
+    report_show_productivity_costing: true,
+    mandatory_operator: false,
   }
 }
 
@@ -561,6 +564,12 @@ export default function AssetGroupConfig() {
               onChange={v => set('work_done_mandatory', v)}
               label="Work Done Description Mandatory"
             />
+            <Toggle
+              checked={cfg.mandatory_operator}
+              onChange={v => set('mandatory_operator', v)}
+              label="Operator Selection Mandatory"
+              note="When enabled, DPR cannot be saved without selecting an operator"
+            />
           </div>
         </div>
       </Section>
@@ -599,7 +608,7 @@ export default function AssetGroupConfig() {
       {/* Section 8 — Report Settings */}
       <Section icon={FileText} title="Report Settings" color="rose">
         <p className="text-xs text-gray-500 mb-4">
-          Select which fields appear in the DPR download (Excel / PDF).
+          Select which fields and sections appear in the DPR download (Excel / PDF).
         </p>
         <div className="grid grid-cols-2 gap-3">
           {[
@@ -609,13 +618,16 @@ export default function AssetGroupConfig() {
             { key: 'report_show_reading_details',  label: 'Show Reading Details'  },
             { key: 'report_show_work_done',        label: 'Show Work Done'        },
           ].map(({ key, label }) => (
-            <Toggle
-              key={key}
-              checked={cfg[key]}
-              onChange={v => set(key, v)}
-              label={label}
-            />
+            <Toggle key={key} checked={cfg[key]} onChange={v => set(key, v)} label={label} />
           ))}
+        </div>
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Productivity Sections</p>
+          <Toggle
+            checked={cfg.report_show_productivity_costing}
+            onChange={v => set('report_show_productivity_costing', v)}
+            label="Enable Productivity Costing &amp; Fuel vs Productivity"
+          />
         </div>
       </Section>
 

@@ -3,9 +3,10 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ChevronLeft, Save, Loader2, CheckCircle2,
   BookOpen, Fuel, ShieldCheck,
-  ClipboardList, BarChart2, FileText, AlertCircle, Wrench, Bell, Lock,
+  ClipboardList, BarChart2, FileText, AlertCircle, Wrench, Bell, Lock, ClipboardCheck,
 } from 'lucide-react'
-import { getEquipmentTypeConfig, saveEquipmentTypeConfig } from '../../lib/api'
+import { getEquipmentTypeConfig, saveEquipmentTypeConfig, getUomTypes } from '../../lib/api'
+import AssetTypeScsTab from './AssetTypeScsTab'
 
 /* ── helpers ── */
 const lbl   = 'block text-xs font-medium text-gray-600 mb-1'
@@ -58,9 +59,10 @@ function Section({ icon: Icon, title, color = 'blue', children }) {
 
 const SHIFT_OPTIONS   = ['Single Shift', 'Dual Shift']
 const FORMULA_OPTIONS = [
-  { value: 'L_per_Hr', label: 'Fuel Consumption — Fuel ÷ Hours (L/Hr)' },
-  { value: 'KM_per_L', label: 'Fuel Economy — KM ÷ Fuel (KM/L)'       },
-  { value: 'both',     label: 'Both — L/Hr + KM/L (Transit Mixer style)'},
+  { value: 'L_per_Hr',       label: 'Fuel Consumption — Fuel ÷ Hours (L/Hr)'              },
+  { value: 'KM_per_L',       label: 'Fuel Economy — KM ÷ Fuel (KM/L)'                    },
+  { value: 'both',           label: 'Both — L/Hr + KM/L'                                 },
+  { value: 'transit_mixer',  label: 'Transit Mixer — Both L/Hr + KM/L (Split Formula)'   },
 ]
 
 function defaultConfig() {
@@ -104,6 +106,8 @@ function defaultConfig() {
     report_show_quantity: true,
     report_show_reading_details: true,
     report_show_work_done: true,
+    report_show_productivity_costing: true,
+    quantity_uom_id: null,
   }
 }
 
@@ -118,15 +122,17 @@ export default function AssetTypeConfig() {
   const [cfg,          setCfg]          = useState(defaultConfig)
   const [eqType,       setEqType]       = useState(null)
   const [machines,     setMachines]     = useState([])
+  const [uomTypes,     setUomTypes]     = useState([])
   const [showTmPopup,  setShowTmPopup]  = useState(false)
   const [tmPopupMode,  setTmPopupMode]  = useState('drum_rate')
   const [tmPopupValue, setTmPopupValue] = useState('')
+  const [activeTab,    setActiveTab]    = useState('general')
 
   useEffect(() => {
     setLoading(true)
-    getEquipmentTypeConfig(id)
-      .then(r => {
-        const d = r.data.data
+    Promise.all([getEquipmentTypeConfig(id), getUomTypes()])
+      .then(([cfgRes, uomRes]) => {
+        const d = cfgRes.data.data
         if (d.config) {
           setCfg({
             ...defaultConfig(),
@@ -136,7 +142,8 @@ export default function AssetTypeConfig() {
           })
         }
         setEqType(d.eqType)
-        setMachines(d.machines      || [])
+        setMachines(d.machines || [])
+        setUomTypes(uomRes.data.data || [])
       })
       .catch(e => setError(e.response?.data?.error || 'Failed to load'))
       .finally(() => setLoading(false))
@@ -233,11 +240,34 @@ export default function AssetTypeConfig() {
         </div>
       </div>
 
-      {error && (
+      {/* Tab bar */}
+      <div className="flex gap-1 border-b border-gray-200 -mb-2">
+        {[
+          { id: 'general', label: 'General Config', icon: ClipboardList },
+          { id: 'scs',     label: 'Service Checksheet', icon: ClipboardCheck },
+        ].map(({ id, label, icon: Icon }) => (
+          <button key={id} onClick={() => setActiveTab(id)}
+            className={`flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors ${
+              activeTab === id
+                ? 'border-blue-600 text-blue-700'
+                : 'border-transparent text-gray-500 hover:text-gray-800 hover:border-gray-300'
+            }`}>
+            <Icon size={14}/> {label}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'scs' && (
+        <AssetTypeScsTab eqTypeId={id} eqTypeName={eqType?.name || ''} />
+      )}
+
+      {activeTab === 'general' && error && (
         <div className="flex items-center gap-2 px-4 py-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
           <AlertCircle size={15} /> {error}
         </div>
       )}
+
+      {activeTab === 'general' && <>
 
       {/* Section 1 — Asset Details (read-only) */}
       <Section icon={BookOpen} title="Asset Details" color="slate">
@@ -335,8 +365,8 @@ export default function AssetTypeConfig() {
         </div>
       </Section>
 
-      {/* Section 4b — Transit Mixer Advance Fuel Formula */}
-      {cfg.fuel_formula_type === 'both' && (
+      {/* Section 4b — Both / Transit Mixer: Approved Limits + Split Formula */}
+      {(cfg.fuel_formula_type === 'both' || cfg.fuel_formula_type === 'transit_mixer') && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
 
           {/* Approved Fuel Limit */}
@@ -345,7 +375,7 @@ export default function AssetTypeConfig() {
               <div className="w-1 h-5 bg-teal-500 rounded-full flex-shrink-0" />
               <span className="text-sm font-bold text-gray-800">Approved Fuel Limit</span>
               <span
-                title="Standard approved limits for this Transit Mixer's two engines"
+                title="Standard approved fuel limits for this asset type"
                 className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-gray-200 text-gray-500 text-xs cursor-default select-none leading-none"
               >i</span>
             </div>
@@ -375,12 +405,14 @@ export default function AssetTypeConfig() {
             </div>
           </div>
 
-          {/* Advance Fuel Formula */}
+          {/* Advance Fuel Formula — Transit Mixer only (mandatory) */}
+          {cfg.fuel_formula_type === 'transit_mixer' && (
           <div className="px-5 py-4">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <div className="w-1 h-5 bg-teal-500 rounded-full flex-shrink-0" />
-                <span className="text-sm font-bold text-gray-800">Advance Fuel Formula</span>
+                <span className="text-sm font-bold text-gray-800">Transit Mixer Split Formula</span>
+                <span className="text-[10px] font-semibold text-red-600 bg-red-50 border border-red-200 px-1.5 py-0.5 rounded">Required</span>
               </div>
               <button
                 type="button"
@@ -416,11 +448,12 @@ export default function AssetTypeConfig() {
                 </button>
               </div>
             ) : (
-              <p className="text-xs text-gray-400 italic pl-3">
-                Click "Apply" to configure the advance fuel split formula for this Transit Mixer.
+              <p className="text-xs text-red-500 italic pl-3">
+                Split formula not configured — click "Apply" to set up the dual-engine fuel split.
               </p>
             )}
           </div>
+          )}
 
           {/* Apply Formula Popup */}
           {showTmPopup && (
@@ -644,17 +677,43 @@ export default function AssetTypeConfig() {
 
       {/* Section 11 — Report Settings */}
       <Section icon={FileText} title="Report Settings" color="rose">
-        <p className="text-xs text-gray-500 mb-4">Select which fields appear in the DPR download (Excel / PDF).</p>
+        <p className="text-xs text-gray-500 mb-4">Select which fields and sections appear in the DPR download (Excel / PDF).</p>
         <div className="grid grid-cols-2 gap-3">
           {[
-            { key: 'report_show_fuel_cost',       label: 'Show Fuel Cost'        },
-            { key: 'report_show_fuel_rate',        label: 'Show Fuel Rate'        },
-            { key: 'report_show_quantity',         label: 'Show Quantity'         },
-            { key: 'report_show_reading_details',  label: 'Show Reading Details'  },
-            { key: 'report_show_work_done',        label: 'Show Work Done'        },
+            { key: 'report_show_fuel_cost',              label: 'Show Fuel Cost'                                                              },
+            { key: 'report_show_fuel_rate',              label: 'Show Fuel Rate'                                                              },
+            { key: 'report_show_quantity',               label: 'Show Quantity'                                                               },
+            { key: 'report_show_reading_details',        label: 'Show Reading Details'                                                        },
+            { key: 'report_show_work_done',              label: 'Show Work Done'                                                              },
           ].map(({ key, label }) => (
             <Toggle key={key} checked={cfg[key]} onChange={v => set(key, v)} label={label} />
           ))}
+        </div>
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Productivity Sections</p>
+          <Toggle
+            checked={cfg.report_show_productivity_costing}
+            onChange={v => set('report_show_productivity_costing', v)}
+            label="Enable Productivity Costing &amp; Fuel vs Productivity"
+          />
+        </div>
+        <div className="mt-4 pt-4 border-t border-gray-100">
+          <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">Quantity Unit</p>
+          <label className={lbl}>Quantity UOM</label>
+          <select
+            value={cfg.quantity_uom_id || ''}
+            onChange={e => set('quantity_uom_id', e.target.value ? parseInt(e.target.value) : null)}
+            className={inp + ' max-w-xs'}
+          >
+            <option value="">— Not configured —</option>
+            {uomTypes.map(u => (
+              <option key={u.id} value={u.id}>{u.name}</option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-400 mt-1">
+            Displayed next to Quantity in Log Entry and in downloaded reports.
+            Applied to all {machines.length} active {eqType?.name || ''} machine{machines.length !== 1 ? 's' : ''}.
+          </p>
         </div>
       </Section>
 
@@ -681,6 +740,8 @@ export default function AssetTypeConfig() {
           </button>
         </div>
       </div>
+
+      </>}
     </div>
   )
 }
