@@ -91,6 +91,12 @@ const migrations = [
   '085_invoice_calc_vendor_details.sql',
   '086_machine_scs.sql',
   '087_scs_custom_fields.sql',
+  '088_machine_scs_executions.sql',
+  '089_scs_transactions.sql',
+  '090_machine_asset_status.sql',
+  '091_consumption_ticket_draft.sql',
+  '092_consumption_workflow.sql',
+  '093_hire_wo_asset_manual_bill.sql',
 ];
 
 async function runMigrations() {

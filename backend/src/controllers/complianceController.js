@@ -24,16 +24,19 @@ async function getAll(req, res) {
   try {
     const { rows } = await db.query(`
       SELECT m.id AS machine_id, m.slno, m.reg_no, m.eq_type, m.capacity, m.ownership,
+             m.asset_type, m.nickname,
              p.code AS project_code,
+             et.asset_group, et.asset_cat,
              mc.id AS doc_id, mc.doc_type, mc.doc_label,
              mc.doc_no, mc.issued_date, mc.expiry_date, mc.issued_by, mc.notes,
              (mc.attachment_key IS NOT NULL) AS has_attachment,
              mc.attachment_name, mc.attachment_mime
       FROM machines m
       JOIN projects p ON m.project_id = p.id
+      LEFT JOIN equipment_types et ON LOWER(et.name) = LOWER(m.eq_type)
       LEFT JOIN machine_compliance mc ON mc.machine_id = m.id AND (mc.hidden IS NULL OR mc.hidden = false)
       WHERE ${conds.join(' AND ')}
-      ORDER BY p.code, m.slno, mc.doc_type, mc.doc_label
+      ORDER BY COALESCE(et.asset_group,'~'), COALESCE(et.asset_cat,'~'), m.eq_type, p.code, m.slno, mc.doc_type, mc.doc_label
     `, params)
 
     const STATUS_PRIORITY = { expired: 4, critical: 3, warning: 2, valid: 1, na: 0 }
@@ -45,7 +48,11 @@ async function getAll(req, res) {
           machine_id: row.machine_id,
           slno: row.slno, reg_no: row.reg_no, eq_type: row.eq_type,
           capacity: row.capacity, ownership: row.ownership,
+          asset_type: row.asset_type,
+          nickname: row.nickname,
           project_code: row.project_code,
+          asset_group: row.asset_group || '',
+          asset_cat: row.asset_cat || '',
           docs: {}, worst_status: 'na',
         }
       }
@@ -103,10 +110,12 @@ async function getUpcoming(req, res) {
       SELECT mc.id, mc.doc_type, mc.doc_label, mc.doc_no, mc.expiry_date, mc.issued_by,
              m.id AS machine_id, m.slno, m.reg_no, m.eq_type, m.ownership,
              p.code AS project_code,
+             et.asset_group, et.asset_cat,
              (mc.expiry_date - CURRENT_DATE)::int AS days_remaining
       FROM machine_compliance mc
       JOIN machines m ON m.id = mc.machine_id
       JOIN projects p ON p.id = m.project_id
+      LEFT JOIN equipment_types et ON LOWER(et.name) = LOWER(m.eq_type)
       WHERE m.active = true AND mc.expiry_date IS NOT NULL
         AND mc.expiry_date <= CURRENT_DATE + ($1 * INTERVAL '1 day')
       ORDER BY mc.expiry_date ASC

@@ -31,15 +31,17 @@ router.put('/signatories/:id',    requireAuth, ctrl.updateSignatory);
 router.delete('/signatories/:id', requireAuth, ctrl.deleteSignatory);
 
 // Work Orders
-router.get('/',                 requireAuth,              ctrl.getWorkOrders);
-router.get('/:id',              requireAuth,              ctrl.getWorkOrder);
+router.get('/',                        requireAuth,              ctrl.getWorkOrders);
+router.get('/approved-for-billing',    requireAuth,              ctrl.getApprovedWOsForBilling);
+router.get('/:id',                     requireAuth,              ctrl.getWorkOrder);
 router.post('/',                requireAuth,              ctrl.createWorkOrder);
 router.put('/:id',              requireAuth,              ctrl.updateWorkOrder);
 router.delete('/:id',           requireAuth,              ctrl.deleteWorkOrder);
 router.patch('/:id/submit',     requireAuth,              ctrl.submitWorkOrder);
 router.patch('/:id/approve-l1', requireAuth, requireAdmin, ctrl.approveL1);
-router.patch('/:id/approve',    requireAuth, requireAdmin, ctrl.approveFinal);
-router.patch('/:id/reject',     requireAuth, requireAdmin, ctrl.rejectWorkOrder);
-router.post('/:id/renew',       requireAuth,              ctrl.renewWorkOrder);
+router.patch('/:id/approve',     requireAuth, requireAdmin, ctrl.approveFinal);
+router.patch('/:id/link-asset',  requireAuth, requireAdmin, ctrl.linkAssetToWO);
+router.patch('/:id/reject',      requireAuth, requireAdmin, ctrl.rejectWorkOrder);
+router.post('/:id/renew',        requireAuth,              ctrl.renewWorkOrder);
 
 module.exports = router;

@@ -1,5 +1,14 @@
 export const today = () => new Date().toISOString().split('T')[0]
 
+export const fmtMoney = (v) =>
+  v != null ? `₹ ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'
+
+export const fmtNum = (v) =>
+  v != null ? Number(v).toLocaleString('en-IN', { maximumFractionDigits: 3 }) : '—'
+
+export const fmtDate = (d) =>
+  d ? new Date(d).toLocaleDateString('en-IN') : '—'
+
 export const monthStart = () => {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`

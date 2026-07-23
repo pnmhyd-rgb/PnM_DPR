@@ -28,7 +28,7 @@ const BILL_SELECT = `
     ua.name           AS approved_by_name,
     up.name           AS paid_by_name
   FROM hire_bills b
-  JOIN hire_work_orders w ON b.wo_id = w.id
+  LEFT JOIN hire_work_orders w ON b.wo_id = w.id
   LEFT JOIN hire_vendors v ON b.vendor_id = v.id
   LEFT JOIN projects p     ON b.project_id = p.id
   LEFT JOIN users uc ON b.created_by  = uc.id
@@ -162,7 +162,9 @@ const createBill = async (req, res) => {
     await client.query('BEGIN');
 
     const {
-      wo_id, billing_period_from, billing_period_to,
+      wo_id, is_manual = false, external_wo_number,
+      vendor_id: bodyVendorId, project_id: bodyProjectId,
+      billing_period_from, billing_period_to,
       total_calendar_days, total_working_days, total_working_hours,
       sunday_days_worked, overtime_hours,
       base_amount, overtime_amount, sunday_amount,
@@ -172,20 +174,36 @@ const createBill = async (req, res) => {
       items = [],
     } = req.body;
 
-    if (!wo_id || !billing_period_from || !billing_period_to) {
+    if (!billing_period_from || !billing_period_to) {
       await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'wo_id, billing_period_from and billing_period_to are required' });
+      return res.status(400).json({ error: 'billing_period_from and billing_period_to are required' });
     }
 
-    const woRes = await client.query(
-      `SELECT vendor_id, project_id FROM hire_work_orders WHERE id=$1 AND status='approved'`,
-      [wo_id]
-    );
-    if (!woRes.rows.length) {
-      await client.query('ROLLBACK');
-      return res.status(400).json({ error: 'Only approved work orders can be billed' });
+    let vendor_id, project_id;
+
+    if (is_manual) {
+      if (!external_wo_number?.trim()) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'External WO number is required for manual billing entries' });
+      }
+      vendor_id  = bodyVendorId  || null;
+      project_id = bodyProjectId || null;
+    } else {
+      if (!wo_id) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'wo_id is required for system Work Order billing' });
+      }
+      const woRes = await client.query(
+        `SELECT vendor_id, project_id FROM hire_work_orders WHERE id=$1 AND status='approved'`,
+        [wo_id]
+      );
+      if (!woRes.rows.length) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({ error: 'Only approved work orders can be billed' });
+      }
+      vendor_id  = woRes.rows[0].vendor_id;
+      project_id = woRes.rows[0].project_id;
     }
-    const { vendor_id, project_id } = woRes.rows[0];
 
     const billing_month = billing_period_from.slice(0, 7);
     const bill_number   = await generateBillNumber(billing_period_from);
@@ -199,11 +217,12 @@ const createBill = async (req, res) => {
           base_amount, overtime_amount, sunday_amount,
           other_additions, deductions, net_amount,
           gst_percent, gst_amount, total_amount,
-          vendor_bill_no, vendor_bill_date, remarks, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+          vendor_bill_no, vendor_bill_date, remarks,
+          is_manual, external_wo_number, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
        RETURNING *`,
       [
-        bill_number, wo_id, vendor_id, project_id,
+        bill_number, wo_id || null, vendor_id, project_id,
         billing_period_from, billing_period_to, billing_month,
         total_calendar_days || 0, total_working_days || 0, total_working_hours || 0,
         sunday_days_worked || 0, overtime_hours || 0,
@@ -211,6 +230,7 @@ const createBill = async (req, res) => {
         other_additions || 0, deductions || 0, net_amount || 0,
         gst_percent || 18, gst_amount || 0, total_amount || 0,
         vendor_bill_no || null, vendor_bill_date || null, remarks || null,
+        is_manual, external_wo_number?.trim() || null,
         req.user.id,
       ]
     );
@@ -269,6 +289,7 @@ const updateBill = async (req, res) => {
       other_additions, deductions, net_amount,
       gst_percent, gst_amount, total_amount,
       vendor_bill_no, vendor_bill_date, remarks,
+      is_manual, external_wo_number,
       items = [],
     } = req.body;
 
@@ -283,8 +304,9 @@ const updateBill = async (req, res) => {
          other_additions=$12, deductions=$13, net_amount=$14,
          gst_percent=$15, gst_amount=$16, total_amount=$17,
          vendor_bill_no=$18, vendor_bill_date=$19, remarks=$20,
+         is_manual=$21, external_wo_number=$22,
          updated_at=NOW()
-       WHERE id=$21`,
+       WHERE id=$23`,
       [
         billing_period_from, billing_period_to, billing_month,
         total_calendar_days || 0, total_working_days || 0, total_working_hours || 0,
@@ -293,6 +315,7 @@ const updateBill = async (req, res) => {
         other_additions || 0, deductions || 0, net_amount || 0,
         gst_percent || 18, gst_amount || 0, total_amount || 0,
         vendor_bill_no || null, vendor_bill_date || null, remarks || null,
+        is_manual ?? false, external_wo_number?.trim() || null,
         id,
       ]
     );

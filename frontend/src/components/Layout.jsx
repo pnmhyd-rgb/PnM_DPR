@@ -49,7 +49,6 @@ const HR_NAV = [
 const INVENTORY_NAV = [
   { label: 'Dashboard',           href: '/inventory/dashboard' },
   { label: 'Spare Parts',         href: '/inventory/items' },
-  { label: 'Categories',          href: '/inventory/categories' },
   { label: 'Warehouses',          href: '/inventory/warehouses' },
   { label: 'Goods Receipt (GRN)', href: '/inventory/grn' },
   { label: 'Stock Transfer',      href: '/inventory/transfers' },

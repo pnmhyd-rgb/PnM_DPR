@@ -4,13 +4,14 @@ import {
   Edit2, X, Plus, Upload, Download, Eye, Trash2, RotateCcw,
   MoreVertical, Tag, Wrench, Calendar, IndianRupee, Clock, Info, MapPin,
   ClipboardList, ExternalLink, CheckCircle, XCircle, Loader2, ClipboardCheck,
-  Check, Gauge, Settings, ArrowDownToLine,
+  Check, Gauge, Settings, ArrowDownToLine, AlertCircle, History,
 } from 'lucide-react'
 import {
   getMachineCompliance, batchUpsertCompliance, deleteCompliance,
   getMachineDocuments, createMachineDocument, deleteMachineDocument, getMachineDocumentUrl,
   getMeterResetRequests, reviewMeterResetRequest,
-  getMachineScs, updateMachineScs, inheritMachineScs,
+  getMachineScs, updateMachineScs, executeMachineScs, inheritMachineScs,
+  getLatestReadingBefore, updateMachineStatus, getMachineStatusHistory,
 } from '../lib/api'
 
 export function fmt(val) { return val ?? '—' }
@@ -32,15 +33,34 @@ export function DetailRow({ label, value, mono }) {
   )
 }
 
-export function DetailSection({ icon: Icon, title, children }) {
+export function DetailSection({ icon: Icon, title, children, menu }) {
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-200">
         {Icon && <Icon size={13} className="text-gray-400" />}
-        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide">{title}</span>
+        <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-1">{title}</span>
+        {menu}
       </div>
       <div className="px-4 divide-y divide-gray-50">{children}</div>
     </div>
+  )
+}
+
+export const ASSET_STATUSES = [
+  { key: 'Active',    label: 'Active',    bg: 'bg-green-100',  text: 'text-green-700'  },
+  { key: 'Idle',      label: 'Idle',      bg: 'bg-blue-100',   text: 'text-blue-700'   },
+  { key: 'Breakdown', label: 'Breakdown', bg: 'bg-orange-100', text: 'text-orange-700' },
+  { key: 'Surplus',   label: 'Surplus',   bg: 'bg-amber-100',  text: 'text-amber-700'  },
+  { key: 'Accident',  label: 'Accident',  bg: 'bg-red-100',    text: 'text-red-700'    },
+  { key: 'Scrap',     label: 'Scrap',     bg: 'bg-gray-100',   text: 'text-gray-600'   },
+]
+
+export function StatusBadge({ status }) {
+  const s = ASSET_STATUSES.find(x => x.key === status) || ASSET_STATUSES[0]
+  return (
+    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${s.bg} ${s.text}`}>
+      {s.label}
+    </span>
   )
 }
 
@@ -80,13 +100,24 @@ export function fmtCompDate(d) {
 
 // ── Machine SCS Panel ─────────────────────────────────────────────────────────
 function MachineScsPanel({ machineId }) {
-  const [items,    setItems]    = useState([])
-  const [unsynced, setUnsynced] = useState([])
-  const [loading,  setLoading]  = useState(true)
-  const [inheriting, setInheriting] = useState(false)
-  const [menuId,   setMenuId]   = useState(null)
-  const [intervalModal, setIntervalModal] = useState(null)
-  const [saving,   setSaving]   = useState(false)
+  const [items,          setItems]          = useState([])
+  const [unsynced,       setUnsynced]       = useState([])
+  const [loading,        setLoading]        = useState(true)
+  const [currentHours,   setCurrentHours]   = useState(null)
+  const [currentKm,      setCurrentKm]      = useState(null)
+  const [avgDailyHours,  setAvgDailyHours]  = useState(0)
+  const [inheriting,     setInheriting]     = useState(false)
+  const [menuId,         setMenuId]         = useState(null)
+  const [intervalModal,  setIntervalModal]  = useState(null)
+  const [intervalSaving, setIntervalSaving] = useState(false)
+  const [executeModal,   setExecuteModal]   = useState(null)
+  // execDate: the date field; execReading: auto-fetched from DPR (read-only)
+  const [execDate,       setExecDate]       = useState('')
+  const [execNote,       setExecNote]       = useState('')
+  const [execReading,    setExecReading]    = useState({ hours: null, km: null, fetching: false, entryDate: null })
+  const [execSaving,     setExecSaving]     = useState(false)
+
+  const inp = 'border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full'
 
   const load = () => {
     setLoading(true)
@@ -94,21 +125,113 @@ function MachineScsPanel({ machineId }) {
       .then(r => {
         setItems(r.data.data || [])
         setUnsynced(r.data.unsynced || [])
+        setCurrentHours(r.data.current_hours ?? null)
+        setCurrentKm(r.data.current_km ?? null)
+        setAvgDailyHours(parseFloat(r.data.avg_daily_hours || 0))
       })
       .catch(() => {})
       .finally(() => setLoading(false))
   }
   useEffect(() => { load() }, [machineId])
 
-  const handleToggle = async item => {
+  // Fetch DPR reading for a given date (used by execute modal when date changes)
+  const fetchReadingForDate = async (date) => {
+    if (!date) { setExecReading({ hours: null, km: null, fetching: false, entryDate: null }); return }
+    setExecReading(r => ({ ...r, fetching: true }))
     try {
-      await updateMachineScs(item.id, { ...item, enabled: !item.enabled })
+      const res = await getLatestReadingBefore({ machine_id: machineId, before_date: date })
+      const entry = res.data.data
+      setExecReading({
+        hours: entry?.r1_close ?? null,
+        km:    entry?.r2_close ?? null,
+        fetching: false,
+        entryDate: entry?.entry_date ?? null,
+      })
+    } catch {
+      setExecReading({ hours: null, km: null, fetching: false, entryDate: null })
+    }
+  }
+
+  // Calculate running status from DPR readings (auto-linked)
+  const calcStatus = item => {
+    const today = new Date(); today.setHours(0, 0, 0, 0)
+    let worstPct = 0
+    let dueDates = []
+    let consumedHrs = null
+    let consumedKm  = null
+
+    if (item.hours_enabled && item.interval_hours && item.last_done_hours != null && currentHours != null) {
+      consumedHrs = Math.max(0, parseFloat(currentHours) - parseFloat(item.last_done_hours))
+      const pct = (consumedHrs / item.interval_hours) * 100
+      if (pct > worstPct) worstPct = pct
+      // Project due date from hours: remaining hours ÷ avg daily hours
+      if (avgDailyHours > 0) {
+        const remainingHrs = item.interval_hours - consumedHrs
+        const daysUntilDue = remainingHrs / avgDailyHours
+        const due = new Date(today)
+        due.setDate(due.getDate() + Math.ceil(daysUntilDue))
+        dueDates.push(due)
+      }
+    }
+    if (item.days_enabled && item.interval_days && item.last_done_date) {
+      const doneDt = new Date(item.last_done_date); doneDt.setHours(0, 0, 0, 0)
+      const daysSince = Math.ceil((today - doneDt) / 86400000)
+      const pct = (daysSince / item.interval_days) * 100
+      if (pct > worstPct) worstPct = pct
+      const due = new Date(doneDt); due.setDate(due.getDate() + item.interval_days)
+      dueDates.push(due)
+    }
+    if (item.km_enabled && item.interval_km && item.last_done_km != null && currentKm != null) {
+      consumedKm = Math.max(0, parseFloat(currentKm) - parseFloat(item.last_done_km))
+      const pct = (consumedKm / item.interval_km) * 100
+      if (pct > worstPct) worstPct = pct
+    }
+
+    const dueDate = dueDates.length ? dueDates.sort((a, b) => a - b)[0] : null
+    return { pct: worstPct, dueDate, consumedHrs, consumedKm }
+  }
+
+  const barColor = pct => {
+    if (pct >= 100) return 'bg-red-700'
+    if (pct >=  90) return 'bg-red-400'
+    if (pct >=  70) return 'bg-amber-400'
+    return 'bg-green-500'
+  }
+
+  const fmtDt = d => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'
+
+  const openExecute = item => {
+    const today = new Date().toISOString().slice(0, 10)
+    setExecuteModal(item)
+    setExecDate(today)
+    setExecNote('')
+    setMenuId(null)
+    // Auto-fetch today's DPR reading immediately
+    setExecReading({ hours: currentHours, km: currentKm, fetching: false, entryDate: null })
+  }
+
+  const handleExecDateChange = (date) => {
+    setExecDate(date)
+    fetchReadingForDate(date)
+  }
+
+  const handleExecute = async () => {
+    setExecSaving(true)
+    try {
+      await executeMachineScs(executeModal.id, {
+        execution_date:  execDate || null,
+        execution_hours: execReading.hours != null ? parseFloat(execReading.hours) : null,
+        execution_km:    execReading.km    != null ? parseFloat(execReading.km)    : null,
+        remark:          execNote.trim() || null,
+      })
+      setExecuteModal(null)
       load()
     } catch {}
+    finally { setExecSaving(false) }
   }
 
   const handleIntervalSave = async form => {
-    setSaving(true)
+    setIntervalSaving(true)
     try {
       await updateMachineScs(intervalModal.id, {
         ...intervalModal,
@@ -123,38 +246,44 @@ function MachineScsPanel({ machineId }) {
       setIntervalModal(null)
       load()
     } catch {}
-    finally { setSaving(false) }
+    finally { setIntervalSaving(false) }
   }
 
   const handleInherit = async () => {
     setInheriting(true)
-    try {
-      await inheritMachineScs({ machine_id: machineId, eq_type_id: eqTypeId })
-      load()
-    } catch {}
+    try { await inheritMachineScs({ machine_id: machineId }); load() } catch {}
     finally { setInheriting(false) }
   }
 
-  const inp = 'border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full'
-
   return (
-    <div className="flex-1 overflow-y-auto">
+    <div className="flex-1 overflow-hidden flex flex-col">
+
       {/* Header */}
-      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-200 bg-white flex-shrink-0 sticky top-0 z-10">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white flex-shrink-0">
         <div className="flex items-center gap-2">
           <div className="w-1 h-4 bg-blue-600 rounded-full" />
-          <h3 className="text-sm font-semibold text-gray-800">Service Checksheets</h3>
+          <h3 className="text-sm font-semibold text-gray-800">Service CheckSheet Running Status</h3>
           {unsynced.length > 0 && (
-            <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full">{unsynced.length} unsynced</span>
+            <span className="text-[10px] bg-amber-100 text-amber-700 font-bold px-1.5 py-0.5 rounded-full">
+              {unsynced.length} unsynced
+            </span>
           )}
         </div>
-        {unsynced.length > 0 && (
-          <button onClick={handleInherit} disabled={inheriting}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:opacity-60">
-            {inheriting ? <Loader2 size={11} className="animate-spin"/> : <ArrowDownToLine size={11}/>}
-            Inherit from Category
-          </button>
-        )}
+        <div className="flex items-center gap-2">
+          {currentHours != null && (
+            <span className="text-[11px] text-gray-500 bg-blue-50 border border-blue-100 px-2 py-1 rounded-lg font-mono">
+              Current: <span className="text-blue-700 font-semibold">{parseFloat(currentHours).toFixed(1)} Hrs</span>
+              {currentKm != null ? <span className="text-gray-400"> · {parseFloat(currentKm).toFixed(0)} KM</span> : ''}
+            </span>
+          )}
+          {unsynced.length > 0 && (
+            <button onClick={handleInherit} disabled={inheriting}
+              className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded-lg disabled:opacity-60">
+              {inheriting ? <Loader2 size={11} className="animate-spin"/> : <ArrowDownToLine size={11}/>}
+              Inherit
+            </button>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -167,67 +296,154 @@ function MachineScsPanel({ machineId }) {
           <p className="text-sm">No checksheets configured for this asset category.</p>
         </div>
       ) : (
-        <div className="divide-y divide-gray-100">
-          {items.map(item => (
-            <div key={item.id} className={`flex items-start gap-3 px-5 py-3.5 hover:bg-gray-50 transition-colors ${!item.enabled ? 'opacity-60' : ''}`}>
-              {/* Enable toggle */}
-              <button onClick={() => handleToggle(item)}
-                className={`mt-0.5 w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 ${item.enabled ? 'bg-green-100 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
-                {item.enabled ? <Check size={13}/> : <X size={13}/>}
-              </button>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-gray-800 truncate">
-                  {item.custom_name || item.check_sheet_name || '—'}
-                  {item.is_inherited && <span className="ml-1.5 text-[10px] text-blue-400 font-normal">inherited</span>}
-                </p>
-                {item.custom_name && <p className="text-[10px] text-gray-400">{item.check_sheet_name}</p>}
-                <div className="flex flex-wrap gap-3 mt-1">
-                  {item.hours_enabled && (
-                    <span className="flex items-center gap-1 text-[10px] text-blue-600 font-semibold">
-                      <Clock size={10}/> {item.interval_hours ?? '—'} Hrs
-                    </span>
-                  )}
-                  {item.km_enabled && (
-                    <span className="flex items-center gap-1 text-[10px] text-green-600 font-semibold">
-                      <Gauge size={10}/> {item.interval_km ?? '—'} KM
-                    </span>
-                  )}
-                  {item.days_enabled && (
-                    <span className="flex items-center gap-1 text-[10px] text-orange-600 font-semibold">
-                      <Calendar size={10}/> {item.interval_days ?? '—'} Days
-                    </span>
-                  )}
-                  {!item.hours_enabled && !item.km_enabled && !item.days_enabled && (
-                    <span className="text-[10px] text-gray-400 italic">No interval set</span>
-                  )}
-                </div>
-              </div>
-              <div className="relative flex-shrink-0">
-                <button onClick={() => setMenuId(menuId === item.id ? null : item.id)}
-                  className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
-                  <MoreVertical size={13}/>
-                </button>
-                {menuId === item.id && (
-                  <div className="absolute right-8 top-0 z-20 bg-white border border-gray-200 rounded-xl shadow-xl w-40 py-1 text-xs text-left">
-                    <button onClick={() => { setIntervalModal(item); setMenuId(null) }}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 text-gray-700">
-                      <Settings size={11}/> Change Interval
-                    </button>
-                    <button onClick={() => { handleToggle(item); setMenuId(null) }}
-                      className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 text-gray-700">
-                      {item.enabled ? <><X size={11}/> Disable</> : <><Check size={11}/> Enable</>}
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+        <div className="flex-1 overflow-auto">
+          <table className="w-full text-xs min-w-[700px]">
+            <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
+              <tr>
+                <th className="px-3 py-2.5 w-7 text-center">
+                  <input type="checkbox" className="w-3.5 h-3.5 accent-blue-700"/>
+                </th>
+                <th className="px-3 py-2.5 text-left font-semibold text-gray-500">Name</th>
+                <th className="px-3 py-2.5 text-left font-semibold text-gray-500">Linked Items</th>
+                <th className="px-3 py-2.5 text-left font-semibold text-gray-500">Last CS Done</th>
+                <th className="px-3 py-2.5 text-left font-semibold text-gray-500 w-44">Running Status</th>
+                <th className="px-3 py-2.5 text-left font-semibold text-gray-500">Due Date</th>
+                <th className="px-3 py-2.5 w-10 text-center font-semibold text-gray-500">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-100">
+              {items.map(item => {
+                const name = item.custom_name || item.check_sheet_name || '—'
+                const hasInterval = item.hours_enabled || item.days_enabled || item.km_enabled
+                const hasLastDone = item.last_done_date || item.last_done_hours != null
+                const { pct, dueDate, consumedHrs, consumedKm } = calcStatus(item)
+                const pctCapped = Math.min(pct, 100)
+                const isOverdue = pct >= 100
+                const today = new Date(); today.setHours(0, 0, 0, 0)
+
+                return (
+                  <tr key={item.id} className={`hover:bg-gray-50 transition-colors ${!item.enabled ? 'opacity-50' : ''}`}>
+                    <td className="px-3 py-3 text-center">
+                      <input type="checkbox" className="w-3.5 h-3.5 accent-blue-700"/>
+                    </td>
+                    <td className="px-3 py-3">
+                      <p className="font-semibold text-gray-800 leading-tight">{name}</p>
+                      {item.is_inherited && (
+                        <span className="text-[10px] text-blue-400 font-normal">inherited</span>
+                      )}
+                      {item.section && (
+                        <p className="text-[10px] text-gray-400 mt-0.5">{item.section}</p>
+                      )}
+                      <div className="flex flex-wrap gap-2 mt-1">
+                        {item.hours_enabled && item.interval_hours && (
+                          <span className="text-[10px] text-blue-600 font-semibold flex items-center gap-0.5">
+                            <Clock size={9}/> {item.interval_hours} Hrs
+                          </span>
+                        )}
+                        {item.days_enabled && item.interval_days && (
+                          <span className="text-[10px] text-orange-600 font-semibold flex items-center gap-0.5">
+                            <Calendar size={9}/> {item.interval_days} Days
+                          </span>
+                        )}
+                        {item.km_enabled && item.interval_km && (
+                          <span className="text-[10px] text-green-600 font-semibold flex items-center gap-0.5">
+                            <Gauge size={9}/> {item.interval_km} KM
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 text-gray-300 text-[10px] italic">—</td>
+                    <td className="px-3 py-3">
+                      {hasLastDone ? (
+                        <div className="space-y-0.5 text-[10px] leading-snug">
+                          {item.last_done_hours != null && (
+                            <p className="text-gray-500">Hours: <span className="font-semibold text-gray-800">{parseFloat(item.last_done_hours).toFixed(1)} Hr</span></p>
+                          )}
+                          {item.last_done_km != null && (
+                            <p className="text-gray-500">KM: <span className="font-semibold text-gray-800">{parseFloat(item.last_done_km).toFixed(0)} Km</span></p>
+                          )}
+                          {item.last_done_date && (
+                            <p className="text-gray-500">Date: <span className="font-semibold text-gray-800">{fmtDt(item.last_done_date)}</span></p>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-[10px] text-gray-300 italic">Not recorded</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      {hasInterval && hasLastDone ? (
+                        <div className="space-y-1">
+                          <div className="h-2.5 bg-gray-200 rounded-full overflow-hidden">
+                            <div className={`h-full rounded-full ${barColor(pct)}`} style={{ width: `${pctCapped}%` }}/>
+                          </div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            {consumedHrs != null && (
+                              <span className={`text-[10px] font-semibold ${isOverdue ? 'text-red-600' : 'text-gray-700'}`}>
+                                {consumedHrs.toFixed(0)} Hrs
+                              </span>
+                            )}
+                            {consumedKm != null && (
+                              <span className={`text-[10px] font-semibold ${isOverdue ? 'text-red-600' : 'text-green-700'}`}>
+                                {consumedKm.toFixed(0)} KM
+                              </span>
+                            )}
+                            {isOverdue && (
+                              <span className="text-[10px] font-bold text-red-600">Overdue</span>
+                            )}
+                          </div>
+                        </div>
+                      ) : !hasInterval ? (
+                        <span className="text-[10px] text-gray-300 italic">N/A</span>
+                      ) : (
+                        <button onClick={() => openExecute(item)}
+                          className="text-[10px] text-blue-600 hover:underline font-medium">
+                          Record first execution →
+                        </button>
+                      )}
+                    </td>
+                    <td className="px-3 py-3">
+                      {dueDate ? (
+                        <span className={`text-[11px] font-semibold whitespace-nowrap ${dueDate < today ? 'text-red-600' : 'text-gray-700'}`}>
+                          {fmtDt(dueDate)}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] text-gray-300">N/A</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-3 text-center relative">
+                      <button onClick={() => setMenuId(menuId === item.id ? null : item.id)}
+                        className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg">
+                        <MoreVertical size={13}/>
+                      </button>
+                      {menuId === item.id && (
+                        <div className="absolute right-8 top-1 z-20 bg-white border border-gray-200 rounded-xl shadow-xl w-44 py-1 text-xs text-left">
+                          <button onClick={() => openExecute(item)}
+                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-green-50 text-green-700">
+                            <CheckCircle size={12}/> Execute / Mark Done
+                          </button>
+                          <button onClick={() => { setIntervalModal(item); setMenuId(null) }}
+                            className="w-full flex items-center gap-2 px-3 py-2 hover:bg-gray-50 text-gray-700">
+                            <Settings size={12}/> Change Interval
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+
           {unsynced.length > 0 && (
-            <div className="px-5 py-3 bg-amber-50 border-t border-amber-100">
-              <p className="text-xs text-amber-700 font-semibold mb-1.5">{unsynced.length} category checksheet{unsynced.length !== 1 ? 's' : ''} not yet synced to this asset:</p>
-              <div className="space-y-1 mb-2">
+            <div className="px-4 py-3 bg-amber-50 border-t border-amber-100">
+              <p className="text-xs text-amber-700 font-semibold mb-1.5">
+                {unsynced.length} category checksheet{unsynced.length !== 1 ? 's' : ''} not yet synced to this asset:
+              </p>
+              <div className="flex flex-wrap gap-2 mb-2">
                 {unsynced.map(u => (
-                  <p key={u.id} className="text-xs text-amber-600">• {u.custom_name || u.check_sheet_name}</p>
+                  <span key={u.id} className="text-xs text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">
+                    {u.custom_name || u.check_sheet_name}
+                  </span>
                 ))}
               </div>
               <button onClick={handleInherit} disabled={inheriting}
@@ -240,9 +456,98 @@ function MachineScsPanel({ machineId }) {
         </div>
       )}
 
+      {/* Execute / Mark Done Modal */}
+      {executeModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between px-5 py-4 bg-green-700 rounded-t-2xl">
+              <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                <CheckCircle size={15}/> Mark as Executed
+              </h3>
+              <button onClick={() => setExecuteModal(null)} className="text-green-200 hover:text-white"><X size={18}/></button>
+            </div>
+            <div className="px-5 py-2.5 bg-green-50 border-b border-green-100">
+              <p className="text-xs font-semibold text-green-800">{executeModal.custom_name || executeModal.check_sheet_name}</p>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Date — drives auto-fetch */}
+              <div>
+                <label className="block text-xs text-gray-500 font-medium mb-1">Date of Execution *</label>
+                <input type="date" value={execDate} max={new Date().toISOString().slice(0, 10)}
+                  onChange={e => handleExecDateChange(e.target.value)}
+                  className={inp}/>
+              </div>
+
+              {/* Auto-fetched readings — read-only */}
+              <div className={`rounded-xl border p-4 space-y-3 ${execReading.fetching ? 'border-blue-200 bg-blue-50' : 'border-gray-200 bg-gray-50'}`}>
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-semibold text-gray-600 flex items-center gap-1.5">
+                    <Clock size={12} className="text-blue-500"/>
+                    Meter Readings from DPR Log
+                  </p>
+                  {execReading.fetching && <Loader2 size={12} className="animate-spin text-blue-500"/>}
+                  {!execReading.fetching && execReading.entryDate && (
+                    <span className="text-[10px] text-gray-400">entry: {fmtDt(execReading.entryDate)}</span>
+                  )}
+                </div>
+                {execReading.fetching ? (
+                  <p className="text-xs text-blue-500">Fetching readings for selected date…</p>
+                ) : execReading.hours == null && execReading.km == null ? (
+                  <p className="text-xs text-amber-600">No DPR entry found for or before this date.</p>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    {(executeModal.hours_enabled || execReading.hours != null) && (
+                      <div className="bg-white rounded-lg border border-gray-200 px-3 py-2">
+                        <p className="text-[10px] text-gray-400 font-medium">Hours Reading</p>
+                        <p className="text-sm font-bold text-blue-700 mt-0.5">
+                          {execReading.hours != null ? `${parseFloat(execReading.hours).toFixed(1)} Hr` : '—'}
+                        </p>
+                      </div>
+                    )}
+                    {(executeModal.km_enabled || execReading.km != null) && (
+                      <div className="bg-white rounded-lg border border-gray-200 px-3 py-2">
+                        <p className="text-[10px] text-gray-400 font-medium">KM Reading</p>
+                        <p className="text-sm font-bold text-green-700 mt-0.5">
+                          {execReading.km != null ? `${parseFloat(execReading.km).toFixed(0)} KM` : '—'}
+                        </p>
+                      </div>
+                    )}
+                  </div>
+                )}
+                <p className="text-[10px] text-gray-400 italic">
+                  Readings are auto-fetched from DPR log. Change the date above to fetch a different entry.
+                </p>
+              </div>
+
+              {/* Note */}
+              <div>
+                <label className="block text-xs text-gray-500 font-medium mb-1">Note (optional)</label>
+                <textarea rows={2} value={execNote}
+                  onChange={e => setExecNote(e.target.value)}
+                  placeholder="e.g. changed oil filter, checked levels…"
+                  className={inp + ' resize-none'}/>
+              </div>
+            </div>
+            <div className="flex gap-3 px-5 py-4 bg-gray-50 border-t border-gray-100 rounded-b-2xl">
+              <button
+                onClick={handleExecute}
+                disabled={execSaving || !execDate || execReading.fetching || (execReading.hours == null && execReading.km == null)}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-700 hover:bg-green-800 disabled:opacity-60 text-white font-semibold rounded-lg text-sm">
+                {execSaving ? <Loader2 size={13} className="animate-spin"/> : <CheckCircle size={13}/>}
+                {execSaving ? 'Saving…' : 'Mark as Done'}
+              </button>
+              <button onClick={() => setExecuteModal(null)}
+                className="px-5 py-2.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Interval Modal */}
       {intervalModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 bg-indigo-700 rounded-t-2xl">
               <h3 className="font-bold text-white text-sm flex items-center gap-2">
@@ -250,14 +555,15 @@ function MachineScsPanel({ machineId }) {
               </h3>
               <button onClick={() => setIntervalModal(null)} className="text-indigo-200 hover:text-white"><X size={18}/></button>
             </div>
-            <div className="p-5 text-xs text-gray-500 font-medium mb-1 bg-indigo-50 border-b border-indigo-100 px-5 py-2.5">
+            <div className="text-xs text-gray-500 font-medium bg-indigo-50 border-b border-indigo-100 px-5 py-2.5">
               {intervalModal.custom_name || intervalModal.check_sheet_name}
               {intervalModal.is_inherited && <span className="ml-2 text-indigo-400">— override category default</span>}
             </div>
-            <MachineIntervalEditor item={intervalModal} onSave={handleIntervalSave} onClose={() => setIntervalModal(null)} saving={saving} inp={inp}/>
+            <MachineIntervalEditor item={intervalModal} onSave={handleIntervalSave} onClose={() => setIntervalModal(null)} saving={intervalSaving} inp={inp}/>
           </div>
         </div>
       )}
+
       {menuId && <div className="fixed inset-0 z-10" onClick={() => setMenuId(null)}/>}
     </div>
   )
@@ -313,6 +619,55 @@ function MachineIntervalEditor({ item, onSave, onClose, saving, inp }) {
 }
 
 export default function MachineDetailPanel({ machine: m, onClose, onEdit, initialRightTab }) {
+  // ── Asset Status state ──────────────────────────────────────────────────────
+  const [assetStatus,        setAssetStatus]        = useState(m.asset_status || 'Active')
+  const [assetStatusSince,   setAssetStatusSince]   = useState(m.asset_status_since || m.created_at)
+  const [assetStatusRemarks, setAssetStatusRemarks] = useState(m.asset_status_remarks || '')
+  const [assetStatusBy,      setAssetStatusBy]      = useState(m.asset_status_changed_by_name || '')
+  const [statusModal,        setStatusModal]        = useState(false)
+  const [statusForm,         setStatusForm]         = useState({ status: '', remarks: '' })
+  const [statusSaving,       setStatusSaving]       = useState(false)
+  const [statusErr,          setStatusErr]          = useState('')
+  const [statusHistory,      setStatusHistory]      = useState([])
+  const [historyOpen,        setHistoryOpen]        = useState(false)
+  const [historyLoading,     setHistoryLoading]     = useState(false)
+  const [sectionMenu,        setSectionMenu]        = useState(null) // which section's menu is open
+
+  const openStatusModal = () => {
+    setStatusForm({ status: assetStatus, remarks: '' })
+    setStatusErr('')
+    setStatusModal(true)
+    setSectionMenu(null)
+  }
+
+  const loadStatusHistory = async () => {
+    setHistoryLoading(true)
+    try {
+      const r = await getMachineStatusHistory(m.id)
+      setStatusHistory(r.data.data || [])
+    } catch {}
+    setHistoryLoading(false)
+  }
+
+  const handleStatusSave = async () => {
+    if (!statusForm.remarks.trim()) { setStatusErr('Remarks are required'); return }
+    setStatusSaving(true)
+    setStatusErr('')
+    try {
+      await updateMachineStatus(m.id, { status: statusForm.status, remarks: statusForm.remarks.trim() })
+      setAssetStatus(statusForm.status)
+      setAssetStatusSince(new Date().toISOString())
+      setAssetStatusRemarks(statusForm.remarks.trim())
+      setStatusModal(false)
+      // refresh history if open
+      if (historyOpen) loadStatusHistory()
+      window.dispatchEvent(new CustomEvent('machineStatusChanged', { detail: { id: m.id, status: statusForm.status } }))
+    } catch (e) {
+      setStatusErr(e.response?.data?.error || 'Failed to update status')
+    } finally { setStatusSaving(false) }
+  }
+
+  // ── Compliance state ────────────────────────────────────────────────────────
   const [compDocs,     setCompDocs]     = useState([])
   const [compLoading,  setCompLoading]  = useState(true)
   const [editingKey,   setEditingKey]   = useState(null)
@@ -346,12 +701,12 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit, initia
   useEffect(() => {
     setCompLoading(true)
     getMachineCompliance(m.id)
-      .then(r => setCompDocs(r.data.data))
+      .then(r => setCompDocs(r.data.data || []))
       .catch(() => {})
       .finally(() => setCompLoading(false))
     setDocsLoading(true)
     getMachineDocuments(m.id)
-      .then(r => setDocs(r.data.data))
+      .then(r => setDocs(r.data.data || []))
       .catch(() => {})
       .finally(() => setDocsLoading(false))
   }, [m.id])
@@ -600,7 +955,23 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit, initia
           {/* LEFT: Asset details */}
           <div className="w-[380px] flex-shrink-0 overflow-y-auto border-r border-gray-200 p-4 space-y-3">
 
-            <DetailSection icon={Tag} title="Asset Identification">
+            <DetailSection icon={Tag} title="Asset Identification"
+              menu={
+                <div className="relative">
+                  <button onClick={() => setSectionMenu(sectionMenu === 'ident' ? null : 'ident')}
+                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors">
+                    <MoreVertical size={13}/>
+                  </button>
+                  {sectionMenu === 'ident' && onEdit && (
+                    <div className="absolute right-0 top-6 z-20 bg-white border border-gray-200 rounded-lg shadow-xl py-1 w-36 text-xs">
+                      <button onClick={() => { onEdit(); setSectionMenu(null) }}
+                        className="flex items-center gap-2 w-full px-3 py-2 hover:bg-blue-50 text-gray-700">
+                        <Edit2 size={11} className="text-blue-500"/> Edit Machine
+                      </button>
+                    </div>
+                  )}
+                </div>
+              }>
               {m.nickname && <DetailRow label="Nickname"        value={m.nickname} />}
               <DetailRow label="Asset Code"      value={m.asset_code} mono />
               <DetailRow label="Asset Group"     value={m.asset_group} />
@@ -615,7 +986,82 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit, initia
               <DetailRow label="Engine No"       value={m.engine_no} mono />
             </DetailSection>
 
-            <DetailSection icon={Wrench} title="Machine Specifications">
+            {/* ── Asset Status ──────────────────────────────────────────── */}
+            <DetailSection icon={AlertCircle} title="Asset Status"
+              menu={
+                <div className="relative">
+                  <button onClick={() => setSectionMenu(sectionMenu === 'status' ? null : 'status')}
+                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors">
+                    <MoreVertical size={13}/>
+                  </button>
+                  {sectionMenu === 'status' && (
+                    <div className="absolute right-0 top-6 z-20 bg-white border border-gray-200 rounded-lg shadow-xl py-1 w-40 text-xs">
+                      <button onClick={openStatusModal}
+                        className="flex items-center gap-2 w-full px-3 py-2 hover:bg-blue-50 text-gray-700">
+                        <AlertCircle size={11} className="text-blue-500"/> Change Status
+                      </button>
+                      <button onClick={() => { setHistoryOpen(h => !h); if (!historyOpen) loadStatusHistory(); setSectionMenu(null) }}
+                        className="flex items-center gap-2 w-full px-3 py-2 hover:bg-gray-50 text-gray-700">
+                        <History size={11} className="text-gray-400"/> {historyOpen ? 'Hide History' : 'View History'}
+                      </button>
+                    </div>
+                  )}
+                </div>
+              }>
+              <DetailRow label="Status" value={<StatusBadge status={assetStatus}/>}/>
+              <DetailRow label="Since"  value={fmtDate(assetStatusSince)}/>
+              {assetStatusRemarks && <DetailRow label="Remarks" value={assetStatusRemarks}/>}
+              {assetStatusBy && <DetailRow label="Changed By" value={assetStatusBy}/>}
+            </DetailSection>
+
+            {/* Status History (inline, collapsible) */}
+            {historyOpen && (
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="flex items-center gap-2 px-4 py-2.5 bg-gray-50 border-b border-gray-200">
+                  <History size={13} className="text-gray-400"/>
+                  <span className="text-xs font-semibold text-gray-500 uppercase tracking-wide flex-1">Status History</span>
+                  <button onClick={() => setHistoryOpen(false)} className="text-gray-400 hover:text-gray-600">
+                    <X size={13}/>
+                  </button>
+                </div>
+                <div className="divide-y divide-gray-50 max-h-52 overflow-y-auto">
+                  {historyLoading ? (
+                    <div className="flex items-center justify-center py-6 text-gray-400 gap-2">
+                      <Loader2 size={14} className="animate-spin"/> Loading…
+                    </div>
+                  ) : statusHistory.length === 0 ? (
+                    <p className="text-xs text-gray-400 text-center py-6">No history recorded</p>
+                  ) : statusHistory.map(h => (
+                    <div key={h.id} className="px-4 py-2.5">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <StatusBadge status={h.status}/>
+                        <span className="text-[10px] text-gray-400">{fmtDate(h.changed_at)}</span>
+                      </div>
+                      {h.remarks && <p className="text-[11px] text-gray-600 mt-0.5">{h.remarks}</p>}
+                      {h.changed_by_name && <p className="text-[10px] text-gray-400 mt-0.5">by {h.changed_by_name}</p>}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <DetailSection icon={Wrench} title="Machine Specifications"
+              menu={
+                <div className="relative">
+                  <button onClick={() => setSectionMenu(sectionMenu === 'specs' ? null : 'specs')}
+                    className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors">
+                    <MoreVertical size={13}/>
+                  </button>
+                  {sectionMenu === 'specs' && onEdit && (
+                    <div className="absolute right-0 top-6 z-20 bg-white border border-gray-200 rounded-lg shadow-xl py-1 w-36 text-xs">
+                      <button onClick={() => { onEdit(); setSectionMenu(null) }}
+                        className="flex items-center gap-2 w-full px-3 py-2 hover:bg-blue-50 text-gray-700">
+                        <Edit2 size={11} className="text-blue-500"/> Edit Machine
+                      </button>
+                    </div>
+                  )}
+                </div>
+              }>
               <DetailRow label="Manufacturer" value={m.manufacturer} />
               <DetailRow label="Model"        value={m.model} />
               <DetailRow label="Year of Mfg." value={m.yom} />
@@ -654,12 +1100,7 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit, initia
               <DetailRow label="Planned Hrs/Day" value={m.planned_hours ? `${m.planned_hours} hrs` : '—'} />
             </DetailSection>
 
-            <DetailSection icon={Info} title="Asset Status">
-              <DetailRow label="Status" value={
-                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                  m.active ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-600'
-                }`}>{m.active ? 'Active' : 'Inactive'}</span>
-              } />
+            <DetailSection icon={Info} title="System Info">
               {!m.active && <DetailRow label="Reason" value={m.deactivation_reason} />}
               <DetailRow label="Added On"     value={fmtDate(m.created_at)} />
               <DetailRow label="Last Updated" value={fmtDate(m.updated_at)} />
@@ -1235,6 +1676,69 @@ export default function MachineDetailPanel({ machine: m, onClose, onEdit, initia
           </button>
         </div>
       </div>
+
+      {/* Click-away overlay for section menus */}
+      {sectionMenu && <div className="fixed inset-0 z-10" onClick={() => setSectionMenu(null)}/>}
+
+      {/* Change Status Modal */}
+      {statusModal && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+            <div className="flex items-center justify-between px-5 py-4 bg-blue-700 rounded-t-2xl">
+              <h3 className="font-bold text-white text-sm flex items-center gap-2">
+                <AlertCircle size={15}/> Change Asset Status
+              </h3>
+              <button onClick={() => setStatusModal(false)} className="text-blue-200 hover:text-white"><X size={18}/></button>
+            </div>
+            <div className="px-5 py-2.5 bg-blue-50 border-b border-blue-100">
+              <p className="text-xs text-blue-700 font-medium truncate">
+                {m.nickname || m.slno} — current: <StatusBadge status={assetStatus}/>
+              </p>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Status selector */}
+              <div>
+                <label className="block text-xs text-gray-500 font-medium mb-2">New Status *</label>
+                <div className="grid grid-cols-3 gap-2">
+                  {ASSET_STATUSES.map(s => (
+                    <button key={s.key}
+                      onClick={() => setStatusForm(f => ({ ...f, status: s.key }))}
+                      className={`px-3 py-2 rounded-lg text-xs font-semibold border-2 transition-all ${
+                        statusForm.status === s.key
+                          ? `${s.bg} ${s.text} border-current shadow-sm`
+                          : 'bg-white text-gray-500 border-gray-200 hover:border-gray-300'
+                      }`}>
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {/* Remarks */}
+              <div>
+                <label className="block text-xs text-gray-500 font-medium mb-1">Remarks / Reason *</label>
+                <textarea rows={3} value={statusForm.remarks}
+                  onChange={e => setStatusForm(f => ({ ...f, remarks: e.target.value }))}
+                  placeholder="Explain the reason for this status change…"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"/>
+                {statusErr && <p className="text-xs text-red-600 mt-1">{statusErr}</p>}
+              </div>
+            </div>
+            <div className="flex gap-3 px-5 py-4 bg-gray-50 border-t border-gray-100 rounded-b-2xl">
+              <button
+                onClick={handleStatusSave}
+                disabled={statusSaving || !statusForm.status || !statusForm.remarks.trim()}
+                className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-semibold rounded-lg text-sm">
+                {statusSaving ? <Loader2 size={13} className="animate-spin"/> : <Check size={13}/>}
+                {statusSaving ? 'Saving…' : 'Save Status'}
+              </button>
+              <button onClick={() => setStatusModal(false)}
+                className="px-5 py-2.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50">
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </>
   )

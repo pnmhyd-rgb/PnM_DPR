@@ -31,6 +31,8 @@ export const deleteProject    = (id)          => client.delete(`/projects/${id}`
 
 export const getMachines            = (params)      => client.get('/machines', { params })
 export const getMachineLastEntry    = (id)          => client.get(`/machines/${id}/last-entry`)
+export const getMachineStatusHistory = (id)         => client.get(`/machines/${id}/status-history`)
+export const updateMachineStatus    = (id, data)    => client.post(`/machines/${id}/status`, data)
 export const getFleetSummary    = (params)      => client.get('/machines/fleet-summary', { params })
 export const getFleetList       = (params)      => client.get('/machines/fleet-list',    { params })
 export const getMachineAgeing   = (params)      => client.get('/machines/ageing',        { params })
@@ -150,8 +152,10 @@ export const deleteHireWorkOrder     = (id)          => client.delete(`/hire/${i
 export const submitHireWorkOrder     = (id)          => client.patch(`/hire/${id}/submit`)
 export const approveHireWOL1         = (id, data)    => client.patch(`/hire/${id}/approve-l1`, data)
 export const approveHireWOFinal      = (id, data)    => client.patch(`/hire/${id}/approve`, data)
-export const rejectHireWorkOrder     = (id, data)    => client.patch(`/hire/${id}/reject`, data)
-export const renewHireWorkOrder      = (id, data)    => client.post(`/hire/${id}/renew`, data)
+export const rejectHireWorkOrder          = (id, data)   => client.patch(`/hire/${id}/reject`, data)
+export const renewHireWorkOrder           = (id, data)   => client.post(`/hire/${id}/renew`, data)
+export const linkAssetToHireWO            = (id, data)   => client.patch(`/hire/${id}/link-asset`, data)
+export const getApprovedHireWOsForBilling = (params)     => client.get('/hire/approved-for-billing', { params })
 
 export const getTermsLibrary         = ()            => client.get('/hire/terms-library')
 export const createTermsLibraryItem  = (data)        => client.post('/hire/terms-library', data)
@@ -317,11 +321,12 @@ export const createWarehouseLocation= (wid, data)    => client.post(`/inventory/
 export const deleteWarehouseLocation= (wid, lid)     => client.delete(`/inventory/warehouses/${wid}/locations/${lid}`)
 
 // Inventory — Items (Spare Parts)
-export const getInventoryItems   = (params)    => client.get('/inventory/items', { params })
-export const getInventoryItem    = (id)        => client.get(`/inventory/items/${id}`)
-export const createInventoryItem = (data)      => client.post('/inventory/items', data)
-export const updateInventoryItem = (id, data)  => client.put(`/inventory/items/${id}`, data)
-export const deleteInventoryItem = (id)        => client.delete(`/inventory/items/${id}`)
+export const getInventoryItems        = (params)    => client.get('/inventory/items', { params })
+export const getInventoryItem         = (id)        => client.get(`/inventory/items/${id}`)
+export const createInventoryItem      = (data)      => client.post('/inventory/items', data)
+export const updateInventoryItem      = (id, data)  => client.put(`/inventory/items/${id}`, data)
+export const deleteInventoryItem      = (id)        => client.delete(`/inventory/items/${id}`)
+export const bulkCreateInventoryItems = (rows)      => client.post('/inventory/items/bulk', { rows }, { timeout: 180000 })
 
 // Inventory — GRN
 export const getGRNs      = (params)    => client.get('/inventory/grn', { params })
@@ -345,10 +350,13 @@ export const approveStockAdjustment= (id)        => client.patch(`/inventory/adj
 export const deleteStockAdjustment = (id)        => client.delete(`/inventory/adjustments/${id}`)
 
 // Inventory — Consumption
-export const getConsumptions   = (params)    => client.get('/inventory/consumption', { params })
-export const getConsumption    = (id)        => client.get(`/inventory/consumption/${id}`)
-export const createConsumption = (data)      => client.post('/inventory/consumption', data)
-export const deleteConsumption = (id)        => client.delete(`/inventory/consumption/${id}`)
+export const getConsumptions    = (params)    => client.get('/inventory/consumption', { params })
+export const getConsumption     = (id)        => client.get(`/inventory/consumption/${id}`)
+export const createConsumption  = (data)      => client.post('/inventory/consumption', data)
+export const updateConsumption  = (id, data)  => client.put(`/inventory/consumption/${id}`, data)
+export const submitConsumption  = (id)        => client.patch(`/inventory/consumption/${id}/submit`)
+export const approveConsumption = (id)        => client.patch(`/inventory/consumption/${id}/approve`)
+export const deleteConsumption  = (id)        => client.delete(`/inventory/consumption/${id}`)
 
 // Inventory — Parts Returns
 export const getPartsReturns   = (params)    => client.get('/inventory/returns', { params })
@@ -399,4 +407,12 @@ export const getMachineScs          = (params)     => client.get('/machine-scs',
 export const createMachineScs       = (data)       => client.post('/machine-scs', data)
 export const updateMachineScs       = (id, data)   => client.put(`/machine-scs/${id}`, data)
 export const deleteMachineScs       = (id)         => client.delete(`/machine-scs/${id}`)
+export const executeMachineScs      = (machine_scs_id, data) => client.post('/scs-transactions', { machine_scs_id, ...data })
 export const inheritMachineScs      = (data)       => client.post('/machine-scs/inherit', data)
+
+// SCS Transactions (execution history)
+export const getScsTransactions    = (params)    => client.get('/scs-transactions', { params })
+export const getScsTransaction     = (id)        => client.get(`/scs-transactions/${id}`)
+export const createScsTransaction  = (data)      => client.post('/scs-transactions', data)
+export const updateScsTransaction  = (id, data)  => client.put(`/scs-transactions/${id}`, data)
+export const deleteScsTransaction  = (id)        => client.delete(`/scs-transactions/${id}`)

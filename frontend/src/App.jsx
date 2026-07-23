@@ -42,7 +42,6 @@ import InvoiceBilling from './pages/accounts/InvoiceBilling'
 import GeneratedInvoices from './pages/accounts/GeneratedInvoices'
 import InventoryDashboard from './pages/inventory/InventoryDashboard'
 import SparePartsInventory from './pages/inventory/SparePartsInventory'
-import SparePartsCategories from './pages/inventory/SparePartsCategories'
 import WarehouseManagement from './pages/inventory/WarehouseManagement'
 import GoodsReceipt from './pages/inventory/GoodsReceipt'
 import StockTransfer from './pages/inventory/StockTransfer'
@@ -87,11 +86,9 @@ export default function App() {
 
             <Route path="accounts/invoice-rules"          element={<InvoiceRule />} />
             <Route path="accounts/invoice-calculation"    element={<InvoiceBilling defaultTab="own" />} />
-            <Route path="accounts/invoice-calc-ownership" element={<InvoiceBilling defaultTab="own" />} />
             <Route path="accounts/generated-invoices"     element={<GeneratedInvoices />} />
             <Route path="inventory/dashboard"    element={<InventoryDashboard />} />
             <Route path="inventory/items"        element={<SparePartsInventory />} />
-            <Route path="inventory/categories"   element={<SparePartsCategories />} />
             <Route path="inventory/warehouses"   element={<WarehouseManagement />} />
             <Route path="inventory/grn"          element={<GoodsReceipt />} />
             <Route path="inventory/transfers"    element={<StockTransfer />} />

@@ -1,17 +1,15 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   getInventoryItems, getInventoryItem, createInventoryItem, updateInventoryItem, deleteInventoryItem,
-  getInventoryCategories, getWarehouses, getWarehouseLocations, getHireVendors
+  getInventoryCategories, getWarehouses, getWarehouseLocations, getHireVendors,
+  bulkCreateInventoryItems
 } from '../../lib/api'
 import { useAuth } from '../../context/AuthContext'
+import { today, fmtMoney, fmtNum } from '../../lib/utils'
 import {
   Plus, Edit2, Trash2, X, Search, Package, AlertTriangle, XCircle,
-  RefreshCw, Eye, ChevronLeft, ChevronRight
+  RefreshCw, Eye, ChevronLeft, ChevronRight, Upload, CheckCircle, FileSpreadsheet
 } from 'lucide-react'
-
-const today = () => new Date().toISOString().split('T')[0]
-const fmtMoney = v => v != null ? `₹ ${Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2 })}` : '—'
-const fmtNum   = v => v != null ? Number(v).toLocaleString('en-IN', { maximumFractionDigits: 3 }) : '—'
 
 const UNITS = ['Nos', 'Kg', 'Litres', 'Metres', 'Sets', 'Pairs', 'Box', 'Roll', 'Pcs', 'Feet']
 const COSTING = [
@@ -66,6 +64,15 @@ export default function SparePartsInventory() {
   const [error, setError]   = useState('')
   const [delId, setDelId]   = useState(null)
 
+  // Bulk upload state
+  const [bulkModal, setBulkModal]     = useState(false)
+  const [bulkRows, setBulkRows]       = useState([])
+  const [bulkFileName, setBulkFileName] = useState('')
+  const [bulkParseError, setBulkParseError] = useState('')
+  const [bulkUploading, setBulkUploading]   = useState(false)
+  const [bulkResult, setBulkResult]         = useState(null)
+  const bulkFileRef = useRef(null)
+
   const LIMIT = 50
 
   const load = useCallback(async () => {
@@ -81,9 +88,13 @@ export default function SparePartsInventory() {
   }, [search, filterCat, filterWH, lowStock, page])
 
   useEffect(() => {
-    Promise.all([getInventoryCategories(), getWarehouses(), getHireVendors()]).then(([c, w, v]) => {
-      setCategories(c.data.data); setWarehouses(w.data.data); setVendors(v.data.data)
-    })
+    Promise.all([getInventoryCategories(), getWarehouses(), getHireVendors()])
+      .then(([c, w, v]) => {
+        setCategories(c.data.data || [])
+        setWarehouses(w.data.data || [])
+        setVendors(v.data.data || [])
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => { setPage(1) }, [search, filterCat, filterWH, lowStock])
@@ -141,6 +152,104 @@ export default function SparePartsInventory() {
     catch {}
   }
 
+  const openBulkModal = () => {
+    setBulkRows([]); setBulkFileName(''); setBulkParseError(''); setBulkResult(null)
+    setBulkModal(true)
+  }
+
+  const handleBulkFile = async (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setBulkFileName(file.name); setBulkParseError(''); setBulkRows([]); setBulkResult(null)
+    try {
+      const XLSX = await import('xlsx')
+      const buf  = await file.arrayBuffer()
+      const wb   = XLSX.read(buf, { type: 'array' })
+      const ws   = wb.Sheets[wb.SheetNames[0]]
+      const aoa  = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })
+
+      // Find the header row: look for a row containing "Part Description"
+      let headerIdx = -1
+      for (let r = 0; r < Math.min(10, aoa.length); r++) {
+        if (aoa[r].some(cell => cell?.toString().toLowerCase().includes('part description'))) {
+          headerIdx = r; break
+        }
+      }
+      if (headerIdx === -1) {
+        setBulkParseError('Could not find the header row. Expected a row with "Part Description".')
+        return
+      }
+
+      const headers = aoa[headerIdx].map(h => h?.toString().trim())
+      const colIdx = (label) => headers.findIndex(h => h.toLowerCase().includes(label.toLowerCase()))
+
+      const COL = {
+        part_code:      colIdx('item number'),
+        part_name:      colIdx('part description'),
+        oem_number:     colIdx('part number'),
+        manufacturer:   colIdx('manufacturer'),
+        unit:           colIdx('unit of measurement'),
+        description:    colIdx('description'),
+        purchase_price: colIdx('purchase price'),
+        selling_price:  colIdx('sale / consumption price'),
+        gst_percent:    colIdx('igst'),
+        status:         colIdx('status'),
+      }
+
+      const parsed = []
+      for (let r = headerIdx + 1; r < aoa.length; r++) {
+        const row = aoa[r]
+        const part_name = row[COL.part_name]?.toString().trim()
+        if (!part_name) continue  // skip blank rows
+
+        parsed.push({
+          part_code:      row[COL.part_code]?.toString().trim() || '',
+          part_name,
+          oem_number:     row[COL.oem_number]?.toString().trim() || '',
+          manufacturer:   row[COL.manufacturer]?.toString().trim() || '',
+          unit:           row[COL.unit]?.toString().trim() || 'Nos',
+          description:    row[COL.description]?.toString().trim() || '',
+          purchase_price: row[COL.purchase_price]?.toString().trim() || '',
+          selling_price:  row[COL.selling_price]?.toString().trim() || '',
+          gst_percent:    row[COL.gst_percent]?.toString().trim() || '0',
+          active:         row[COL.status]?.toString().trim() !== 'Inactive' ? 'Active' : 'Inactive',
+        })
+      }
+
+      if (parsed.length === 0) {
+        setBulkParseError('No data rows found after the header row.')
+        return
+      }
+      setBulkRows(parsed)
+    } catch (err) {
+      setBulkParseError('Failed to parse file: ' + err.message)
+    }
+  }
+
+  const handleBulkUpload = async () => {
+    if (!bulkRows.length) return
+    setBulkUploading(true); setBulkResult(null); setBulkParseError('')
+
+    const CHUNK = 500
+    let totalImported = 0
+    const allErrors = []
+
+    try {
+      for (let start = 0; start < bulkRows.length; start += CHUNK) {
+        const chunk = bulkRows.slice(start, start + CHUNK)
+        const r = await bulkCreateInventoryItems(chunk)
+        totalImported += r.data.imported || 0
+        if (r.data.errors?.length) allErrors.push(...r.data.errors)
+      }
+      setBulkResult({ imported: totalImported, errors: allErrors })
+      load()
+    } catch (err) {
+      setBulkParseError(err.response?.data?.error || `Upload failed: ${err.message}`)
+    } finally {
+      setBulkUploading(false)
+    }
+  }
+
   const parentCats = categories.filter(c => !c.parent_id)
   const subCats    = categories.filter(c => c.parent_id === parseInt(form.category_id))
 
@@ -159,9 +268,14 @@ export default function SparePartsInventory() {
         <div className="flex items-center gap-2 flex-wrap">
           <button onClick={load} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><RefreshCw size={16} /></button>
           {isAdmin && (
-            <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-              <Plus size={15} /> Add Part
-            </button>
+            <>
+              <button onClick={openBulkModal} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 text-white rounded-lg text-sm hover:bg-emerald-700">
+                <Upload size={15} /> Bulk Upload
+              </button>
+              <button onClick={openAdd} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
+                <Plus size={15} /> Add Part
+              </button>
+            </>
           )}
         </div>
       </div>
@@ -465,6 +579,125 @@ export default function SparePartsInventory() {
                 <div><p className="text-xs text-gray-400">Inventory Value</p><p className="font-semibold text-gray-800">{fmtMoney(parseFloat(viewModal.current_stock || 0) * parseFloat(viewModal.avg_cost || 0))}</p></div>
               </div>
               <StatusBadge status={viewModal.stock_status} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Upload Modal */}
+      {bulkModal && (
+        <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/50 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl my-6">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 sticky top-0 bg-white rounded-t-2xl z-10">
+              <div className="flex items-center gap-2">
+                <FileSpreadsheet size={18} className="text-emerald-600" />
+                <h2 className="font-semibold text-gray-900">Bulk Upload Spare Parts</h2>
+              </div>
+              <button onClick={() => setBulkModal(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              {/* Instructions */}
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800 space-y-1">
+                <p className="font-semibold">Supported format: RVR Item List Excel export</p>
+                <p>Columns used: Item Number, Part Description, Part Number, Manufacturer, Unit of Measurement, Description, Purchase Price, Sale Price, IGST %, Status</p>
+                <p className="text-blue-600">Items with matching Item Number (Part Code) will be updated; new codes will be inserted. Large files are uploaded in batches of 500.</p>
+              </div>
+
+              {/* File picker */}
+              <div>
+                <input
+                  ref={bulkFileRef} type="file" accept=".xlsx,.xls"
+                  onChange={handleBulkFile} className="hidden"
+                />
+                <button
+                  onClick={() => bulkFileRef.current?.click()}
+                  className="flex items-center gap-2 px-4 py-2.5 border-2 border-dashed border-gray-300 rounded-xl text-sm text-gray-600 hover:border-emerald-400 hover:text-emerald-700 transition-colors w-full justify-center"
+                >
+                  <Upload size={16} />
+                  {bulkFileName ? bulkFileName : 'Click to select Excel file (.xlsx)'}
+                </button>
+              </div>
+
+              {bulkParseError && (
+                <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">{bulkParseError}</p>
+              )}
+
+              {/* Result */}
+              {bulkResult && (
+                <div className={`rounded-xl p-4 border ${bulkResult.errors?.length ? 'bg-amber-50 border-amber-200' : 'bg-green-50 border-green-200'}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <CheckCircle size={16} className={bulkResult.errors?.length ? 'text-amber-600' : 'text-green-600'} />
+                    <span className="font-semibold text-sm">
+                      {bulkResult.imported} parts imported / updated successfully
+                      {bulkResult.errors?.length ? `, ${bulkResult.errors.length} errors` : ''}
+                    </span>
+                  </div>
+                  {bulkResult.errors?.length > 0 && (
+                    <div className="mt-2 max-h-40 overflow-y-auto space-y-1">
+                      {bulkResult.errors.map((e, i) => (
+                        <p key={i} className="text-xs text-amber-800">Row {e.row}: {e.part_name} — {e.error}</p>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Preview table */}
+              {bulkRows.length > 0 && !bulkResult && (
+                <div>
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                    Preview — {bulkRows.length} rows detected (showing first 10)
+                  </p>
+                  <div className="overflow-x-auto rounded-xl border border-gray-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {['Part Code','Part Name','OEM / Part No.','Manufacturer','Unit','GST %','Purchase Price','Status'].map(h => (
+                            <th key={h} className="px-3 py-2 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100">
+                        {bulkRows.slice(0, 10).map((r, i) => (
+                          <tr key={i} className="hover:bg-gray-50">
+                            <td className="px-3 py-2 font-mono text-blue-700">{r.part_code || '(auto)'}</td>
+                            <td className="px-3 py-2 font-medium max-w-[180px] truncate">{r.part_name}</td>
+                            <td className="px-3 py-2 text-gray-500">{r.oem_number || '—'}</td>
+                            <td className="px-3 py-2 text-gray-600">{r.manufacturer || '—'}</td>
+                            <td className="px-3 py-2">{r.unit}</td>
+                            <td className="px-3 py-2">{r.gst_percent}%</td>
+                            <td className="px-3 py-2">{r.purchase_price || '—'}</td>
+                            <td className="px-3 py-2">
+                              <span className={`px-1.5 py-0.5 rounded text-xs font-medium ${r.active === 'Active' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-600'}`}>
+                                {r.active}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  {bulkRows.length > 10 && (
+                    <p className="text-xs text-gray-400 mt-1">…and {bulkRows.length - 10} more rows</p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-3 px-5 py-4 border-t border-gray-200 bg-gray-50 rounded-b-2xl">
+              <button onClick={() => setBulkModal(false)} className="px-4 py-2 text-sm rounded-lg border border-gray-300 bg-white hover:bg-gray-50">
+                {bulkResult ? 'Close' : 'Cancel'}
+              </button>
+              {!bulkResult && bulkRows.length > 0 && (
+                <button
+                  onClick={handleBulkUpload}
+                  disabled={bulkUploading}
+                  className="flex items-center gap-2 px-5 py-2 text-sm rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  <Upload size={14} />
+                  {bulkUploading ? `Uploading… (${bulkRows.length} parts in batches)` : `Upload ${bulkRows.length} Parts`}
+                </button>
+              )}
             </div>
           </div>
         </div>

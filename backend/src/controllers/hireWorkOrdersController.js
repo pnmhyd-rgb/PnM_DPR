@@ -169,7 +169,11 @@ const BASE_SELECT = `
     ur.name           AS rejected_by_name,
     uu.name           AS updated_by_name,
     sg.name           AS signatory_name,
-    sg.designation    AS signatory_designation
+    sg.designation    AS signatory_designation,
+    m2.slno           AS machine_slno,
+    m2.nickname       AS machine_nickname,
+    m2.eq_type        AS machine_eq_type,
+    m2.reg_no         AS machine_reg_no
   FROM hire_work_orders w
   LEFT JOIN hire_vendors v  ON w.vendor_id   = v.id
   LEFT JOIN projects     p  ON w.project_id  = p.id
@@ -180,6 +184,7 @@ const BASE_SELECT = `
   LEFT JOIN users        ur ON w.rejected_by      = ur.id
   LEFT JOIN users        uu ON w.updated_by       = uu.id
   LEFT JOIN hire_signatories sg ON w.signatory_id = sg.id
+  LEFT JOIN machines     m2 ON w.machine_id  = m2.id
 `;
 
 const getWorkOrders = async (req, res) => {
@@ -234,7 +239,7 @@ const createWorkOrder = async (req, res) => {
       wo_date, indent_number, vendor_offer_no, vendor_id, project_id,
       start_date, end_date, tenure_months, terms_conditions, billing_rules, items = [],
       description_line, site_address, reporting_date, site_contact_name,
-      site_contact_phone, mobilization_advance, signatory_id,
+      site_contact_phone, mobilization_advance, signatory_id, machine_id,
     } = req.body;
 
     if (!wo_date || !vendor_id || !project_id) {
@@ -255,8 +260,8 @@ const createWorkOrder = async (req, res) => {
          (wo_number,wo_date,indent_number,vendor_offer_no,vendor_id,project_id,start_date,end_date,
           tenure_months,total_value,terms_conditions,billing_rules,created_by,updated_by,
           description_line,site_address,reporting_date,site_contact_name,site_contact_phone,mobilization_advance,
-          signatory_id)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21) RETURNING *`,
+          signatory_id,machine_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *`,
       [wo_number, wo_date, indent_number||null, vendor_offer_no||null, vendor_id, project_id,
        start_date||null, end_date||null, tenure_months||null,
        totalValue, terms_conditions||null,
@@ -264,7 +269,7 @@ const createWorkOrder = async (req, res) => {
        req.user.id, req.user.id,
        description_line||null, site_address || project.address || null, reporting_date||null,
        site_contact_name||null, site_contact_phone||null, mobilization_advance||'NA',
-       signatory_id||null]
+       signatory_id||null, machine_id||null]
     );
     const wo = woRes.rows[0];
 
@@ -310,7 +315,7 @@ const updateWorkOrder = async (req, res) => {
       wo_date, indent_number, vendor_offer_no, vendor_id, project_id,
       start_date, end_date, tenure_months, terms_conditions, billing_rules, items = [],
       description_line, site_address, reporting_date, site_contact_name,
-      site_contact_phone, mobilization_advance, signatory_id,
+      site_contact_phone, mobilization_advance, signatory_id, machine_id,
     } = req.body;
 
     const totalValue = items.reduce((s, i) => s + (parseFloat(i.amount) || 0), 0);
@@ -321,8 +326,8 @@ const updateWorkOrder = async (req, res) => {
          start_date=$6,end_date=$7,tenure_months=$8,
          total_value=$9,terms_conditions=$10,billing_rules=$11,status='draft',updated_at=NOW(),updated_by=$12,
          description_line=$13,site_address=$14,reporting_date=$15,site_contact_name=$16,
-         site_contact_phone=$17,mobilization_advance=$18,signatory_id=$19
-       WHERE id=$20`,
+         site_contact_phone=$17,mobilization_advance=$18,signatory_id=$19,machine_id=$20
+       WHERE id=$21`,
       [wo_date, indent_number||null, vendor_offer_no||null, vendor_id, project_id,
        start_date||null, end_date||null, tenure_months||null,
        totalValue, terms_conditions||null,
@@ -330,7 +335,7 @@ const updateWorkOrder = async (req, res) => {
        req.user.id,
        description_line||null, site_address||null, reporting_date||null,
        site_contact_name||null, site_contact_phone||null, mobilization_advance||'NA',
-       signatory_id||null,
+       signatory_id||null, machine_id||null,
        id]
     );
 
@@ -420,7 +425,8 @@ const approveL1 = async (req, res) => {
 const approveFinal = async (req, res) => {
   try {
     const { id } = req.params;
-    const { remarks } = req.body;
+    const { remarks, machine_id } = req.body;
+    if (!machine_id) return res.status(400).json({ error: 'Asset selection is required for final approval' });
     const existing = await db.query('SELECT status FROM hire_work_orders WHERE id=$1', [id]);
     if (!existing.rows.length) return res.status(404).json({ error: 'Not found' });
     if (existing.rows[0].status !== 'l1_approved') {
@@ -428,9 +434,10 @@ const approveFinal = async (req, res) => {
     }
     await db.query(
       `UPDATE hire_work_orders SET
-         status='approved', approved_by=$1, approved_remarks=$2, approved_at=NOW(), updated_at=NOW()
-       WHERE id=$3`,
-      [req.user.id, remarks||null, id]
+         status='approved', approved_by=$1, approved_remarks=$2, approved_at=NOW(),
+         machine_id=$3, updated_at=NOW()
+       WHERE id=$4`,
+      [req.user.id, remarks||null, machine_id, id]
     );
     res.json({ message: 'Work order approved' });
   } catch (err) {
@@ -745,10 +752,64 @@ const deleteSignatory = async (req, res) => {
   }
 };
 
+// ── LINK ASSET TO APPROVED WO ────────────────────────────────────────────────
+
+const linkAssetToWO = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { machine_id } = req.body;
+    if (!machine_id) return res.status(400).json({ error: 'machine_id is required' });
+    const r = await db.query(
+      `UPDATE hire_work_orders SET machine_id=$1, updated_at=NOW(), updated_by=$2
+       WHERE id=$3 AND status='approved' RETURNING id`,
+      [machine_id, req.user.id, id]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'Approved work order not found' });
+    res.json({ message: 'Asset linked successfully' });
+  } catch (err) {
+    console.error('linkAssetToWO:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
+// ── APPROVED WOs FOR BILLING ─────────────────────────────────────────────────
+
+const getApprovedWOsForBilling = async (req, res) => {
+  try {
+    const { vendor_id, machine_id } = req.query;
+    const params = [];
+    let where = `WHERE w.status = 'approved'`;
+    if (vendor_id)  { params.push(vendor_id);  where += ` AND w.vendor_id=$${params.length}`; }
+    if (machine_id) { params.push(machine_id); where += ` AND w.machine_id=$${params.length}`; }
+
+    const { rows } = await db.query(`
+      SELECT w.id, w.wo_number, w.vendor_id, w.project_id, w.machine_id,
+             w.start_date, w.end_date, w.total_value, w.billing_rules,
+             v.name AS vendor_name,
+             p.code AS project_code,
+             m2.slno AS machine_slno, m2.nickname AS machine_nickname, m2.eq_type AS machine_eq_type,
+             COUNT(b.id)::int AS bill_count
+      FROM hire_work_orders w
+      LEFT JOIN hire_vendors v ON v.id = w.vendor_id
+      LEFT JOIN projects p     ON p.id = w.project_id
+      LEFT JOIN machines m2    ON m2.id = w.machine_id
+      LEFT JOIN hire_bills b   ON b.wo_id = w.id
+      ${where}
+      GROUP BY w.id, v.name, p.code, m2.slno, m2.nickname, m2.eq_type
+      ORDER BY w.wo_number
+    `, params);
+    res.json({ data: rows });
+  } catch (err) {
+    console.error('getApprovedWOsForBilling:', err);
+    res.status(500).json({ error: 'Server error' });
+  }
+};
+
 module.exports = {
   getVendors, createVendor, updateVendor, deleteVendor,
   getWorkOrders, getWorkOrder, createWorkOrder, updateWorkOrder, deleteWorkOrder,
   submitWorkOrder, approveL1, approveFinal, rejectWorkOrder, renewWorkOrder,
+  linkAssetToWO, getApprovedWOsForBilling,
   getSignatoryDesignations, createSignatoryDesignation, deleteSignatoryDesignation,
   getSignatories, createSignatory, updateSignatory, deleteSignatory,
   getTermsLibrary, createTermsLibraryItem, updateTermsLibraryItem, deleteTermsLibraryItem,

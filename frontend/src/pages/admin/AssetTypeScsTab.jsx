@@ -86,6 +86,8 @@ function ScsFormModal({ eqTypeId, eqTypeName, initial, sections, onSaved, onClos
         await updateEquipmentTypeScs(initial.id, payload)
       } else {
         await createEquipmentTypeScs(payload)
+        // Auto-sync new SCS to all machines of this asset type
+        syncEquipmentTypeScs({ eq_type_id: eqTypeId }).catch(() => {})
       }
       onSaved()
     } catch (e) { setErr(e.response?.data?.error || 'Failed to save') }

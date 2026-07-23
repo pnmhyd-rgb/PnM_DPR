@@ -385,7 +385,10 @@ function FleetDrilldownPanel({ drilldown, date, projectCode, onClose }) {
       'Active':       'bg-green-100 text-green-700',
       'Idle':         'bg-amber-100 text-amber-700',
       'Breakdown':    'bg-red-100 text-red-700',
-      'Not Deployed': 'bg-gray-100 text-gray-600',
+      'Surplus':      'bg-violet-100 text-violet-700',
+      'Accident':     'bg-orange-100 text-orange-700',
+      'Scrap':        'bg-gray-100 text-gray-600',
+      'Not Deployed': 'bg-gray-100 text-gray-500',
     }
     return (
       <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${colors[m.fleet_status] || 'bg-gray-100 text-gray-600'}`}>

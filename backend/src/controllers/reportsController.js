@@ -47,31 +47,42 @@ const utilization = async (req, res) => {
 
 const summary = async (req, res) => {
   try {
-    const { date } = req.query;
+    const { date, project_code, asset_type } = req.query;
     const targetDate = date || new Date().toISOString().split('T')[0];
 
-    let query = `
-      SELECT
-        p.code AS project_code, p.name AS project_name,
-        COUNT(DISTINCT m.id)                                             AS total_machines,
-        COUNT(DISTINCT CASE WHEN m.ownership = 'Own'  THEN m.id END)    AS own_machines,
-        COUNT(DISTINCT CASE WHEN m.ownership = 'Hire' THEN m.id END)    AS hire_machines,
-        COUNT(DISTINCT e.machine_id)                                     AS reported_machines,
-        ROUND(AVG(e.util_pct)::numeric, 1)                              AS avg_utilization,
-        ROUND(SUM(e.hsd)::numeric, 2)                                   AS total_hsd
-      FROM projects p
-      LEFT JOIN machines m ON m.project_id = p.id AND m.active = true
-      LEFT JOIN dpr_entries e ON e.project_id = p.id AND e.entry_date = $1
-      WHERE p.active = true
-    `;
     const params = [targetDate];
+    const conditions = ['p.active = true'];
+    let machineTypeFilter = '';
 
+    if (asset_type) {
+      params.push(asset_type);
+      machineTypeFilter = `AND m.asset_type = $${params.length}`;
+    }
+    if (project_code) {
+      params.push(project_code);
+      conditions.push(`p.code = $${params.length}`);
+    }
     if (req.user.role !== 'admin' && req.user.project_codes.length > 0) {
       params.push(req.user.project_codes);
-      query += ` AND p.code = ANY($${params.length})`;
+      conditions.push(`p.code = ANY($${params.length})`);
     }
 
-    query += ' GROUP BY p.id, p.code, p.name ORDER BY p.code';
+    const query = `
+      SELECT
+        p.code AS project_code, p.name AS project_name,
+        COUNT(DISTINCT m.id)                                              AS total_machines,
+        COUNT(DISTINCT CASE WHEN m.ownership = 'Own'  THEN m.id END)     AS own_machines,
+        COUNT(DISTINCT CASE WHEN m.ownership = 'Hire' THEN m.id END)     AS hire_machines,
+        COUNT(DISTINCT e.machine_id)                                      AS reported_machines,
+        ROUND(AVG(e.util_pct)::numeric, 1)                               AS avg_utilization,
+        ROUND(SUM(e.hsd)::numeric, 2)                                     AS total_hsd
+      FROM projects p
+      LEFT JOIN machines m ON m.project_id = p.id AND m.active = true ${machineTypeFilter}
+      LEFT JOIN dpr_entries e ON e.machine_id = m.id AND e.entry_date = $1
+      WHERE ${conditions.join(' AND ')}
+      GROUP BY p.id, p.code, p.name ORDER BY p.code
+    `;
+
     const result = await db.query(query, params);
     res.json({ data: result.rows, date: targetDate });
   } catch (err) {

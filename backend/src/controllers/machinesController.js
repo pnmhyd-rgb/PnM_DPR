@@ -77,10 +77,12 @@ const getAll = async (req, res) => {
     const activeFilter = include_inactive === 'true' ? 'false' : 'true';
     let query = `
       SELECT m.*, p.code AS project_code, p.name AS project_name,
-             et.asset_group, et.asset_cat
+             et.asset_group, et.asset_cat,
+             su.name AS asset_status_changed_by_name
       FROM machines m
       JOIN projects p ON m.project_id = p.id
       LEFT JOIN equipment_types et ON LOWER(et.name) = LOWER(m.eq_type)
+      LEFT JOIN users su ON su.id = m.asset_status_changed_by
       WHERE m.active = ${activeFilter}`;
     const params = [];
 
@@ -507,14 +509,18 @@ const fleetList = async (req, res) => {
                m.date_of_purchase, m.price, m.po_number,
                m.vendor, m.rate, m.rate_monthly,
                m.active, m.deactivation_reason,
+               m.asset_status,
                m.created_at, m.updated_at,
                p.code AS project_code, p.name AS project_name,
                et.asset_group, et.asset_cat,
                CASE
-                 WHEN e.id IS NULL                         THEN 'Not Deployed'
-                 WHEN COALESCE(e.breakdown, 0) > 0         THEN 'Breakdown'
-                 WHEN COALESCE(e.working_hours, 0) > 0     THEN 'Active'
-                 ELSE 'Idle'
+                 WHEN m.asset_status IN ('Surplus','Accident','Scrap') THEN m.asset_status
+                 WHEN COALESCE(e.breakdown, 0) > 0                     THEN 'Breakdown'
+                 WHEN m.asset_status = 'Breakdown'                      THEN 'Breakdown'
+                 WHEN COALESCE(e.working_hours, 0) > 0                  THEN 'Active'
+                 WHEN e.id IS NOT NULL                                   THEN 'Idle'
+                 WHEN m.asset_status = 'Idle'                            THEN 'Idle'
+                 ELSE 'Not Deployed'
                END AS fleet_status
         FROM machines m
         JOIN projects p ON m.project_id = p.id
@@ -540,7 +546,7 @@ const fleetList = async (req, res) => {
 
 const fleetSummary = async (req, res) => {
   try {
-    const { date, project_code } = req.query;
+    const { date, project_code, asset_type } = req.query;
     const targetDate = date || new Date().toISOString().slice(0, 10);
 
     const params = [targetDate];
@@ -549,6 +555,10 @@ const fleetSummary = async (req, res) => {
     if (project_code) {
       params.push(project_code);
       extraFilters += ` AND p.code = $${params.length}`;
+    }
+    if (asset_type) {
+      params.push(asset_type);
+      extraFilters += ` AND m.asset_type = $${params.length}`;
     }
     if (req.user.role !== 'admin' && req.user.project_codes.length > 0) {
       params.push(req.user.project_codes);
@@ -559,10 +569,13 @@ const fleetSummary = async (req, res) => {
       SELECT
         COALESCE(m.asset_type, 'Unclassified') AS asset_type,
         CASE
-          WHEN e.id IS NULL                         THEN 'Not Deployed'
-          WHEN COALESCE(e.breakdown, 0) > 0         THEN 'Breakdown'
-          WHEN COALESCE(e.working_hours, 0) > 0     THEN 'Active'
-          ELSE 'Idle'
+          WHEN m.asset_status IN ('Surplus','Accident','Scrap') THEN m.asset_status
+          WHEN COALESCE(e.breakdown, 0) > 0                     THEN 'Breakdown'
+          WHEN m.asset_status = 'Breakdown'                      THEN 'Breakdown'
+          WHEN COALESCE(e.working_hours, 0) > 0                  THEN 'Active'
+          WHEN e.id IS NOT NULL                                   THEN 'Idle'
+          WHEN m.asset_status = 'Idle'                            THEN 'Idle'
+          ELSE 'Not Deployed'
         END AS status,
         COUNT(*)::int AS count
       FROM machines m
@@ -689,21 +702,124 @@ const regenerateNicknames = async (req, res) => {
 const ageing = async (req, res) => {
   try {
     const { project_code } = req.query;
-    let where = 'm.active = true';
     const params = [];
-    if (project_code) { params.push(project_code); where += ` AND m.project_code = $${params.length}`; }
+    const conditions = ['m.active = true'];
+
+    if (project_code) {
+      params.push(project_code);
+      conditions.push(`p.code = $${params.length}`);
+    }
+    if (req.user.role !== 'admin' && req.user.project_codes?.length > 0) {
+      params.push(req.user.project_codes);
+      conditions.push(`p.code = ANY($${params.length})`);
+    }
+
     const result = await db.query(`
-      SELECT m.id, m.slno, m.nickname, m.eq_type, m.reg_no, m.yom, m.ownership,
-             m.project_code, m.monthly_rate,
-             DATE_PART('year', AGE(NOW(), MAKE_DATE(m.yom::int, 1, 1))) AS age_years
+      SELECT
+        m.id, m.slno, m.nickname, m.eq_type, m.ownership, m.shift_type,
+        p.code AS project_code,
+        e.entry_date       AS last_entry_date,
+        e.shift            AS last_shift,
+        e.working_hours    AS last_working_hours,
+        e.status           AS last_entry_status,
+        CASE
+          WHEN e.entry_date IS NULL THEN NULL
+          ELSE (CURRENT_DATE - e.entry_date::date)::int
+        END AS days_since
       FROM machines m
-      WHERE ${where}
-      ORDER BY m.yom ASC NULLS LAST, m.eq_type
+      JOIN projects p ON p.id = m.project_id
+      LEFT JOIN LATERAL (
+        SELECT entry_date, shift, working_hours, status
+        FROM dpr_entries
+        WHERE machine_id = m.id
+        ORDER BY entry_date DESC, id DESC
+        LIMIT 1
+      ) e ON true
+      WHERE ${conditions.join(' AND ')}
+      ORDER BY days_since DESC NULLS FIRST, m.eq_type
     `, params);
-    res.json({ data: result.rows });
+
+    const machines = result.rows;
+
+    const BUCKETS = [
+      { key: 'current', label: '0 – 1 Days',   color: '#16a34a', min: 0,  max: 1          },
+      { key: '2_7',     label: '2 – 7 Days',   color: '#d97706', min: 2,  max: 7          },
+      { key: '8_14',    label: '8 – 14 Days',  color: '#ea580c', min: 8,  max: 14         },
+      { key: '15_30',   label: '15 – 30 Days', color: '#dc2626', min: 15, max: 30         },
+      { key: '30plus',  label: '> 30 Days',    color: '#7c3aed', min: 31, max: Infinity   },
+      { key: 'no-log',  label: 'No Log',       color: '#6b7280', min: null, max: null     },
+    ];
+
+    const buckets = BUCKETS.map(b => {
+      let ms;
+      if (b.key === 'no-log') {
+        ms = machines.filter(m => m.last_entry_date === null);
+      } else {
+        ms = machines.filter(m => {
+          const d = m.days_since != null ? parseInt(m.days_since) : null;
+          return d !== null && d >= b.min && d <= b.max;
+        });
+      }
+      return { key: b.key, label: b.label, color: b.color, count: ms.length, machines: ms };
+    });
+
+    res.json({ data: { buckets, total: machines.length } });
   } catch (err) {
+    console.error('Ageing error:', err);
     res.status(500).json({ error: err.message });
   }
 };
 
-module.exports = { getAll, create, update, updateOverrides, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames, getLastEntry, ageing };
+const ASSET_STATUSES = ['Active', 'Idle', 'Breakdown', 'Surplus', 'Accident', 'Scrap'];
+
+const updateStatus = async (req, res) => {
+  const { id } = req.params;
+  const { status, remarks } = req.body;
+  if (!ASSET_STATUSES.includes(status))
+    return res.status(400).json({ error: 'Invalid status' });
+  if (!remarks?.trim())
+    return res.status(400).json({ error: 'Remarks are required' });
+
+  const client = await db.getClient();
+  try {
+    await client.query('BEGIN');
+    await client.query(`
+      UPDATE machines SET
+        asset_status             = $1,
+        asset_status_since       = NOW(),
+        asset_status_remarks     = $2,
+        asset_status_changed_by  = $3,
+        updated_at               = NOW()
+      WHERE id = $4
+    `, [status, remarks.trim(), req.user.id, id]);
+    await client.query(`
+      INSERT INTO machine_status_history (machine_id, status, remarks, changed_by)
+      VALUES ($1, $2, $3, $4)
+    `, [id, status, remarks.trim(), req.user.id]);
+    await client.query('COMMIT');
+    res.json({ success: true });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('updateStatus:', err);
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+};
+
+const getStatusHistory = async (req, res) => {
+  try {
+    const r = await db.query(`
+      SELECT h.id, h.status, h.remarks, h.changed_at, u.name AS changed_by_name
+      FROM machine_status_history h
+      LEFT JOIN users u ON u.id = h.changed_by
+      WHERE h.machine_id = $1
+      ORDER BY h.changed_at DESC
+      LIMIT 30
+    `, [req.params.id]);
+    res.json({ data: r.rows });
+  } catch (err) {
+    console.error('getStatusHistory:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getAll, create, update, updateOverrides, remove, transfer, hardDelete, bulkCreate, fleetSummary, fleetList, resetReadingConfigs, propagateReadingConfigs, regenerateNicknames, getLastEntry, ageing, updateStatus, getStatusHistory };

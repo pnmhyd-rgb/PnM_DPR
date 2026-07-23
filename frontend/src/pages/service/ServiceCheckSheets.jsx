@@ -1,358 +1,683 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  getCheckSheets, getCheckSheet, createCheckSheet, updateCheckSheet,
-  getServiceSchedules, createServiceSchedule,
-  getServiceExecutions, createServiceExecution,
-  getMachines, getProjects,
+  Search, X, Loader2, ClipboardCheck, CheckCircle, Download,
+} from 'lucide-react'
+import {
+  getMachines, getMachineScs, getLatestReadingBefore,
+  getScsTransactions, createScsTransaction,
 } from '../../lib/api'
-import { Plus, X, Eye, RefreshCw, Edit2, ClipboardCheck, Calendar, Clock, CircleCheck, TriangleAlert } from 'lucide-react'
 
-const today = () => new Date().toISOString().split('T')[0]
-const fmtDate = d => d ? new Date(d).toLocaleDateString('en-IN') : '—'
+const todayStr = () => new Date().toISOString().slice(0, 10)
 
-const FREQUENCIES = [
-  { value: 'daily', label: 'Daily' },
-  { value: 'weekly', label: 'Weekly' },
-  { value: 'monthly', label: 'Monthly' },
-  { value: 'quarterly', label: 'Quarterly' },
-  { value: 'yearly', label: 'Yearly' },
-  { value: 'custom', label: 'Custom (days)' },
-]
+const fmtDate = (d) => {
+  if (!d) return '—'
+  return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
 
-const TABS = ['Running Status', 'Execution History', 'Check Sheet Master', 'Service Schedule']
+// ── Download helpers ──────────────────────────────────────────────────────────
 
-const inp = 'w-full border border-gray-300 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500'
-const lbl = 'block text-xs font-medium text-gray-600 mb-1'
+function scsHtml(tx) {
+  const n  = (v, dec = 1) => v != null ? parseFloat(v).toFixed(dec) : '—'
+  const d  = (v) => v ? new Date(v).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
+  const dt = (v) => v ? new Date(v).toLocaleString('en-IN') : '—'
+  const val = (v) => v || '—'
 
-// ── Check Sheet Master ────────────────────────────────────────────────────────
+  const execH   = tx.execution_hours != null ? parseFloat(tx.execution_hours) : null
+  const prevH   = tx.prev_hours      != null ? parseFloat(tx.prev_hours)      : null
+  const recH    = tx.recommended_hours ? parseInt(tx.recommended_hours) : null
+  const execKm  = tx.execution_km    != null ? parseFloat(tx.execution_km)    : null
+  const prevKm  = tx.prev_km         != null ? parseFloat(tx.prev_km)         : null
+  const recKm   = tx.recommended_km  ? parseInt(tx.recommended_km) : null
+  const recDays = tx.recommended_days ? parseInt(tx.recommended_days) : null
 
-function CheckSheetModal({ sheet, onClose, onSaved }) {
-  const emptyItem = () => ({ seq: '', task: '', category: '', inspection_method: '', acceptance_criteria: '', is_mandatory: true })
-  const [form, setForm] = useState(sheet ? {
-    name: sheet.name, asset_type: sheet.asset_type || '', frequency: sheet.frequency,
-    frequency_value: sheet.frequency_value || 1,
-    estimated_duration_hours: sheet.estimated_duration_hours || '',
-    active: sheet.active,
-    check_items: sheet.check_items || [],
-    parts_required: sheet.parts_required || [],
-  } : {
-    name: '', asset_type: '', frequency: 'daily', frequency_value: 1,
-    estimated_duration_hours: '', active: true, check_items: [], parts_required: [],
-  })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  const intH    = execH  != null && prevH  != null ? Math.round((execH  - prevH)  * 10) / 10 : null
+  const devH    = intH   != null && recH   != null ? Math.round((intH   - recH)   * 10) / 10 : null
+  const pctH    = intH   != null && recH   != null ? (intH / recH * 100).toFixed(1) : null
+  const intKm   = execKm != null && prevKm != null ? Math.round(execKm - prevKm)              : null
+  const devKm   = intKm  != null && recKm  != null ? Math.round(intKm  - recKm)               : null
+  const pctKm   = intKm  != null && recKm  != null ? (intKm / recKm * 100).toFixed(1)         : null
+  const intDays = tx.prev_date && tx.execution_date
+    ? Math.ceil((new Date(tx.execution_date) - new Date(tx.prev_date)) / 86400000) : null
+  const devDays = intDays != null && recDays != null ? intDays - recDays   : null
+  const pctDays = intDays != null && recDays != null ? (intDays / recDays * 100).toFixed(1) : null
 
-  const addItem    = () => setForm(f => ({ ...f, check_items: [...f.check_items, emptyItem()] }))
-  const removeItem = (i) => setForm(f => ({ ...f, check_items: f.check_items.filter((_, idx) => idx !== i) }))
-  const updateItem = (i, k, v) => setForm(f => {
-    const arr = [...f.check_items]; arr[i] = { ...arr[i], [k]: v }; return { ...f, check_items: arr }
-  })
+  const showH    = recH    != null || execH   != null || prevH   != null
+  const showKm   = recKm   != null || execKm  != null || prevKm  != null
+  const showDays = recDays != null || intDays != null
 
-  const save = async () => {
-    if (!form.name) { setError('Name is required'); return }
-    setSaving(true); setError('')
-    try {
-      const items = form.check_items.map((it, idx) => ({ ...it, seq: idx + 1 }))
-      if (sheet) await updateCheckSheet(sheet.id, { ...form, check_items: items })
-      else await createCheckSheet({ ...form, check_items: items })
-      onSaved()
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save')
-    } finally { setSaving(false) }
-  }
+  const devLabel = (v, suffix = '') => v != null ? (v > 0 ? '+' : '') + v + suffix : '—'
+  const pctLabel = (v) => v != null ? v + '%' : '—'
+
+  const intRow = (label, prev, curr, interval, recommended, deviation, pct) => `
+    <tr>
+      <td style="font-weight:600;background:#f8f9fa;padding:6px 10px">${label}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace">${prev ?? '—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace">${curr ?? '—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:600">${interval ?? '—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;color:#555">${recommended ?? '—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:600;color:${deviation != null && parseFloat(deviation) > 0 ? '#dc2626' : '#16a34a'}">${deviation ?? '—'}</td>
+      <td style="padding:6px 10px;text-align:right;font-family:monospace;font-weight:600;color:${pct != null && parseFloat(pct) >= 100 ? '#dc2626' : pct != null && parseFloat(pct) >= 80 ? '#d97706' : '#16a34a'}">${pct ?? '—'}</td>
+    </tr>`
+
+  const row = (label, value) => `
+    <tr>
+      <td style="padding:6px 10px;color:#6b7280;font-size:12px;width:200px">${label}</td>
+      <td style="padding:6px 10px;font-size:12px;font-weight:500">${value}</td>
+    </tr>`
+
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>SCS – ${tx.transaction_no || tx.scs_name}</title>
+<style>
+  body { font-family: Arial, sans-serif; font-size: 13px; margin: 0; padding: 24px; color: #111; }
+  h1   { font-size: 18px; margin: 0 0 2px; }
+  h2   { font-size: 12px; font-weight: 700; color: #555; text-transform: uppercase; letter-spacing: 1px;
+         border-bottom: 1px solid #ddd; padding-bottom: 4px; margin: 20px 0 8px; }
+  table { width: 100%; border-collapse: collapse; }
+  tr:nth-child(even) td { background: #fafafa; }
+  th   { background: #1f2937; color: #fff; padding: 7px 10px; font-size: 11px;
+         text-transform: uppercase; letter-spacing: .5px; text-align: left; }
+  th.r { text-align: right; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start;
+            border-bottom: 2px solid #1f2937; padding-bottom: 12px; margin-bottom: 16px; }
+  .badge  { background: #dcfce7; color: #166534; font-size: 11px; font-weight: 700;
+            padding: 3px 10px; border-radius: 20px; }
+  .mono   { font-family: monospace; font-size: 13px; }
+</style></head><body>
+
+<div class="header">
+  <div>
+    <p style="font-size:11px;color:#6b7280;margin:0 0 4px">SERVICE CHECKSHEET EXECUTION RECORD</p>
+    <h1>${val(tx.scs_name)}</h1>
+    <p style="margin:4px 0 0;font-size:12px;color:#555">
+      ${val(tx.nickname || tx.machine_slno)} &nbsp;|&nbsp; ${val(tx.eq_type)}
+      ${tx.project_code ? ' &nbsp;|&nbsp; ' + tx.project_code : ''}
+    </p>
+  </div>
+  <div style="text-align:right">
+    <p class="mono" style="color:#1d4ed8;font-weight:700;margin:0">${tx.transaction_no || '(Legacy)'}</p>
+    <p style="margin:4px 0 0;font-size:12px;color:#555">Executed: ${d(tx.execution_date)}</p>
+    <span class="badge">Done</span>
+  </div>
+</div>
+
+<h2>A. Service CheckSheet Details</h2>
+<table>
+  ${row('SCS Name',            val(tx.scs_name))}
+  ${row('Description',         val(tx.scs_description))}
+  ${row('Section',             val(tx.scs_section))}
+  ${row('Sub-Section',         val(tx.scs_sub_section))}
+  ${row('Asset',               val(tx.nickname || tx.machine_slno))}
+  ${row('Asset Type',          val(tx.eq_type))}
+  ${row('Project',             tx.project_code ? tx.project_code + (tx.project_name ? ' — ' + tx.project_name : '') : '—')}
+  ${row('Ticket / WO Ref.',    val(tx.ticket_ref))}
+  ${row('Remark',              val(tx.remark))}
+  ${row('Parameter',           val(tx.parameter))}
+  ${row('Executed Parameter',  val(tx.executed_parameter))}
+  ${row('Execution Site',      val(tx.execution_site))}
+  ${execH  != null ? row('Counter — Hours', n(execH, 1) + ' Hr') : ''}
+  ${execKm != null ? row('Counter — KM',    n(execKm, 0) + ' KM') : ''}
+</table>
+
+${showH || showKm || showDays ? `
+<h2>B. Execution Interval Analysis</h2>
+<table>
+  <thead><tr>
+    <th>Type</th><th class="r">Previous</th><th class="r">Current</th>
+    <th class="r">Exec. Interval</th><th class="r">Recommended</th>
+    <th class="r">Deviation</th><th class="r">Exec. %</th>
+  </tr></thead>
+  <tbody>
+    ${showH    ? intRow('Hours',
+        prevH  != null ? n(prevH,  1) + ' Hr'  : null,
+        execH  != null ? n(execH,  1) + ' Hr'  : null,
+        intH   != null ? n(intH,   1) + ' Hr'  : null,
+        recH   ? recH + ' Hr'  : null,
+        devH != null ? devLabel(n(devH, 1), ' Hr') : null, pctLabel(pctH)) : ''}
+    ${showKm   ? intRow('KM',
+        prevKm  != null ? n(prevKm, 0) + ' KM' : null,
+        execKm  != null ? n(execKm, 0) + ' KM' : null,
+        intKm   != null ? intKm + ' KM'        : null,
+        recKm   ? recKm + ' KM'  : null,
+        devKm != null ? devLabel(devKm, ' KM') : null, pctLabel(pctKm)) : ''}
+    ${showDays ? intRow('Days',
+        d(tx.prev_date), d(tx.execution_date),
+        intDays != null ? intDays + ' days'    : null,
+        recDays ? recDays + ' days' : null,
+        devDays != null ? devLabel(devDays, ' days') : null, pctLabel(pctDays)) : ''}
+  </tbody>
+</table>` : ''}
+
+<h2>C. Transaction Details</h2>
+<table>
+  ${tx.transaction_no ? row('Transaction No.', `<span class="mono" style="color:#1d4ed8">${tx.transaction_no}</span>`) : ''}
+  ${row('Execution Date', d(tx.execution_date))}
+  ${row('Executed By',    val(tx.executed_by_name))}
+  ${row('Entered By',     val(tx.created_by_name))}
+  ${tx.created_at ? row('Date of Entry', dt(tx.created_at)) : ''}
+  ${tx.updated_by_name ? row('Updated By', tx.updated_by_name) : ''}
+  ${tx.updated_at      ? row('Updated At', dt(tx.updated_at))  : ''}
+</table>
+
+<p style="margin-top:32px;font-size:10px;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:8px">
+  Generated ${new Date().toLocaleString('en-IN')} &nbsp;|&nbsp; PnM DPR
+</p>
+</body></html>`
+}
+
+function downloadScs(tx) {
+  const html = scsHtml(tx)
+  const blob = new Blob(['﻿', html], { type: 'application/msword' })
+  const url  = URL.createObjectURL(blob)
+  const a    = document.createElement('a')
+  const name = tx.transaction_no
+    ? `SCS_${tx.transaction_no.replace(/\//g, '-')}.doc`
+    : `SCS_${(tx.scs_name || 'record').replace(/\s+/g, '_')}_${tx.execution_date || ''}.doc`
+  a.href = url; a.download = name; a.click()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+// ── Section label ─────────────────────────────────────────────────────────────
+
+function SectionTitle({ label }) {
+  return (
+    <div className="flex items-center gap-2 mb-3">
+      <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest whitespace-nowrap">{label}</span>
+      <div className="flex-1 border-t border-gray-200" />
+    </div>
+  )
+}
+
+function InfoRow({ label, value, mono, highlight }) {
+  return (
+    <div className="flex items-start gap-3 py-2 border-b border-gray-50 last:border-0">
+      <span className="w-48 flex-shrink-0 text-xs text-gray-400 font-medium pt-0.5">{label}</span>
+      <span className={`text-xs flex-1 font-medium ${highlight ? 'text-blue-700 font-mono' : mono ? 'font-mono text-gray-700' : 'text-gray-800'}`}>
+        {value ?? '—'}
+      </span>
+    </div>
+  )
+}
+
+// ── Interval table row ────────────────────────────────────────────────────────
+
+function IntRow({ label, prev, curr, interval, recommended, deviation, pct }) {
+  const dv = parseFloat(deviation)
+  const pc = parseFloat(pct)
+  const devColor = isNaN(dv) ? '' : dv > 0 ? 'text-red-600' : 'text-green-600'
+  const pctColor = isNaN(pc) ? '' : pc >= 100 ? 'text-red-600' : pc >= 80 ? 'text-amber-600' : 'text-green-600'
+  const devLabel = !isNaN(dv) ? (dv > 0 ? '+' : '') + deviation : 'N/A'
+  const pctLabel = !isNaN(pc) ? pc.toFixed(1) + '%' : 'N/A'
 
   return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/50 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-6">
-        <div className="flex items-center justify-between px-5 py-4 border-b sticky top-0 bg-white rounded-t-2xl z-10">
-          <h2 className="font-semibold text-gray-900">{sheet ? 'Edit Check Sheet' : 'New Check Sheet'}</h2>
-          <button onClick={onClose}><X size={18} className="text-gray-400" /></button>
+    <tr className="text-xs border-b border-gray-100 last:border-0">
+      <td className="py-2.5 px-3 font-semibold text-gray-600 bg-gray-50 w-16">{label}</td>
+      <td className="py-2.5 px-3 text-gray-700 font-mono text-right">{prev ?? 'N/A'}</td>
+      <td className="py-2.5 px-3 text-gray-700 font-mono text-right">{curr ?? 'N/A'}</td>
+      <td className="py-2.5 px-3 text-gray-700 font-mono text-right font-semibold">{interval ?? 'N/A'}</td>
+      <td className="py-2.5 px-3 text-gray-500 font-mono text-right">{recommended ?? 'N/A'}</td>
+      <td className={`py-2.5 px-3 font-mono text-right font-semibold ${devColor}`}>{devLabel}</td>
+      <td className={`py-2.5 px-3 font-mono text-right font-semibold ${pctColor}`}>{pctLabel}</td>
+    </tr>
+  )
+}
+
+// ── Left-panel list item ──────────────────────────────────────────────────────
+
+function TxListItem({ tx, selected, onClick }) {
+  const isLegacy = !tx.transaction_no
+  return (
+    <button onClick={onClick}
+      className={`w-full text-left px-3 py-3 border-b border-gray-100 hover:bg-gray-50 transition-colors
+        ${selected ? 'bg-blue-50 border-l-2 border-l-blue-600' : 'border-l-2 border-l-transparent'}`}>
+      {isLegacy
+        ? <p className="text-[11px] text-gray-400 italic">Legacy record</p>
+        : <p className="text-[11px] font-mono text-blue-700 font-bold">{tx.transaction_no}</p>}
+      <p className="text-xs font-semibold text-gray-800 mt-0.5 truncate">{tx.scs_name || '—'}</p>
+      <p className="text-[10px] text-gray-400 mt-0.5 truncate">
+        {tx.nickname || tx.machine_slno} • {fmtDate(tx.execution_date)}
+      </p>
+    </button>
+  )
+}
+
+// ── Detail panel ──────────────────────────────────────────────────────────────
+
+function TransactionDetail({ tx }) {
+  const execH   = tx.execution_hours != null ? parseFloat(tx.execution_hours) : null
+  const prevH   = tx.prev_hours      != null ? parseFloat(tx.prev_hours)      : null
+  const recH    = tx.recommended_hours ? parseInt(tx.recommended_hours) : null
+  const execKm  = tx.execution_km    != null ? parseFloat(tx.execution_km)    : null
+  const prevKm  = tx.prev_km         != null ? parseFloat(tx.prev_km)         : null
+  const recKm   = tx.recommended_km  ? parseInt(tx.recommended_km) : null
+  const recDays = tx.recommended_days ? parseInt(tx.recommended_days) : null
+
+  const intH    = execH   != null && prevH   != null ? Math.round((execH  - prevH)  * 10) / 10 : null
+  const devH    = intH    != null && recH    != null ? Math.round((intH   - recH)   * 10) / 10 : null
+  const pctH    = intH    != null && recH    != null ? (intH / recH * 100)                      : null
+
+  const intKm   = execKm  != null && prevKm  != null ? Math.round(execKm - prevKm)              : null
+  const devKm   = intKm   != null && recKm   != null ? Math.round(intKm  - recKm)               : null
+  const pctKm   = intKm   != null && recKm   != null ? (intKm / recKm * 100)                    : null
+
+  const intDays = tx.prev_date && tx.execution_date
+    ? Math.ceil((new Date(tx.execution_date) - new Date(tx.prev_date)) / 86400000)
+    : null
+  const devDays = intDays != null && recDays != null ? intDays - recDays   : null
+  const pctDays = intDays != null && recDays != null ? (intDays / recDays * 100) : null
+
+  const showH    = recH    != null || execH   != null || prevH   != null
+  const showKm   = recKm   != null || execKm  != null || prevKm  != null
+  const showDays = recDays != null || intDays != null
+
+  return (
+    <div className="p-5 space-y-6 max-w-4xl mx-auto">
+      {/* Header */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          {tx.transaction_no
+            ? <p className="font-mono text-blue-700 text-xs font-bold">{tx.transaction_no}</p>
+            : <p className="text-[11px] text-gray-400 italic">Legacy record — no transaction number</p>}
+          <h3 className="text-base font-bold text-gray-900 mt-1">{tx.scs_name || '—'}</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {tx.nickname || tx.machine_slno}{tx.eq_type ? ` — ${tx.eq_type}` : ''}
+            {tx.project_code ? ` | ${tx.project_code}` : ''}
+          </p>
         </div>
-        <div className="p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="col-span-2">
-              <label className={lbl}>Check Sheet Name *</label>
-              <input className={inp} value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} placeholder="e.g., Daily PM Excavator" />
-            </div>
-            <div>
-              <label className={lbl}>Asset Type</label>
-              <input className={inp} value={form.asset_type} onChange={e => setForm(f => ({...f, asset_type: e.target.value}))} placeholder="e.g., Excavator" />
-            </div>
-            <div>
-              <label className={lbl}>Frequency</label>
-              <select className={inp} value={form.frequency} onChange={e => setForm(f => ({...f, frequency: e.target.value}))}>
-                {FREQUENCIES.map(f => <option key={f.value} value={f.value}>{f.label}</option>)}
-              </select>
-            </div>
-            {form.frequency === 'custom' && (
-              <div>
-                <label className={lbl}>Every N Days</label>
-                <input type="number" className={inp} value={form.frequency_value} onChange={e => setForm(f => ({...f, frequency_value: e.target.value}))} min="1" />
-              </div>
-            )}
-            <div>
-              <label className={lbl}>Est. Duration (hours)</label>
-              <input type="number" className={inp} value={form.estimated_duration_hours} onChange={e => setForm(f => ({...f, estimated_duration_hours: e.target.value}))} step="0.5" min="0" />
-            </div>
-            {sheet && (
-              <div className="flex items-center gap-2 mt-2">
-                <input type="checkbox" id="active_cs" checked={form.active} onChange={e => setForm(f => ({...f, active: e.target.checked}))} className="rounded" />
-                <label htmlFor="active_cs" className="text-sm text-gray-700">Active</label>
-              </div>
-            )}
-          </div>
+        <span className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-green-100 text-green-800 text-xs font-semibold rounded-full flex-shrink-0">
+          <CheckCircle size={11} /> Done
+        </span>
+      </div>
 
-          <div>
-            <div className="flex items-center justify-between mb-2">
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Check Items</p>
-              <button onClick={addItem} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-800"><Plus size={14} /> Add Item</button>
-            </div>
-            {form.check_items.length === 0 ? (
-              <p className="text-sm text-gray-400 italic">No items yet. Add check items above.</p>
-            ) : (
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-2 py-2 text-left text-gray-600 w-8">#</th>
-                      <th className="px-2 py-2 text-left text-gray-600">Task / Check Point</th>
-                      <th className="px-2 py-2 text-left text-gray-600 w-28">Category</th>
-                      <th className="px-2 py-2 text-left text-gray-600 w-24">Method</th>
-                      <th className="px-2 py-2 text-left text-gray-600 w-28">Acceptance</th>
-                      <th className="px-2 py-2 text-center text-gray-600 w-16">Mandatory</th>
-                      <th className="px-2 py-2 w-6" />
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {form.check_items.map((item, i) => (
-                      <tr key={i} className="bg-white">
-                        <td className="px-2 py-1.5 text-gray-500">{i + 1}</td>
-                        <td className="px-2 py-1.5"><input className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs" value={item.task} onChange={e => updateItem(i, 'task', e.target.value)} placeholder="Task description" /></td>
-                        <td className="px-2 py-1.5"><input className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs" value={item.category} onChange={e => updateItem(i, 'category', e.target.value)} placeholder="Category" /></td>
-                        <td className="px-2 py-1.5"><input className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs" value={item.inspection_method} onChange={e => updateItem(i, 'inspection_method', e.target.value)} placeholder="Visual / Measure" /></td>
-                        <td className="px-2 py-1.5"><input className="w-full border border-gray-200 rounded px-1.5 py-1 text-xs" value={item.acceptance_criteria} onChange={e => updateItem(i, 'acceptance_criteria', e.target.value)} placeholder="Pass criteria" /></td>
-                        <td className="px-2 py-1.5 text-center"><input type="checkbox" checked={item.is_mandatory} onChange={e => updateItem(i, 'is_mandatory', e.target.checked)} /></td>
-                        <td className="px-2 py-1.5"><button onClick={() => removeItem(i)} className="text-red-400 hover:text-red-600"><X size={12} /></button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+      {/* Section A */}
+      <div>
+        <SectionTitle label="A. Service CheckSheet Details" />
+        <div className="bg-white rounded-xl border border-gray-200 px-4 divide-y divide-gray-50">
+          <InfoRow label="SCS Name"            value={tx.scs_name} />
+          <InfoRow label="Description"         value={tx.scs_description} />
+          <InfoRow label="Section"             value={tx.scs_section} />
+          <InfoRow label="Sub-Section"         value={tx.scs_sub_section} />
+          <InfoRow label="Asset"               value={tx.nickname || tx.machine_slno} />
+          <InfoRow label="Asset Type"          value={tx.eq_type} />
+          <InfoRow label="Project"             value={tx.project_code ? `${tx.project_code}${tx.project_name ? ' — ' + tx.project_name : ''}` : null} />
+          <InfoRow label="Ticket / WO Ref."    value={tx.ticket_ref} />
+          <InfoRow label="Remark"              value={tx.remark} />
+          <InfoRow label="Parameter"           value={tx.parameter} />
+          <InfoRow label="Executed Parameter"  value={tx.executed_parameter} />
+          <InfoRow label="Execution Site"      value={tx.execution_site} />
+          {execH  != null && <InfoRow label="Counter — Hours" value={`${execH.toFixed(1)} Hr`}  mono />}
+          {execKm != null && <InfoRow label="Counter — KM"    value={`${execKm.toFixed(0)} KM`} mono />}
+        </div>
+      </div>
 
-          {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-          <div className="flex gap-3 pt-1">
-            <button onClick={save} disabled={saving} className="flex-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm">
-              {saving ? 'Saving…' : (sheet ? 'Update' : 'Create Check Sheet')}
-            </button>
-            <button onClick={onClose} className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm">Cancel</button>
+      {/* Section B */}
+      {(showH || showKm || showDays) && (
+        <div>
+          <SectionTitle label="B. Execution Interval Analysis" />
+          <div className="overflow-x-auto rounded-xl border border-gray-200">
+            <table className="w-full min-w-max">
+              <thead>
+                <tr className="bg-gray-50 text-[10px] text-gray-400 font-semibold uppercase tracking-wider">
+                  <th className="px-3 py-2.5 text-left w-16">Type</th>
+                  <th className="px-3 py-2.5 text-right">Previous</th>
+                  <th className="px-3 py-2.5 text-right">Current</th>
+                  <th className="px-3 py-2.5 text-right">Exec. Interval</th>
+                  <th className="px-3 py-2.5 text-right">Recommended</th>
+                  <th className="px-3 py-2.5 text-right">Deviation</th>
+                  <th className="px-3 py-2.5 text-right">Exec. %</th>
+                </tr>
+              </thead>
+              <tbody>
+                {showH && (
+                  <IntRow label="Hours"
+                    prev={prevH  != null ? prevH.toFixed(1)  + ' Hr'   : null}
+                    curr={execH  != null ? execH.toFixed(1)  + ' Hr'   : null}
+                    interval={intH  != null ? intH.toFixed(1)  + ' Hr' : null}
+                    recommended={recH    ? recH    + ' Hr'   : null}
+                    deviation={devH} pct={pctH} />
+                )}
+                {showKm && (
+                  <IntRow label="KM"
+                    prev={prevKm  != null ? prevKm.toFixed(0)  + ' KM' : null}
+                    curr={execKm  != null ? execKm.toFixed(0)  + ' KM' : null}
+                    interval={intKm   != null ? intKm + ' KM'          : null}
+                    recommended={recKm     ? recKm    + ' KM'          : null}
+                    deviation={devKm} pct={pctKm} />
+                )}
+                {showDays && (
+                  <IntRow label="Days"
+                    prev={fmtDate(tx.prev_date)}
+                    curr={fmtDate(tx.execution_date)}
+                    interval={intDays  != null ? intDays + ' days'     : null}
+                    recommended={recDays  ? recDays + ' days'          : null}
+                    deviation={devDays} pct={pctDays} />
+                )}
+              </tbody>
+            </table>
           </div>
+        </div>
+      )}
+
+      {/* Section C */}
+      <div>
+        <SectionTitle label="C. Transaction Details" />
+        <div className="bg-white rounded-xl border border-gray-200 px-4 divide-y divide-gray-50">
+          {tx.transaction_no && <InfoRow label="Transaction No."  value={tx.transaction_no} highlight />}
+          <InfoRow label="Execution Date"   value={fmtDate(tx.execution_date)} />
+          <InfoRow label="Executed By"      value={tx.executed_by_name} />
+          <InfoRow label="Entered By"       value={tx.created_by_name} />
+          {tx.created_at && <InfoRow label="Date of Entry" value={new Date(tx.created_at).toLocaleString('en-IN')} />}
+          {tx.updated_by_name && <InfoRow label="Updated By"   value={tx.updated_by_name} />}
+          {tx.updated_at      && <InfoRow label="Updated At"   value={new Date(tx.updated_at).toLocaleString('en-IN')} />}
         </div>
       </div>
     </div>
   )
 }
 
-// ── Schedule Modal ────────────────────────────────────────────────────────────
+// ── New Transaction Modal ─────────────────────────────────────────────────────
 
-function ScheduleModal({ sheets, machines, onClose, onSaved }) {
-  const [form, setForm] = useState({ check_sheet_id: '', machine_id: '', project_id: '', start_date: today(), next_due_date: today() })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-  const [projects, setProjects] = useState([])
+function NewTxModal({ onClose, onSaved }) {
+  const [machines,     setMachines]     = useState([])
+  const [scsList,      setScsList]      = useState([])
+  const [machineId,    setMachineId]    = useState('')
+  const [machineScsId, setMachineScsId] = useState('')
+  const [selectedScs,  setSelectedScs]  = useState(null)
+  const [currentHours, setCurrentHours] = useState(null)
+  const [currentKm,    setCurrentKm]    = useState(null)
+  const [fetchingR,    setFetchingR]    = useState(false)
+  const [form, setForm] = useState({
+    execution_date:     todayStr(),
+    ticket_ref:         '',
+    remark:             '',
+    parameter:          '',
+    executed_parameter: '',
+    execution_site:     '',
+  })
+  const [saving,          setSaving]          = useState(false)
+  const [error,           setError]           = useState('')
+  const [machinesLoading, setMachinesLoading] = useState(true)
 
   useEffect(() => {
-    getProjects().then(r => setProjects(r.data.data || [])).catch(() => {})
+    setMachinesLoading(true)
+    getMachines()
+      .then(r => setMachines(r.data.data || r.data || []))
+      .catch(() => {})
+      .finally(() => setMachinesLoading(false))
   }, [])
 
+  useEffect(() => {
+    if (!machineId) { setScsList([]); setMachineScsId(''); setSelectedScs(null); return }
+    getMachineScs({ machine_id: machineId })
+      .then(r => {
+        setScsList(r.data.data || [])
+        setCurrentHours(r.data.current_hours ?? null)
+        setCurrentKm(r.data.current_km ?? null)
+      })
+      .catch(() => {})
+  }, [machineId])
+
+  useEffect(() => {
+    setSelectedScs(scsList.find(s => String(s.id) === String(machineScsId)) || null)
+  }, [machineScsId, scsList])
+
+  useEffect(() => {
+    if (!machineId || !form.execution_date) return
+    setFetchingR(true)
+    getLatestReadingBefore({ machine_id: machineId, before_date: form.execution_date })
+      .then(r => {
+        const entry = r.data?.data
+        setCurrentHours(entry?.r1_close ?? null)
+        setCurrentKm(entry?.r2_close ?? null)
+      })
+      .catch(() => {})
+      .finally(() => setFetchingR(false))
+  }, [machineId, form.execution_date])
+
+  useEffect(() => {
+    if (!machineId) return
+    const m = machines.find(m => String(m.id) === String(machineId))
+    if (m?.project_code) {
+      setForm(f => ({
+        ...f,
+        execution_site: m.project_code + (m.project_name ? ` (${m.project_name})` : ''),
+      }))
+    }
+  }, [machineId, machines])
+
+  const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
+
+  // Live calculations
+  const prevH   = selectedScs?.last_done_hours != null ? parseFloat(selectedScs.last_done_hours) : null
+  const prevKm  = selectedScs?.last_done_km    != null ? parseFloat(selectedScs.last_done_km)    : null
+  const prevDate = selectedScs?.last_done_date ?? null
+  const execH   = currentHours != null ? parseFloat(currentHours) : null
+  const execKm  = currentKm    != null ? parseFloat(currentKm)    : null
+  const recH    = selectedScs?.interval_hours ? parseInt(selectedScs.interval_hours) : null
+  const recKm   = selectedScs?.interval_km    ? parseInt(selectedScs.interval_km)    : null
+  const recDays = selectedScs?.interval_days  ? parseInt(selectedScs.interval_days)  : null
+
+  const intH    = execH  != null && prevH  != null ? Math.round((execH  - prevH)  * 10) / 10 : null
+  const intKm   = execKm != null && prevKm != null ? Math.round(execKm - prevKm)              : null
+  const intDays = prevDate && form.execution_date
+    ? Math.ceil((new Date(form.execution_date) - new Date(prevDate)) / 86400000) : null
+
+  const devH    = intH    != null && recH    != null ? Math.round((intH    - recH)    * 10) / 10 : null
+  const devKm   = intKm   != null && recKm   != null ? Math.round(intKm   - recKm)               : null
+  const devDays = intDays != null && recDays != null ? intDays - recDays                          : null
+
+  const pctH    = intH    != null && recH    != null ? (intH    / recH    * 100) : null
+  const pctKm   = intKm   != null && recKm   != null ? (intKm   / recKm   * 100) : null
+  const pctDays = intDays != null && recDays != null ? (intDays / recDays * 100) : null
+
+  const showCalc = selectedScs && (recH || recKm || recDays || execH || execKm)
+  const showH    = !!(recH    || execH   || prevH)
+  const showKmC  = !!(recKm   || execKm  || prevKm)
+  const showDC   = !!(recDays || intDays)
+
+  const devLabel = (d) => d != null ? (d > 0 ? '+' : '') + d : '—'
+  const pctLabel = (p) => p != null ? p.toFixed(1) + '%' : '—'
+  const pctCls   = (p) => p == null ? '' : p >= 100 ? 'text-red-600' : p >= 80 ? 'text-amber-600' : 'text-green-600'
+  const devCls   = (d) => d == null ? '' : d > 0 ? 'text-red-600' : 'text-green-600'
+
   const save = async () => {
-    if (!form.check_sheet_id || !form.machine_id) { setError('Check sheet and machine are required'); return }
+    if (!machineId || !machineScsId || !form.execution_date) {
+      setError('Please select asset, SCS and execution date.')
+      return
+    }
     setSaving(true); setError('')
-    try { await createServiceSchedule(form); onSaved() }
-    catch (err) { setError(err.response?.data?.error || 'Failed to save') }
-    finally { setSaving(false) }
+    try {
+      await createScsTransaction({
+        machine_scs_id:     parseInt(machineScsId),
+        execution_date:     form.execution_date,
+        execution_hours:    execH,
+        execution_km:       execKm,
+        ticket_ref:         form.ticket_ref         || null,
+        remark:             form.remark             || null,
+        parameter:          form.parameter          || null,
+        executed_parameter: form.executed_parameter || null,
+        execution_site:     form.execution_site     || null,
+      })
+      onSaved()
+    } catch (e) {
+      setError(e.response?.data?.error || 'Failed to save transaction')
+    } finally {
+      setSaving(false)
+    }
   }
+
+  const inp = 'border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white w-full'
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
-        <div className="flex items-center justify-between px-5 py-4 border-b">
-          <h2 className="font-semibold text-gray-900">New Service Schedule</h2>
-          <button onClick={onClose}><X size={18} className="text-gray-400" /></button>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-4 bg-green-700 rounded-t-2xl flex-shrink-0">
+          <div className="flex items-center gap-2">
+            <ClipboardCheck size={15} className="text-green-200" />
+            <h2 className="text-sm font-bold text-white">New SCS Transaction</h2>
+          </div>
+          <button onClick={onClose} className="text-green-200 hover:text-white"><X size={18} /></button>
         </div>
-        <div className="p-5 space-y-4">
-          <div>
-            <label className={lbl}>Check Sheet *</label>
-            <select className={inp} value={form.check_sheet_id} onChange={e => setForm(f => ({...f, check_sheet_id: e.target.value}))}>
-              <option value="">— Select —</option>
-              {sheets.filter(s => s.active).map(s => <option key={s.id} value={s.id}>{s.sheet_code} — {s.name}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={lbl}>Machine / Asset *</label>
-            <select className={inp} value={form.machine_id} onChange={e => setForm(f => ({...f, machine_id: e.target.value}))}>
-              <option value="">— Select —</option>
-              {machines.map(m => <option key={m.id} value={m.id}>{m.nickname || m.slno} — {m.eq_type}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className={lbl}>Project</label>
-            <select className={inp} value={form.project_id} onChange={e => setForm(f => ({...f, project_id: e.target.value}))}>
-              <option value="">— None —</option>
-              {projects.map(p => <option key={p.id} value={p.id}>{p.code} — {p.name}</option>)}
-            </select>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className={lbl}>Start Date</label>
-              <input type="date" className={inp} value={form.start_date} onChange={e => setForm(f => ({...f, start_date: e.target.value}))} />
-            </div>
-            <div>
-              <label className={lbl}>First Due Date</label>
-              <input type="date" className={inp} value={form.next_due_date} onChange={e => setForm(f => ({...f, next_due_date: e.target.value}))} />
-            </div>
-          </div>
-          {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-          <div className="flex gap-3">
-            <button onClick={save} disabled={saving} className="flex-1 bg-blue-700 hover:bg-blue-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm">
-              {saving ? 'Saving…' : 'Create Schedule'}
-            </button>
-            <button onClick={onClose} className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm">Cancel</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
-}
 
-// ── Execute Modal ─────────────────────────────────────────────────────────────
-
-function ExecuteModal({ schedule, onClose, onSaved }) {
-  const items = schedule.check_items || []
-  const [form, setForm] = useState({
-    execution_date: today(), start_time: '', end_time: '',
-    meter_reading: '', technician_name: '', overall_status: 'completed', remarks: '',
-    items_result: items.map(it => ({ seq: it.seq, task: it.task, status: 'ok', remarks: '', value: '' })),
-    parts_used: [],
-  })
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  const setItemResult = (i, k, v) => setForm(f => {
-    const arr = [...f.items_result]; arr[i] = { ...arr[i], [k]: v }; return { ...f, items_result: arr }
-  })
-
-  const save = async () => {
-    setSaving(true); setError('')
-    try {
-      await createServiceExecution({ ...form, schedule_id: schedule.id })
-      onSaved()
-    } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save')
-    } finally { setSaving(false) }
-  }
-
-  const STATUS_BADGE = { ok: 'bg-green-100 text-green-800', fail: 'bg-red-100 text-red-800', na: 'bg-gray-100 text-gray-600' }
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-start justify-center p-4 bg-black/50 overflow-y-auto">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-6">
-        <div className="flex items-center justify-between px-5 py-4 border-b sticky top-0 bg-white rounded-t-2xl z-10">
-          <div>
-            <h2 className="font-semibold text-gray-900">Execute: {schedule.check_sheet_name}</h2>
-            <p className="text-xs text-gray-500">{schedule.machine_name || schedule.machine_slno}</p>
-          </div>
-          <button onClick={onClose}><X size={18} className="text-gray-400" /></button>
-        </div>
-        <div className="p-5 space-y-4">
-          <div className="grid grid-cols-3 gap-4">
+        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+          {/* Asset + SCS */}
+          <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className={lbl}>Execution Date *</label>
-              <input type="date" className={inp} value={form.execution_date} onChange={e => setForm(f => ({...f, execution_date: e.target.value}))} />
+              <label className="block text-xs text-gray-500 font-medium mb-1">Asset *</label>
+              <select value={machineId} onChange={e => setMachineId(e.target.value)} className={inp}>
+                <option value="">{machinesLoading ? 'Loading…' : '— Select Asset —'}</option>
+                {machines.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.nickname || m.slno}{m.project_code ? ` [${m.project_code}]` : ''}
+                  </option>
+                ))}
+              </select>
             </div>
             <div>
-              <label className={lbl}>Start Time</label>
-              <input type="time" className={inp} value={form.start_time} onChange={e => setForm(f => ({...f, start_time: e.target.value}))} />
-            </div>
-            <div>
-              <label className={lbl}>End Time</label>
-              <input type="time" className={inp} value={form.end_time} onChange={e => setForm(f => ({...f, end_time: e.target.value}))} />
-            </div>
-            <div>
-              <label className={lbl}>Meter Reading</label>
-              <input type="number" className={inp} value={form.meter_reading} onChange={e => setForm(f => ({...f, meter_reading: e.target.value}))} />
-            </div>
-            <div>
-              <label className={lbl}>Technician</label>
-              <input className={inp} value={form.technician_name} onChange={e => setForm(f => ({...f, technician_name: e.target.value}))} />
-            </div>
-            <div>
-              <label className={lbl}>Overall Status</label>
-              <select className={inp} value={form.overall_status} onChange={e => setForm(f => ({...f, overall_status: e.target.value}))}>
-                <option value="completed">Completed</option>
-                <option value="in_progress">In Progress</option>
-                <option value="failed">Failed / Issues Found</option>
+              <label className="block text-xs text-gray-500 font-medium mb-1">Service CheckSheet *</label>
+              <select value={machineScsId} onChange={e => setMachineScsId(e.target.value)} className={inp} disabled={!machineId}>
+                <option value="">— Select SCS —</option>
+                {scsList.map(s => (
+                  <option key={s.id} value={s.id}>{s.custom_name || s.check_sheet_name || `SCS #${s.id}`}</option>
+                ))}
               </select>
             </div>
           </div>
 
-          {items.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">Check Items</p>
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-gray-50">
-                    <tr>
-                      <th className="px-3 py-2 text-left text-gray-600">#</th>
-                      <th className="px-3 py-2 text-left text-gray-600">Task</th>
-                      <th className="px-3 py-2 text-left text-gray-600 w-28">Status</th>
-                      <th className="px-3 py-2 text-left text-gray-600 w-20">Value</th>
-                      <th className="px-3 py-2 text-left text-gray-600">Remarks</th>
+          {/* Date */}
+          <div>
+            <label className="block text-xs text-gray-500 font-medium mb-1">Execution Date *</label>
+            <input type="date" value={form.execution_date} max={todayStr()}
+              onChange={e => set('execution_date', e.target.value)}
+              className={inp} />
+          </div>
+
+          {/* Auto-fetched readings */}
+          {machineId && (
+            <div className={`rounded-xl border p-4 ${fetchingR ? 'border-blue-200 bg-blue-50' : 'border-gray-200 bg-gray-50'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <p className="text-xs font-semibold text-gray-600">Meter Readings (from DPR Log)</p>
+                {fetchingR && <Loader2 size={12} className="animate-spin text-blue-500" />}
+              </div>
+              {fetchingR ? (
+                <p className="text-xs text-blue-500">Fetching DPR reading…</p>
+              ) : execH == null && execKm == null ? (
+                <p className="text-xs text-amber-600">No DPR entry found for or before this date.</p>
+              ) : (
+                <div className="flex gap-6">
+                  {execH  != null && <p className="text-sm font-bold text-blue-700"><span className="text-xs font-normal text-gray-500 mr-1">Hours:</span>{execH.toFixed(1)} Hr</p>}
+                  {execKm != null && <p className="text-sm font-bold text-green-700"><span className="text-xs font-normal text-gray-500 mr-1">KM:</span>{execKm.toFixed(0)}</p>}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Live interval preview */}
+          {showCalc && (
+            <div className="rounded-xl border border-purple-100 bg-purple-50 p-4">
+              <p className="text-xs font-semibold text-purple-700 mb-2.5">Interval Preview</p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-[11px]">
+                  <thead>
+                    <tr className="text-gray-400 text-[9px] uppercase tracking-wider">
+                      <th className="text-left pr-3 py-1 w-16">Type</th>
+                      <th className="text-right pr-3">Prev</th>
+                      <th className="text-right pr-3">Current</th>
+                      <th className="text-right pr-3">Interval</th>
+                      <th className="text-right pr-3">Recommended</th>
+                      <th className="text-right pr-3">Deviation</th>
+                      <th className="text-right">Exec %</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {form.items_result.map((it, i) => (
-                      <tr key={i} className={`${it.status === 'fail' ? 'bg-red-50' : 'bg-white'}`}>
-                        <td className="px-3 py-2 text-gray-500">{it.seq}</td>
-                        <td className="px-3 py-2 font-medium text-gray-800">{it.task}</td>
-                        <td className="px-3 py-2">
-                          <select
-                            className={`border rounded px-1.5 py-0.5 text-xs font-semibold ${STATUS_BADGE[it.status]}`}
-                            value={it.status}
-                            onChange={e => setItemResult(i, 'status', e.target.value)}
-                          >
-                            <option value="ok">OK / Pass</option>
-                            <option value="fail">Fail / Issue</option>
-                            <option value="na">N/A</option>
-                          </select>
-                        </td>
-                        <td className="px-3 py-2">
-                          <input className="w-full border border-gray-200 rounded px-1.5 py-0.5 text-xs" value={it.value} onChange={e => setItemResult(i, 'value', e.target.value)} placeholder="Reading" />
-                        </td>
-                        <td className="px-3 py-2">
-                          <input className="w-full border border-gray-200 rounded px-1.5 py-0.5 text-xs" value={it.remarks} onChange={e => setItemResult(i, 'remarks', e.target.value)} placeholder={it.status === 'fail' ? 'Describe issue…' : ''} />
-                        </td>
+                  <tbody>
+                    {showH && (
+                      <tr className="border-t border-purple-100">
+                        <td className="py-1.5 pr-3 font-semibold text-purple-700">Hours</td>
+                        <td className="py-1.5 pr-3 text-right font-mono">{prevH  != null ? prevH.toFixed(1)  : '—'}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono">{execH  != null ? execH.toFixed(1)  : '—'}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono font-semibold">{intH   != null ? intH.toFixed(1)   : '—'}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono text-gray-500">{recH   ?? '—'}</td>
+                        <td className={`py-1.5 pr-3 text-right font-mono font-semibold ${devCls(devH)}`}>{devLabel(devH != null ? devH.toFixed(1) : null)}</td>
+                        <td className={`py-1.5 text-right font-mono font-semibold ${pctCls(pctH)}`}>{pctLabel(pctH)}</td>
                       </tr>
-                    ))}
+                    )}
+                    {showKmC && (
+                      <tr className="border-t border-purple-100">
+                        <td className="py-1.5 pr-3 font-semibold text-purple-700">KM</td>
+                        <td className="py-1.5 pr-3 text-right font-mono">{prevKm  != null ? prevKm.toFixed(0)  : '—'}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono">{execKm  != null ? execKm.toFixed(0)  : '—'}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono font-semibold">{intKm   != null ? intKm   : '—'}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono text-gray-500">{recKm   ?? '—'}</td>
+                        <td className={`py-1.5 pr-3 text-right font-mono font-semibold ${devCls(devKm)}`}>{devLabel(devKm)}</td>
+                        <td className={`py-1.5 text-right font-mono font-semibold ${pctCls(pctKm)}`}>{pctLabel(pctKm)}</td>
+                      </tr>
+                    )}
+                    {showDC && (
+                      <tr className="border-t border-purple-100">
+                        <td className="py-1.5 pr-3 font-semibold text-purple-700">Days</td>
+                        <td className="py-1.5 pr-3 text-right font-mono">{fmtDate(prevDate)}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono">{fmtDate(form.execution_date)}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono font-semibold">{intDays != null ? intDays + 'd' : '—'}</td>
+                        <td className="py-1.5 pr-3 text-right font-mono text-gray-500">{recDays ? recDays + 'd' : '—'}</td>
+                        <td className={`py-1.5 pr-3 text-right font-mono font-semibold ${devCls(devDays)}`}>{devLabel(devDays != null ? devDays + 'd' : null)}</td>
+                        <td className={`py-1.5 text-right font-mono font-semibold ${pctCls(pctDays)}`}>{pctLabel(pctDays)}</td>
+                      </tr>
+                    )}
                   </tbody>
                 </table>
               </div>
             </div>
           )}
 
-          <div>
-            <label className={lbl}>Remarks</label>
-            <textarea className={inp + ' resize-none'} rows={2} value={form.remarks} onChange={e => setForm(f => ({...f, remarks: e.target.value}))} />
+          {/* Additional fields */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 font-medium mb-1">Ticket / WO Ref.</label>
+              <input value={form.ticket_ref} onChange={e => set('ticket_ref', e.target.value)}
+                className={inp} placeholder="e.g. WO-2026-00123" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 font-medium mb-1">Execution Site</label>
+              <input value={form.execution_site} onChange={e => set('execution_site', e.target.value)}
+                className={inp} placeholder="Project / Site" />
+            </div>
           </div>
 
-          {error && <p className="text-sm text-red-600 bg-red-50 px-3 py-2 rounded-lg">{error}</p>}
-          <div className="flex gap-3">
-            <button onClick={save} disabled={saving} className="flex-1 bg-green-700 hover:bg-green-800 disabled:opacity-60 text-white font-medium py-2.5 rounded-lg text-sm">
-              {saving ? 'Saving…' : 'Submit Execution'}
-            </button>
-            <button onClick={onClose} className="px-5 border border-gray-300 text-gray-600 hover:bg-gray-50 rounded-lg text-sm">Cancel</button>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 font-medium mb-1">Parameter</label>
+              <input value={form.parameter} onChange={e => set('parameter', e.target.value)}
+                className={inp} placeholder="Expected value" />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 font-medium mb-1">Executed Parameter</label>
+              <input value={form.executed_parameter} onChange={e => set('executed_parameter', e.target.value)}
+                className={inp} placeholder="Actual value" />
+            </div>
           </div>
+
+          <div>
+            <label className="block text-xs text-gray-500 font-medium mb-1">Remark</label>
+            <textarea rows={2} value={form.remark} onChange={e => set('remark', e.target.value)}
+              placeholder="Notes about this execution…"
+              className={inp + ' resize-none'} />
+          </div>
+
+          {error && <p className="text-xs text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+        </div>
+
+        {/* Footer */}
+        <div className="flex gap-3 px-5 py-4 bg-gray-50 border-t border-gray-100 rounded-b-2xl flex-shrink-0">
+          <button onClick={save}
+            disabled={saving || !machineId || !machineScsId || !form.execution_date}
+            className="flex-1 flex items-center justify-center gap-2 py-2.5 bg-green-700 hover:bg-green-800 disabled:opacity-60 text-white font-semibold rounded-lg text-sm">
+            {saving ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle size={13} />}
+            {saving ? 'Saving…' : 'Save Transaction'}
+          </button>
+          <button onClick={onClose}
+            className="px-5 py-2.5 border border-gray-300 text-gray-600 rounded-lg text-sm hover:bg-gray-50">
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -362,331 +687,108 @@ function ExecuteModal({ schedule, onClose, onSaved }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 export default function ServiceCheckSheets() {
-  const [activeTab, setActiveTab] = useState(0)
-  const [sheets, setSheets]       = useState([])
-  const [schedules, setSchedules] = useState([])
-  const [executions, setExecutions] = useState([])
-  const [machines, setMachines]   = useState([])
-  const [loading, setLoading]     = useState(false)
-  const [sheetModal, setSheetModal]   = useState(false)
-  const [editSheet, setEditSheet]     = useState(null)
-  const [scheduleModal, setScheduleModal] = useState(false)
-  const [executeSchedule, setExecuteSchedule] = useState(null)
-  const [viewExecution, setViewExecution] = useState(null)
-  const [exFilter, setExFilter]   = useState({ from: '', to: '' })
+  const [transactions, setTransactions] = useState([])
+  const [selected,     setSelected]     = useState(null)
+  const [loading,      setLoading]      = useState(true)
+  const [search,       setSearch]       = useState('')
+  const [showNew,      setShowNew]      = useState(false)
 
-  const loadAll = useCallback(async () => {
+  const load = useCallback(() => {
     setLoading(true)
-    try {
-      const [sh, sc, ex, mc] = await Promise.all([
-        getCheckSheets(), getServiceSchedules(), getServiceExecutions(), getMachines(),
-      ])
-      setSheets(sh.data.data || [])
-      setSchedules(sc.data.data || [])
-      setExecutions(ex.data.data || [])
-      setMachines((mc.data.data || mc.data || []))
-    } catch {} finally { setLoading(false) }
+    getScsTransactions()
+      .then(r => setTransactions(r.data.data || []))
+      .catch(() => {})
+      .finally(() => setLoading(false))
   }, [])
 
-  useEffect(() => { loadAll() }, [loadAll])
+  useEffect(() => { load() }, [load])
 
-  const statusColor = (s) => {
-    if (!s) return 'bg-gray-100 text-gray-600'
-    const map = { active: 'bg-green-100 text-green-700', paused: 'bg-amber-100 text-amber-700', completed: 'bg-blue-100 text-blue-700' }
-    return map[s] || 'bg-gray-100 text-gray-600'
-  }
-
-  const overdueCount = schedules.filter(s => s.status === 'active' && s.days_overdue > 0).length
-  const dueToday = schedules.filter(s => s.status === 'active' && s.days_overdue === 0).length
+  const filtered = transactions.filter(tx => {
+    if (!search) return true
+    const q = search.toLowerCase()
+    return (
+      (tx.transaction_no || '').toLowerCase().includes(q) ||
+      (tx.scs_name       || '').toLowerCase().includes(q) ||
+      (tx.nickname       || '').toLowerCase().includes(q) ||
+      (tx.machine_slno   || '').toLowerCase().includes(q) ||
+      (tx.eq_type        || '').toLowerCase().includes(q)
+    )
+  })
 
   return (
-    <div className="p-4 max-w-full">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h1 className="text-xl font-bold text-gray-900 flex items-center gap-2"><ClipboardCheck size={20} />Service Check Sheets</h1>
-          <div className="flex items-center gap-3 mt-1">
-            {overdueCount > 0 && <span className="text-xs font-semibold text-red-600 bg-red-50 px-2 py-0.5 rounded-full flex items-center gap-1"><TriangleAlert size={11} />{overdueCount} Overdue</span>}
-            {dueToday > 0 && <span className="text-xs font-semibold text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full flex items-center gap-1"><Clock size={11} />{dueToday} Due Today</span>}
+    <div className="flex h-full overflow-hidden bg-gray-50">
+      {/* Left panel */}
+      <div className="w-72 flex-shrink-0 border-r border-gray-200 bg-white flex flex-col">
+        {/* Panel header */}
+        <div className="px-3 py-3 border-b border-gray-100 flex-shrink-0">
+          <div className="flex items-center gap-1.5 mb-2.5">
+            <ClipboardCheck size={13} className="text-green-700" />
+            <h2 className="text-xs font-bold text-gray-700 uppercase tracking-wide">SCS Transactions</h2>
+          </div>
+          <div className="relative">
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input value={search} onChange={e => setSearch(e.target.value)}
+              placeholder="Search name / asset…"
+              className="w-full border border-gray-200 rounded-lg pl-7 pr-3 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500" />
           </div>
         </div>
-        <button onClick={loadAll} className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg"><RefreshCw size={16} /></button>
-      </div>
 
-      {/* Tab bar */}
-      <div className="flex border-b border-gray-200 mb-4 gap-1">
-        {TABS.map((t, i) => (
-          <button key={t} onClick={() => setActiveTab(i)}
-            className={`px-4 py-2.5 text-sm font-medium rounded-t-lg transition-colors ${activeTab === i ? 'bg-blue-600 text-white' : 'text-gray-500 hover:bg-gray-100'}`}>
-            {t}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Tab 0: Running Status ── */}
-      {activeTab === 0 && (
-        <div className="space-y-3">
+        {/* Transaction list */}
+        <div className="flex-1 overflow-y-auto">
           {loading ? (
-            <div className="py-10 text-center text-gray-400"><RefreshCw size={16} className="inline animate-spin mr-2" />Loading…</div>
-          ) : schedules.length === 0 ? (
-            <div className="py-10 text-center text-gray-400">
-              <Calendar size={32} className="mx-auto mb-2 text-gray-300" />
-              <p>No schedules yet. Create a schedule in the <strong>Service Schedule</strong> tab.</p>
+            <div className="flex items-center justify-center py-12">
+              <Loader2 size={18} className="animate-spin text-gray-300" />
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="text-center py-12">
+              <ClipboardCheck size={28} className="text-gray-200 mx-auto mb-2" />
+              <p className="text-xs text-gray-400">{search ? 'No results found' : 'No transactions yet'}</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3">
-              {schedules.map(sc => {
-                const overdue = sc.days_overdue > 0
-                const dueToday = sc.days_overdue === 0
-                return (
-                  <div key={sc.id} className={`bg-white rounded-xl border p-4 flex items-start gap-4 ${overdue ? 'border-red-200 bg-red-50/30' : dueToday ? 'border-amber-200 bg-amber-50/30' : 'border-gray-200'}`}>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-semibold text-gray-900 text-sm">{sc.machine_name || sc.machine_slno}</span>
-                        <span className="text-xs text-gray-400">{sc.eq_type}</span>
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusColor(sc.status)}`}>{sc.status}</span>
-                      </div>
-                      <p className="text-sm text-blue-700 font-medium">{sc.check_sheet_name}</p>
-                      <div className="flex flex-wrap gap-3 mt-2 text-xs text-gray-500">
-                        <span>Frequency: <strong>{sc.frequency}</strong></span>
-                        {sc.next_due_date && <span className={overdue ? 'text-red-600 font-semibold' : dueToday ? 'text-amber-600 font-semibold' : ''}>
-                          Next Due: <strong>{fmtDate(sc.next_due_date)}</strong>
-                          {overdue && <span className="ml-1 text-red-500">({sc.days_overdue}d overdue)</span>}
-                          {dueToday && <span className="ml-1 text-amber-500">(Today)</span>}
-                        </span>}
-                        {sc.last_done_date && <span>Last Done: <strong>{fmtDate(sc.last_done_date)}</strong></span>}
-                        {sc.project_code && <span>Project: {sc.project_code}</span>}
-                      </div>
-                    </div>
-                    {sc.status === 'active' && (
-                      <button
-                        onClick={() => setExecuteSchedule(sc)}
-                        className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 whitespace-nowrap"
-                      >
-                        <CircleCheck size={15} /> Execute
-                      </button>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
+            filtered.map(tx => (
+              <TxListItem key={tx.id} tx={tx}
+                selected={selected?.id === tx.id}
+                onClick={() => setSelected(tx)} />
+            ))
           )}
         </div>
-      )}
 
-      {/* ── Tab 1: Execution History ── */}
-      {activeTab === 1 && (
-        <div>
-          <div className="flex gap-2 mb-3">
-            <input type="date" className="border border-gray-300 rounded-lg px-3 py-2 text-sm" value={exFilter.from} onChange={e => setExFilter(f => ({...f, from: e.target.value}))} />
-            <span className="flex items-center text-gray-400 text-sm">to</span>
-            <input type="date" className="border border-gray-300 rounded-lg px-3 py-2 text-sm" value={exFilter.to} onChange={e => setExFilter(f => ({...f, to: e.target.value}))} />
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-            <table className="w-full text-sm whitespace-nowrap">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Execution No.</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Date</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Check Sheet</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Asset</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Technician</th>
-                  <th className="px-4 py-3 text-center font-semibold text-gray-600">Status</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {loading ? (
-                  <tr><td colSpan={7} className="py-10 text-center text-gray-400"><RefreshCw size={16} className="inline animate-spin mr-2" />Loading…</td></tr>
-                ) : executions.length === 0 ? (
-                  <tr><td colSpan={7} className="py-10 text-center text-gray-400">No execution records</td></tr>
-                ) : executions.map(ex => {
-                  const sc = { ok: 'bg-green-100 text-green-800', completed: 'bg-green-100 text-green-800', failed: 'bg-red-100 text-red-800', in_progress: 'bg-blue-100 text-blue-800', pending: 'bg-gray-100 text-gray-600' }
-                  return (
-                    <tr key={ex.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 font-mono text-xs text-blue-700 font-semibold">{ex.execution_number}</td>
-                      <td className="px-4 py-3">{fmtDate(ex.execution_date)}</td>
-                      <td className="px-4 py-3 text-gray-700">{ex.check_sheet_name}</td>
-                      <td className="px-4 py-3 text-gray-600">{ex.machine_name || ex.machine_slno}</td>
-                      <td className="px-4 py-3 text-gray-500 text-xs">{ex.technician_name || '—'}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${sc[ex.overall_status] || 'bg-gray-100 text-gray-600'}`}>{ex.overall_status}</span>
-                      </td>
-                      <td className="px-4 py-3">
-                        <button onClick={() => setViewExecution(ex)} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"><Eye size={13} /></button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
+        <div className="px-3 py-2 border-t border-gray-100 flex items-center justify-between flex-shrink-0">
+          <span className="text-[10px] text-gray-400">
+            {filtered.length} record{filtered.length !== 1 ? 's' : ''}
+          </span>
+          <button
+            onClick={() => selected && downloadScs(selected)}
+            disabled={!selected}
+            title={selected ? `Download ${selected.transaction_no || selected.scs_name}` : 'Select a record to download'}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors
+              disabled:opacity-30 disabled:cursor-not-allowed
+              enabled:bg-gray-100 enabled:hover:bg-blue-50 enabled:hover:text-blue-700 text-gray-600">
+            <Download size={12} /> Download
+          </button>
         </div>
-      )}
+      </div>
 
-      {/* ── Tab 2: Check Sheet Master ── */}
-      {activeTab === 2 && (
-        <div>
-          <div className="flex justify-end mb-3">
-            <button onClick={() => { setEditSheet(null); setSheetModal(true) }} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-              <Plus size={15} /> New Check Sheet
-            </button>
+      {/* Right panel */}
+      <div className="flex-1 overflow-y-auto">
+        {selected ? (
+          <TransactionDetail key={selected.id} tx={selected} />
+        ) : (
+          <div className="flex flex-col items-center justify-center h-full text-gray-300">
+            <ClipboardCheck size={48} className="mb-3" />
+            <p className="text-sm font-medium text-gray-400">Select a transaction to view details</p>
+            <p className="text-xs mt-1 text-gray-400">
+              or click <span className="font-semibold text-green-600">+ New</span> to record an execution
+            </p>
           </div>
-          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-            <table className="w-full text-sm whitespace-nowrap">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Code</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Name</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Asset Type</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Frequency</th>
-                  <th className="px-4 py-3 text-right font-semibold text-gray-600">Items</th>
-                  <th className="px-4 py-3 text-right font-semibold text-gray-600">Schedules</th>
-                  <th className="px-4 py-3 text-center font-semibold text-gray-600">Status</th>
-                  <th className="px-4 py-3" />
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {loading ? (
-                  <tr><td colSpan={8} className="py-10 text-center text-gray-400"><RefreshCw size={16} className="inline animate-spin mr-2" />Loading…</td></tr>
-                ) : sheets.length === 0 ? (
-                  <tr><td colSpan={8} className="py-10 text-center text-gray-400">No check sheets</td></tr>
-                ) : sheets.map(s => (
-                  <tr key={s.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3 font-mono text-xs text-blue-700 font-semibold">{s.sheet_code}</td>
-                    <td className="px-4 py-3 font-medium text-gray-900">{s.name}</td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{s.asset_type || '—'}</td>
-                    <td className="px-4 py-3 text-gray-600 capitalize">{s.frequency}{s.frequency === 'custom' ? ` (${s.frequency_value}d)` : ''}</td>
-                    <td className="px-4 py-3 text-right">{(s.check_items || []).length}</td>
-                    <td className="px-4 py-3 text-right">{s.schedule_count || 0}</td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${s.active ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
-                        {s.active ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3">
-                      <button onClick={() => { setEditSheet(s); setSheetModal(true) }} className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded"><Edit2 size={13} /></button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* ── Tab 3: Service Schedule ── */}
-      {activeTab === 3 && (
-        <div>
-          <div className="flex justify-end mb-3">
-            <button onClick={() => setScheduleModal(true)} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">
-              <Plus size={15} /> New Schedule
-            </button>
-          </div>
-          <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-            <table className="w-full text-sm whitespace-nowrap">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Asset</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Check Sheet</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Frequency</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Next Due</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Last Done</th>
-                  <th className="px-4 py-3 text-left font-semibold text-gray-600">Project</th>
-                  <th className="px-4 py-3 text-center font-semibold text-gray-600">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100">
-                {loading ? (
-                  <tr><td colSpan={7} className="py-10 text-center text-gray-400"><RefreshCw size={16} className="inline animate-spin mr-2" />Loading…</td></tr>
-                ) : schedules.length === 0 ? (
-                  <tr><td colSpan={7} className="py-10 text-center text-gray-400">No schedules yet</td></tr>
-                ) : schedules.map(sc => (
-                  <tr key={sc.id} className="hover:bg-gray-50">
-                    <td className="px-4 py-3">
-                      <div className="font-medium text-gray-900">{sc.machine_name || sc.machine_slno}</div>
-                      <div className="text-xs text-gray-400">{sc.eq_type}</div>
-                    </td>
-                    <td className="px-4 py-3 text-gray-700">{sc.check_sheet_name}</td>
-                    <td className="px-4 py-3 text-gray-500 capitalize">{sc.frequency}</td>
-                    <td className={`px-4 py-3 text-sm ${sc.days_overdue > 0 ? 'text-red-600 font-semibold' : ''}`}>{fmtDate(sc.next_due_date)}</td>
-                    <td className="px-4 py-3 text-gray-500">{fmtDate(sc.last_done_date)}</td>
-                    <td className="px-4 py-3 text-gray-500 text-xs">{sc.project_code || '—'}</td>
-                    <td className="px-4 py-3 text-center">
-                      <span className={`px-2 py-0.5 rounded-full text-xs font-semibold ${statusColor(sc.status)}`}>{sc.status}</span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Modals */}
-      {sheetModal && (
-        <CheckSheetModal
-          sheet={editSheet}
-          onClose={() => { setSheetModal(false); setEditSheet(null) }}
-          onSaved={() => { setSheetModal(false); setEditSheet(null); loadAll() }}
+      {showNew && (
+        <NewTxModal
+          onClose={() => setShowNew(false)}
+          onSaved={() => { setShowNew(false); load() }}
         />
-      )}
-      {scheduleModal && (
-        <ScheduleModal
-          sheets={sheets} machines={machines}
-          onClose={() => setScheduleModal(false)}
-          onSaved={() => { setScheduleModal(false); loadAll() }}
-        />
-      )}
-      {executeSchedule && (
-        <ExecuteModal
-          schedule={executeSchedule}
-          onClose={() => setExecuteSchedule(null)}
-          onSaved={() => { setExecuteSchedule(null); loadAll() }}
-        />
-      )}
-
-      {/* View Execution */}
-      {viewExecution && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-y-auto">
-            <div className="flex items-center justify-between px-5 py-4 border-b sticky top-0 bg-white rounded-t-2xl">
-              <h2 className="font-semibold text-gray-900">{viewExecution.execution_number}</h2>
-              <button onClick={() => setViewExecution(null)}><X size={18} className="text-gray-400" /></button>
-            </div>
-            <div className="p-5 text-sm space-y-4">
-              <div className="grid grid-cols-3 gap-2">
-                {[['Date', fmtDate(viewExecution.execution_date)], ['Asset', viewExecution.machine_name || viewExecution.machine_slno], ['Check Sheet', viewExecution.check_sheet_name], ['Technician', viewExecution.technician_name || '—'], ['Status', viewExecution.overall_status], ['Remarks', viewExecution.remarks || '—']].map(([k, v]) => (
-                  <div key={k} className="bg-gray-50 rounded-lg px-3 py-2"><p className="text-xs text-gray-400">{k}</p><p className="font-medium truncate">{v}</p></div>
-                ))}
-              </div>
-              {viewExecution.items_result?.length > 0 && (
-                <table className="w-full text-xs border border-gray-200 rounded overflow-hidden">
-                  <thead className="bg-gray-50"><tr>
-                    <th className="px-2 py-2 text-left">#</th>
-                    <th className="px-2 py-2 text-left">Task</th>
-                    <th className="px-2 py-2 text-center">Status</th>
-                    <th className="px-2 py-2 text-left">Value</th>
-                    <th className="px-2 py-2 text-left">Remarks</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {viewExecution.items_result.map((it, i) => {
-                      const bc = { ok: 'bg-green-100 text-green-700', fail: 'bg-red-100 text-red-700', na: 'bg-gray-100 text-gray-500' }
-                      return (
-                        <tr key={i} className={it.status === 'fail' ? 'bg-red-50' : 'hover:bg-gray-50'}>
-                          <td className="px-2 py-2">{it.seq}</td>
-                          <td className="px-2 py-2">{it.task}</td>
-                          <td className="px-2 py-2 text-center"><span className={`px-1.5 py-0.5 rounded text-xs font-medium ${bc[it.status] || 'bg-gray-100'}`}>{it.status}</span></td>
-                          <td className="px-2 py-2">{it.value || '—'}</td>
-                          <td className="px-2 py-2 text-gray-500">{it.remarks || '—'}</td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-        </div>
       )}
     </div>
   )

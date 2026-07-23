@@ -17,9 +17,20 @@ const getAll = async (req, res) => {
     if (status === 'inactive') where += ' AND ii.active=false';
     if (low_stock === 'true')  where += ' AND COALESCE(s.current_qty,0) <= ii.reorder_level';
 
+    const stockSubquery = `(
+      SELECT item_id,
+             SUM(current_qty)  AS current_qty,
+             SUM(reserved_qty) AS reserved_qty,
+             CASE WHEN SUM(current_qty) > 0
+                  THEN SUM(current_qty * average_cost) / SUM(current_qty)
+                  ELSE MAX(average_cost) END AS average_cost
+      FROM inventory_stock
+      GROUP BY item_id
+    ) s`;
+
     const countRes = await db.query(
       `SELECT COUNT(*) FROM inventory_items ii
-       LEFT JOIN inventory_stock s ON s.item_id=ii.id AND s.warehouse_id=ii.warehouse_id
+       LEFT JOIN ${stockSubquery} ON s.item_id=ii.id
        ${where}`, params
     );
     const total = parseInt(countRes.rows[0].count);
@@ -49,7 +60,7 @@ const getAll = async (req, res) => {
       LEFT JOIN warehouses w ON w.id = ii.warehouse_id
       LEFT JOIN vendors v ON v.id = ii.vendor_id
       LEFT JOIN warehouse_locations wl ON wl.id = ii.location_id
-      LEFT JOIN inventory_stock s ON s.item_id=ii.id AND s.warehouse_id=ii.warehouse_id
+      LEFT JOIN ${stockSubquery} ON s.item_id=ii.id
       ${where}
       ORDER BY ii.part_name
       LIMIT $${params.length - 1} OFFSET $${params.length}
@@ -78,7 +89,13 @@ const getOne = async (req, res) => {
       LEFT JOIN warehouses w ON w.id = ii.warehouse_id
       LEFT JOIN vendors v ON v.id = ii.vendor_id
       LEFT JOIN warehouse_locations wl ON wl.id = ii.location_id
-      LEFT JOIN inventory_stock s ON s.item_id=ii.id AND s.warehouse_id=ii.warehouse_id
+      LEFT JOIN (
+        SELECT item_id, SUM(current_qty) AS current_qty, SUM(reserved_qty) AS reserved_qty,
+               CASE WHEN SUM(current_qty) > 0
+                    THEN SUM(current_qty * average_cost) / SUM(current_qty)
+                    ELSE MAX(average_cost) END AS average_cost
+        FROM inventory_stock GROUP BY item_id
+      ) s ON s.item_id=ii.id
       WHERE ii.id=$1
     `, [req.params.id]);
     if (!r.rows.length) return res.status(404).json({ error: 'Not found' });
@@ -223,4 +240,78 @@ const remove = async (req, res) => {
   }
 };
 
-module.exports = { getAll, getOne, create, update, remove };
+const bulkCreate = async (req, res) => {
+  try {
+    const rows = req.body.rows;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return res.status(400).json({ error: 'rows array is required' });
+    }
+
+    // Seed the SP- code counter once to avoid per-row DB round-trips
+    let codeCounter = null;
+    const getNextCode = async () => {
+      if (codeCounter === null) {
+        const r = await db.query(
+          `SELECT part_code FROM inventory_items WHERE part_code ~ '^SP-[0-9]+$'
+           ORDER BY LENGTH(part_code) DESC, part_code DESC LIMIT 1`
+        );
+        codeCounter = r.rows.length ? parseInt(r.rows[0].part_code.replace('SP-', '')) + 1 : 1001;
+      }
+      return `SP-${codeCounter++}`;
+    };
+
+    let imported = 0;
+    const errors = [];
+
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
+      try {
+        const part_name = row.part_name?.toString().trim();
+        if (!part_name) throw new Error('Part Description is required');
+
+        const part_code = row.part_code?.toString().trim() || await getNextCode();
+
+        await db.query(`
+          INSERT INTO inventory_items
+            (part_code, part_name, description, oem_number,
+             manufacturer, unit, gst_percent, purchase_price, selling_price, active, created_by)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          ON CONFLICT (part_code) DO UPDATE SET
+            part_name      = EXCLUDED.part_name,
+            description    = COALESCE(EXCLUDED.description,    inventory_items.description),
+            oem_number     = COALESCE(EXCLUDED.oem_number,     inventory_items.oem_number),
+            manufacturer   = COALESCE(EXCLUDED.manufacturer,   inventory_items.manufacturer),
+            unit           = EXCLUDED.unit,
+            gst_percent    = EXCLUDED.gst_percent,
+            purchase_price = COALESCE(EXCLUDED.purchase_price, inventory_items.purchase_price),
+            selling_price  = COALESCE(EXCLUDED.selling_price,  inventory_items.selling_price),
+            active         = EXCLUDED.active,
+            updated_at     = NOW()
+        `, [
+          part_code,
+          part_name,
+          row.description?.toString().trim() || null,
+          row.oem_number?.toString().trim()   || null,
+          row.manufacturer?.toString().trim() || null,
+          row.unit?.toString().trim()         || 'Nos',
+          parseFloat(row.gst_percent)         || 0,
+          parseFloat(row.purchase_price)      || null,
+          parseFloat(row.selling_price)       || null,
+          row.active !== 'Inactive',
+          req.user.id
+        ]);
+
+        imported++;
+      } catch (err) {
+        errors.push({ row: i + 1, part_name: row.part_name || '(blank)', error: err.message });
+      }
+    }
+
+    res.json({ imported, errors });
+  } catch (err) {
+    console.error('bulkCreate inventory_items:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+module.exports = { getAll, getOne, create, update, remove, bulkCreate };

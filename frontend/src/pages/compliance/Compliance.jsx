@@ -511,16 +511,19 @@ function EditModal({ machine, onClose, onSaved }) {
 /* ─── Main Page ───────────────────────────────────────────────── */
 export default function Compliance() {
   const { isAdmin } = useAuth()
-  const [machines,  setMachines]  = useState([])
-  const [summary,   setSummary]   = useState({ expired: 0, critical: 0, warning: 0, valid: 0, na: 0, total: 0 })
-  const [upcoming,  setUpcoming]  = useState([])
-  const [projects,  setProjects]  = useState([])
-  const [loading,   setLoading]   = useState(false)
+  const [machines,    setMachines]    = useState([])
+  const [summary,     setSummary]     = useState({ expired: 0, critical: 0, warning: 0, valid: 0, na: 0, total: 0 })
+  const [upcoming,    setUpcoming]    = useState([])
+  const [projects,    setProjects]    = useState([])
+  const [loading,     setLoading]     = useState(false)
   const [editMachine, setEditMachine] = useState(null)
   const [tab,     setTab]     = useState('grid')
   const [upDays,  setUpDays]  = useState(30)
   const [tick,    setTick]    = useState(0)
-  const [filters, setFilters] = useState({ project_code: '', ownership: '', status: '', search: '' })
+  const [filters, setFilters] = useState({
+    project_code: '', ownership: '', status: '', search: '',
+    asset_group: '', asset_cat: '',
+  })
 
   useEffect(() => {
     getProjects().then(r => setProjects(r.data.data || [])).catch(() => {})
@@ -547,8 +550,20 @@ export default function Compliance() {
 
   useEffect(() => { fetchData() }, [fetchData])
 
+  /* ── Derived filter options from loaded data ── */
+  const assetGroups = useMemo(() => [...new Set(machines.map(m => m.asset_group).filter(Boolean))].sort(), [machines])
+  const assetCats   = useMemo(() => {
+    const src = filters.asset_group
+      ? machines.filter(m => m.asset_group === filters.asset_group)
+      : machines
+    return [...new Set(src.map(m => m.asset_cat).filter(Boolean))].sort()
+  }, [machines, filters.asset_group])
+
+  /* ── Client-side filtering ── */
   const filtered = useMemo(() => {
     return machines.filter(m => {
+      if (filters.asset_group && m.asset_group !== filters.asset_group) return false
+      if (filters.asset_cat  && m.asset_cat  !== filters.asset_cat)    return false
       if (filters.status) {
         const docStatuses = Object.values(m.docs).map(d => d.status)
         if (filters.status === 'na') {
@@ -559,11 +574,31 @@ export default function Compliance() {
       }
       if (filters.search) {
         const q = filters.search.toLowerCase()
-        if (!m.slno?.toLowerCase().includes(q) && !m.reg_no?.toLowerCase().includes(q) && !m.eq_type?.toLowerCase().includes(q)) return false
+        if (
+          !m.slno?.toLowerCase().includes(q) &&
+          !m.reg_no?.toLowerCase().includes(q) &&
+          !m.eq_type?.toLowerCase().includes(q) &&
+          !m.nickname?.toLowerCase().includes(q) &&
+          !m.asset_group?.toLowerCase().includes(q) &&
+          !m.asset_cat?.toLowerCase().includes(q)
+        ) return false
       }
       return true
     })
-  }, [machines, filters.status, filters.search])
+  }, [machines, filters])
+
+  /* ── Group filtered machines: asset_group → asset_cat → machines ── */
+  const grouped = useMemo(() => {
+    const groups = {}
+    for (const m of filtered) {
+      const g = m.asset_group || '(Unclassified)'
+      const c = m.asset_cat   || '(Unclassified)'
+      if (!groups[g])    groups[g] = {}
+      if (!groups[g][c]) groups[g][c] = []
+      groups[g][c].push(m)
+    }
+    return groups
+  }, [filtered])
 
   const exportExcel = () => {
     const data = []
@@ -572,42 +607,54 @@ export default function Compliance() {
         const d = m.docs[dt.key]
         const { status, days } = d ? calcStatus(d.expiry_date) : { status: 'na', days: null }
         data.push({
-          'SL#': m.slno, 'Reg No': m.reg_no || '—', 'Equipment': m.eq_type,
-          'Project': m.project_code, 'Ownership': m.ownership,
+          'Asset Group':  m.asset_group || '—',
+          'Asset Category': m.asset_cat || '—',
+          'Asset Name':   m.eq_type,
+          'Nickname':     m.nickname || '—',
+          'SL#':          m.slno,
+          'Reg No':       m.reg_no || '—',
+          'Project':      m.project_code,
+          'Ownership':    m.ownership,
           'Document Type': dt.label,
           'Doc / Policy #': d?.doc_no || '—',
-          'Issued By': d?.issued_by || '—',
-          'Issue Date': d?.issued_date ? fmtDate(d.issued_date) : '—',
-          'Expiry Date': d?.expiry_date ? fmtDate(d.expiry_date) : 'Not Updated',
+          'Issued By':    d?.issued_by || '—',
+          'Issue Date':   d?.issued_date ? fmtDate(d.issued_date) : '—',
+          'Expiry Date':  d?.expiry_date ? fmtDate(d.expiry_date) : 'Not Updated',
           'Days Remaining': days ?? '—',
-          'Status': STATUS_CFG[status]?.label || status,
-          'Attachment': d?.has_attachment ? (d.attachment_name || 'Yes') : '—',
+          'Status':       STATUS_CFG[status]?.label || status,
+          'Attachment':   d?.has_attachment ? (d.attachment_name || 'Yes') : '—',
         })
       }
       Object.values(m.docs).filter(d => d.doc_type === 'custom').forEach(d => {
         const { status, days } = calcStatus(d.expiry_date)
         data.push({
-          'SL#': m.slno, 'Reg No': m.reg_no || '—', 'Equipment': m.eq_type,
-          'Project': m.project_code, 'Ownership': m.ownership,
+          'Asset Group':   m.asset_group || '—',
+          'Asset Category': m.asset_cat || '—',
+          'Asset Name':    m.eq_type,
+          'Nickname':      m.nickname || '—',
+          'SL#':           m.slno,
+          'Reg No':        m.reg_no || '—',
+          'Project':       m.project_code,
+          'Ownership':     m.ownership,
           'Document Type': d.doc_label || 'Custom',
           'Doc / Policy #': d.doc_no || '—',
-          'Issued By': d.issued_by || '—',
-          'Issue Date': d.issued_date ? fmtDate(d.issued_date) : '—',
-          'Expiry Date': d.expiry_date ? fmtDate(d.expiry_date) : '—',
+          'Issued By':     d.issued_by || '—',
+          'Issue Date':    d.issued_date ? fmtDate(d.issued_date) : '—',
+          'Expiry Date':   d.expiry_date ? fmtDate(d.expiry_date) : '—',
           'Days Remaining': days ?? '—',
-          'Status': STATUS_CFG[status]?.label || status,
-          'Attachment': d.has_attachment ? (d.attachment_name || 'Yes') : '—',
+          'Status':        STATUS_CFG[status]?.label || status,
+          'Attachment':    d.has_attachment ? (d.attachment_name || 'Yes') : '—',
         })
       })
     }
     const ws = XLSX.utils.json_to_sheet(data)
-    ws['!cols'] = [8,12,16,10,8,22,16,22,10,10,8,12,20].map(w => ({ wch: w }))
+    ws['!cols'] = [16,16,18,16,8,12,10,8,22,16,22,10,10,8,12,20].map(w => ({ wch: w }))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, 'RTA Compliance')
     XLSX.writeFile(wb, `RTA_Compliance_${new Date().toISOString().split('T')[0]}.xlsx`)
   }
 
-  const sel = 'border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white'
+  const sel  = 'border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white'
   const setF = (k) => (e) => setFilters(f => ({ ...f, [k]: e.target.value }))
 
   const SUMMARY_CARDS = [
@@ -617,6 +664,9 @@ export default function Compliance() {
     { key: 'valid',    label: 'Valid',           icon: CheckCircle2,  iconColor: 'text-green-600' },
     { key: 'na',       label: 'Not Updated',     icon: Info,          iconColor: 'text-gray-400' },
   ]
+
+  /* total columns = asset_group + asset_cat + asset_name + nickname + sl# + reg_no + project + own + DOC_TYPES + +custom + action */
+  const TOTAL_COLS = 8 + DOC_TYPES.length + 1 + (isAdmin ? 1 : 0)
 
   return (
     <div className="space-y-4">
@@ -666,17 +716,32 @@ export default function Compliance() {
       </div>
 
       {/* ── Filters ── */}
-      <div className="bg-white rounded-xl border border-gray-200 p-3">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="bg-white rounded-xl border border-gray-200 p-3 space-y-2">
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2">
+          {/* Asset Group */}
+          <select value={filters.asset_group}
+            onChange={e => setFilters(f => ({ ...f, asset_group: e.target.value, asset_cat: '' }))}
+            className={sel}>
+            <option value="">All Groups</option>
+            {assetGroups.map(g => <option key={g} value={g}>{g}</option>)}
+          </select>
+          {/* Asset Category */}
+          <select value={filters.asset_cat} onChange={setF('asset_cat')} className={sel}>
+            <option value="">All Categories</option>
+            {assetCats.map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+          {/* Project */}
           <select value={filters.project_code} onChange={setF('project_code')} className={sel}>
             <option value="">All Projects</option>
             {projects.map(p => <option key={p.id} value={p.code}>{p.code}</option>)}
           </select>
+          {/* Ownership */}
           <select value={filters.ownership} onChange={setF('ownership')} className={sel}>
             <option value="">All Ownership</option>
             <option value="Own">Own</option>
             <option value="Hire">Hire</option>
           </select>
+          {/* Status */}
           <select value={filters.status} onChange={setF('status')} className={sel}>
             <option value="">All Statuses</option>
             <option value="expired">Expired</option>
@@ -685,126 +750,175 @@ export default function Compliance() {
             <option value="valid">Valid</option>
             <option value="na">Not Updated</option>
           </select>
+          {/* Search */}
           <div className="relative">
             <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
             <input
-              type="text" placeholder="Search SL#, Reg No, Type…"
+              type="text" placeholder="SL#, Reg No, Asset…"
               value={filters.search} onChange={setF('search')}
               className={sel + ' pl-9 w-full'}
             />
           </div>
         </div>
+        {(filters.asset_group || filters.asset_cat || filters.search || filters.status) && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {filters.asset_group && (
+              <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+                Group: {filters.asset_group}
+                <button onClick={() => setFilters(f => ({ ...f, asset_group: '', asset_cat: '' }))} className="hover:text-blue-900"><X size={10} /></button>
+              </span>
+            )}
+            {filters.asset_cat && (
+              <span className="text-xs bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full flex items-center gap-1">
+                Category: {filters.asset_cat}
+                <button onClick={() => setFilters(f => ({ ...f, asset_cat: '' }))} className="hover:text-indigo-900"><X size={10} /></button>
+              </span>
+            )}
+            <button onClick={() => setFilters(f => ({ ...f, asset_group: '', asset_cat: '', search: '', status: '' }))}
+              className="text-xs text-gray-400 hover:text-gray-600 underline">Clear all</button>
+          </div>
+        )}
       </div>
 
       {/* ── Tab Switch ── */}
       <div className="flex gap-1 bg-gray-100 rounded-lg p-1 w-fit">
         {[{ key: 'grid', label: 'Fleet Grid View' }, { key: 'report', label: 'Expiry Report' }].map(t => (
-          <button
-            key={t.key}
-            onClick={() => setTab(t.key)}
+          <button key={t.key} onClick={() => setTab(t.key)}
             className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
               tab === t.key ? 'bg-white text-blue-700 shadow-sm' : 'text-gray-600 hover:text-gray-800'
-            }`}
-          >
+            }`}>
             {t.label}
           </button>
         ))}
       </div>
 
-      {/* ── GRID VIEW ── */}
+      {/* ══════════════ GRID VIEW ══════════════ */}
       {tab === 'grid' && (
         <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <div className="px-4 py-2 border-b border-gray-100">
-            <p className="text-xs text-gray-400">{loading ? 'Loading…' : `${filtered.length} machines`}</p>
+          <div className="px-4 py-2 border-b border-gray-100 flex items-center justify-between">
+            <p className="text-xs text-gray-400">{loading ? 'Loading…' : `${filtered.length} assets`}</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-gray-50 border-b border-gray-200">
-                  <th className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">SL#</th>
+                  <th className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">Asset Group</th>
+                  <th className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">Category</th>
+                  <th className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">Asset Name</th>
+                  <th className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">Nickname / SL#</th>
                   <th className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">Reg No</th>
-                  <th className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">Equipment</th>
                   <th className="px-3 py-2.5 text-left font-semibold text-gray-500">Project</th>
                   <th className="px-3 py-2.5 text-left font-semibold text-gray-500">Own</th>
                   {DOC_TYPES.map(dt => (
                     <th key={dt.key} className="px-2 py-2.5 text-center font-semibold text-gray-500 whitespace-nowrap">{dt.short}</th>
                   ))}
-                  <th className="px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap">+Custom</th>
+                  <th className="px-3 py-2.5 font-semibold text-gray-500 whitespace-nowrap">+More</th>
                   {isAdmin && <th className="px-3 py-2.5 font-semibold text-gray-500">Action</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-100">
+              <tbody>
                 {!loading && filtered.length === 0 && (
                   <tr>
-                    <td colSpan={DOC_TYPES.length + 7} className="px-4 py-10 text-center text-gray-400">
-                      No machines match current filters
+                    <td colSpan={TOTAL_COLS} className="px-4 py-10 text-center text-gray-400">
+                      No assets match current filters
                     </td>
                   </tr>
                 )}
-                {filtered.map(m => {
-                  const customCount = Object.values(m.docs).filter(d => d.doc_type === 'custom').length
-                  return (
-                    <tr key={m.machine_id} className="hover:bg-gray-50/50 transition-colors">
-                      <td className="px-3 py-2 font-semibold whitespace-nowrap">{m.slno}</td>
-                      <td className="px-3 py-2 text-gray-600 whitespace-nowrap">{m.reg_no || '—'}</td>
-                      <td className="px-3 py-2 whitespace-nowrap">{m.eq_type}</td>
-                      <td className="px-3 py-2">
-                        <span className="bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded">{m.project_code}</span>
+                {Object.entries(grouped).map(([groupName, cats]) => (
+                  <>
+                    {/* ── Asset Group header ── */}
+                    <tr key={`g__${groupName}`} className="bg-blue-700">
+                      <td colSpan={TOTAL_COLS} className="px-4 py-1.5">
+                        <span className="text-xs font-bold text-white uppercase tracking-wide">{groupName}</span>
+                        <span className="ml-2 text-[10px] text-blue-200">
+                          {Object.values(cats).reduce((s, arr) => s + arr.length, 0)} assets
+                        </span>
                       </td>
-                      <td className="px-3 py-2">
-                        <span className={`font-medium ${m.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>{m.ownership}</span>
-                      </td>
-                      {DOC_TYPES.map(dt => {
-                        const doc = m.docs[dt.key]
-                        return (
-                          <td key={dt.key} className="px-2 py-2 text-center">
-                            <div className="flex flex-col items-center gap-0.5">
-                              <StatusBadge doc={doc} />
-                              {doc?.has_attachment && (
-                                <Paperclip size={9} className="text-gray-400" title={doc.attachment_name} />
-                              )}
-                            </div>
-                          </td>
-                        )
-                      })}
-                      <td className="px-3 py-2 text-center">
-                        {customCount > 0
-                          ? <span className="text-xs bg-purple-50 text-purple-600 border border-purple-200 rounded px-1.5 py-0.5 font-medium">+{customCount}</span>
-                          : <span className="text-gray-300">—</span>
-                        }
-                      </td>
-                      {isAdmin && (
-                        <td className="px-3 py-2">
-                          <button
-                            onClick={() => setEditMachine(m)}
-                            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded hover:bg-blue-50 transition-colors whitespace-nowrap"
-                          >
-                            <Edit2 size={10} /> Update
-                          </button>
-                        </td>
-                      )}
                     </tr>
-                  )
-                })}
+
+                    {Object.entries(cats).map(([catName, catMachines]) => (
+                      <>
+                        {/* ── Asset Category sub-header ── */}
+                        <tr key={`c__${groupName}__${catName}`} className="bg-blue-50 border-y border-blue-100">
+                          <td colSpan={TOTAL_COLS} className="px-5 py-1">
+                            <span className="text-[11px] font-semibold text-blue-700">{catName}</span>
+                            <span className="ml-2 text-[10px] text-blue-400">{catMachines.length} asset{catMachines.length !== 1 ? 's' : ''}</span>
+                          </td>
+                        </tr>
+
+                        {/* ── Machine rows ── */}
+                        {catMachines.map(m => {
+                          const customCount = Object.values(m.docs).filter(d => d.doc_type === 'custom').length
+                          return (
+                            <tr key={m.machine_id} className="hover:bg-gray-50/50 transition-colors border-b border-gray-100 last:border-0">
+                              <td className="px-3 py-2 text-gray-400 text-[10px]">—</td>
+                              <td className="px-3 py-2 text-gray-400 text-[10px]">—</td>
+                              <td className="px-3 py-2 font-medium text-gray-800 whitespace-nowrap">{m.eq_type}</td>
+                              <td className="px-3 py-2 whitespace-nowrap">
+                                {m.nickname
+                                  ? <span className="font-semibold text-gray-800">{m.nickname}</span>
+                                  : null}
+                                <span className={`${m.nickname ? ' text-gray-400 ml-1' : 'font-semibold text-gray-800'} font-mono`}>
+                                  {m.slno}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2 text-gray-500 whitespace-nowrap font-mono text-[11px]">{m.reg_no || '—'}</td>
+                              <td className="px-3 py-2">
+                                <span className="bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded">{m.project_code}</span>
+                              </td>
+                              <td className="px-3 py-2">
+                                <span className={`font-medium ${m.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>{m.ownership}</span>
+                              </td>
+                              {DOC_TYPES.map(dt => {
+                                const doc = m.docs[dt.key]
+                                return (
+                                  <td key={dt.key} className="px-2 py-2 text-center">
+                                    <div className="flex flex-col items-center gap-0.5">
+                                      <StatusBadge doc={doc} />
+                                      {doc?.has_attachment && (
+                                        <Paperclip size={9} className="text-gray-400" title={doc.attachment_name} />
+                                      )}
+                                    </div>
+                                  </td>
+                                )
+                              })}
+                              <td className="px-3 py-2 text-center">
+                                {customCount > 0
+                                  ? <span className="text-xs bg-purple-50 text-purple-600 border border-purple-200 rounded px-1.5 py-0.5 font-medium">+{customCount}</span>
+                                  : <span className="text-gray-300">—</span>
+                                }
+                              </td>
+                              {isAdmin && (
+                                <td className="px-3 py-2">
+                                  <button onClick={() => setEditMachine(m)}
+                                    className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-blue-600 border border-blue-200 rounded hover:bg-blue-50 transition-colors whitespace-nowrap">
+                                    <Edit2 size={10} /> Update
+                                  </button>
+                                </td>
+                              )}
+                            </tr>
+                          )
+                        })}
+                      </>
+                    ))}
+                  </>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
       )}
 
-      {/* ── REPORT VIEW ── */}
+      {/* ══════════════ REPORT VIEW ══════════════ */}
       {tab === 'report' && (
         <div className="space-y-3">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="text-sm text-gray-500 font-medium">Expiring within:</span>
             {[7, 15, 30, 60, 90, 180].map(d => (
-              <button
-                key={d}
-                onClick={() => setUpDays(d)}
+              <button key={d} onClick={() => setUpDays(d)}
                 className={`px-3 py-1 text-xs rounded-full font-semibold border transition-colors ${
                   upDays === d ? 'bg-blue-700 text-white border-blue-700' : 'text-gray-600 border-gray-300 hover:border-blue-400 hover:text-blue-600'
-                }`}
-              >
+                }`}>
                 {d} days
               </button>
             ))}
@@ -820,7 +934,7 @@ export default function Compliance() {
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-gray-50 border-b border-gray-200">
-                    {['SL#','Reg No','Equipment','Project','Own','Document','Doc #','Issued By','Expiry Date','Days','Status'].map(h => (
+                    {['Asset Group','Category','Asset Name','SL#','Reg No','Project','Own','Document','Doc #','Issued By','Expiry Date','Days','Status'].map(h => (
                       <th key={h} className="px-3 py-2.5 text-left font-semibold text-gray-500 whitespace-nowrap">{h}</th>
                     ))}
                     {isAdmin && <th className="px-3 py-2.5">Action</th>}
@@ -829,7 +943,7 @@ export default function Compliance() {
                 <tbody className="divide-y divide-gray-100">
                   {!loading && upcoming.length === 0 && (
                     <tr>
-                      <td colSpan={12} className="px-4 py-10 text-center text-gray-400">
+                      <td colSpan={14} className="px-4 py-10 text-center text-gray-400">
                         No expiries in this period
                       </td>
                     </tr>
@@ -838,13 +952,17 @@ export default function Compliance() {
                     const { status, days } = calcStatus(d.expiry_date)
                     const cfg = STATUS_CFG[status]
                     const daysText = days < 0 ? `${Math.abs(days)}d ago` : days === 0 ? 'Today!' : `${days}d`
-                    const docLabel = d.doc_type === 'custom' ? (d.doc_label || 'Custom') : (DOC_TYPES.find(x => x.key === d.doc_type)?.label || d.doc_type)
+                    const docLabel = d.doc_type === 'custom'
+                      ? (d.doc_label || 'Custom')
+                      : (DOC_TYPES.find(x => x.key === d.doc_type)?.label || d.doc_type)
                     const parentMachine = machines.find(m => m.machine_id === d.machine_id)
                     return (
                       <tr key={d.id} className="hover:bg-gray-50 transition-colors">
-                        <td className="px-3 py-2 font-semibold">{d.slno}</td>
-                        <td className="px-3 py-2 text-gray-600">{d.reg_no || '—'}</td>
-                        <td className="px-3 py-2">{d.eq_type}</td>
+                        <td className="px-3 py-2 text-gray-500">{d.asset_group || '—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{d.asset_cat || '—'}</td>
+                        <td className="px-3 py-2 font-medium">{d.eq_type}</td>
+                        <td className="px-3 py-2 font-semibold font-mono">{d.slno}</td>
+                        <td className="px-3 py-2 text-gray-500 font-mono text-[11px]">{d.reg_no || '—'}</td>
                         <td className="px-3 py-2">
                           <span className="bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded">{d.project_code}</span>
                         </td>
@@ -852,8 +970,8 @@ export default function Compliance() {
                           <span className={`font-medium ${d.ownership === 'Own' ? 'text-blue-600' : 'text-violet-600'}`}>{d.ownership}</span>
                         </td>
                         <td className="px-3 py-2 font-medium">{docLabel}</td>
-                        <td className="px-3 py-2 text-gray-600">{d.doc_no || '—'}</td>
-                        <td className="px-3 py-2 text-gray-600">{d.issued_by || '—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{d.doc_no || '—'}</td>
+                        <td className="px-3 py-2 text-gray-500">{d.issued_by || '—'}</td>
                         <td className="px-3 py-2 font-medium">{fmtDate(d.expiry_date)}</td>
                         <td className="px-3 py-2">
                           <span className="font-bold tabular-nums" style={{ color: cfg.color }}>{daysText}</span>
@@ -866,8 +984,7 @@ export default function Compliance() {
                             {parentMachine && (
                               <button
                                 onClick={() => { setEditMachine(parentMachine); setTab('grid') }}
-                                className="text-xs text-blue-600 border border-blue-200 rounded px-2 py-0.5 hover:bg-blue-50"
-                              >
+                                className="text-xs text-blue-600 border border-blue-200 rounded px-2 py-0.5 hover:bg-blue-50">
                                 <Edit2 size={10} />
                               </button>
                             )}

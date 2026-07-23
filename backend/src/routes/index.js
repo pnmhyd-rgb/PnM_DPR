@@ -44,6 +44,7 @@ router.use('/asset-group-configs',     require('./assetGroupConfigs'));
 router.use('/equipment-type-configs',  require('./equipmentTypeConfigs'));
 router.use('/equipment-type-scs',      require('./equipmentTypeScs'));
 router.use('/machine-scs',             require('./machineScs'));
+router.use('/scs-transactions',        require('./scsTransactions'));
 router.use('/invoice-rules',           require('./invoiceRules'));
 router.use('/invoice-calculations',    require('./invoiceCalculations'));
 router.use('/inventory/dashboard',     require('./inventoryDashboard'));

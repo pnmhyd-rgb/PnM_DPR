@@ -4,7 +4,7 @@ import {
   getHireVendors, createHireVendor, updateHireVendor, deleteHireVendor,
   getHireWorkOrders, getHireWorkOrder, createHireWorkOrder, updateHireWorkOrder,
   deleteHireWorkOrder, submitHireWorkOrder, approveHireWOL1, approveHireWOFinal,
-  rejectHireWorkOrder, renewHireWorkOrder, getProjects, getEquipmentTypes,
+  rejectHireWorkOrder, renewHireWorkOrder, linkAssetToHireWO, getProjects, getEquipmentTypes,
   getHireIndents, getHireIndent,
   getTermsLibrary, createTermsLibraryItem, updateTermsLibraryItem, deleteTermsLibraryItem,
   getTermsCategories, createTermsCategory, deleteTermsCategory,
@@ -775,6 +775,7 @@ function WOModal({ wo, onClose, onSaved }) {
     indent_number: wo?.indent_number || '',
     vendor_offer_no: wo?.vendor_offer_no || '',
     vendor_id: wo?.vendor_id || '',
+    machine_id: wo?.machine_id ? String(wo.machine_id) : '',
     project_id: wo?.project_id || '',
     start_date: wo?.start_date?.slice(0,10) || '',
     end_date: wo?.end_date?.slice(0,10) || '',
@@ -954,6 +955,17 @@ function WOModal({ wo, onClose, onSaved }) {
               <select className={inp} value={form.vendor_id} onChange={setF('vendor_id')}>
                 <option value="">— select vendor —</option>
                 {vendors.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className={lbl}>Linked Asset</label>
+              <select className={inp} value={form.machine_id} onChange={setF('machine_id')}>
+                <option value="">— select asset (optional) —</option>
+                {machinesList.map(m => (
+                  <option key={m.id} value={m.id}>
+                    {m.slno}{m.nickname ? ` (${m.nickname})` : ''} · {m.eq_type}{m.reg_no ? ` · ${m.reg_no}` : ''}
+                  </option>
+                ))}
               </select>
             </div>
             <div>
@@ -1596,17 +1608,26 @@ function ApprovalRow({ level, approvedBy, approvedAt, remarks, status }) {
 
 function WODetailModal({ woId, onClose, onAction }) {
   const { isAdmin } = useAuth()
-  const [wo,       setWo]      = useState(null)
-  const [loading,  setLoading] = useState(true)
-  const [remarks,  setRemarks] = useState('')
-  const [actErr,   setActErr]  = useState('')
-  const [acting,   setActing]  = useState('')
+  const [wo,             setWo]            = useState(null)
+  const [loading,        setLoading]       = useState(true)
+  const [remarks,        setRemarks]       = useState('')
+  const [actErr,         setActErr]        = useState('')
+  const [acting,         setActing]        = useState('')
+  const [machinesList,   setMachinesList]  = useState([])
+  const [approvalMachineId, setApprovalMachineId] = useState('')
+  const [linkMachineId,  setLinkMachineId] = useState('')
 
   const load = () => {
     setLoading(true)
-    getHireWorkOrder(woId).then(r => { setWo(r.data.data); setLoading(false) })
+    getHireWorkOrder(woId).then(r => {
+      const w = r.data.data
+      setWo(w)
+      setApprovalMachineId(w.machine_id ? String(w.machine_id) : '')
+      setLoading(false)
+    })
   }
   useEffect(load, [woId])
+  useEffect(() => { getMachines().then(r => setMachinesList(r.data.data || [])).catch(() => {}) }, [])
 
   const action = async (fn, label) => {
     setActing(label); setActErr('')
@@ -1679,6 +1700,17 @@ function WODetailModal({ woId, onClose, onAction }) {
               {wo.mobilization_advance && <> · Mobilization Advance: {wo.mobilization_advance}</>}
             </p>
           </div>
+          {wo.machine_id && (
+            <div className="bg-blue-50 border border-blue-200 rounded-xl p-3 space-y-1 col-span-2">
+              <p className="text-xs font-semibold text-blue-400 uppercase">Linked Asset</p>
+              <p className="font-semibold text-blue-900">
+                {wo.machine_slno}{wo.machine_nickname ? ` (${wo.machine_nickname})` : ''}
+              </p>
+              <p className="text-blue-700 text-sm">
+                {wo.machine_eq_type}{wo.machine_reg_no ? ` · ${wo.machine_reg_no}` : ''}
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Items table */}

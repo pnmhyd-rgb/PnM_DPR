@@ -40,15 +40,49 @@ const getByMachine = async (req, res) => {
           FROM equipment_type_scs ets
           LEFT JOIN check_sheets cs ON ets.check_sheet_id = cs.id
          WHERE ets.equipment_type_id = $1
-           AND ets.check_sheet_id NOT IN (
-             SELECT check_sheet_id FROM machine_scs
-              WHERE machine_id=$2 AND check_sheet_id IS NOT NULL
+           AND (
+             (ets.check_sheet_id IS NOT NULL AND ets.check_sheet_id NOT IN (
+               SELECT check_sheet_id FROM machine_scs
+                WHERE machine_id=$2 AND check_sheet_id IS NOT NULL
+             ))
+             OR
+             (ets.check_sheet_id IS NULL AND ets.id NOT IN (
+               SELECT eq_type_scs_id FROM machine_scs
+                WHERE machine_id=$2 AND eq_type_scs_id IS NOT NULL
+             ))
            )
       `, [eq_type_id, machine_id]);
       unsynced = u.rows;
     }
 
-    res.json({ data: r.rows, unsynced });
+    // Current meter reading from latest DPR entry (auto-link with log entry readings)
+    const latestEntry = await db.query(
+      `SELECT r1_close, r2_close FROM dpr_entries
+        WHERE machine_id = $1
+        ORDER BY entry_date DESC,
+                 CASE shift WHEN 'Night Shift' THEN 3 WHEN 'Dual Shift' THEN 2 WHEN 'Day Shift' THEN 1 ELSE 0 END DESC
+        LIMIT 1`,
+      [machine_id]
+    );
+    const le = latestEntry.rows[0] || null;
+    const current_hours = le?.r1_close ?? null;
+    const current_km    = le?.r2_close ?? null;
+
+    // Average daily working hours over last 30 days — used to project hours-based due dates
+    const avgResult = await db.query(
+      `SELECT COALESCE(
+         SUM(COALESCE(working_hours, 0)) / NULLIF(COUNT(entry_date), 0),
+         0
+       ) AS avg_daily_hours
+       FROM dpr_entries
+       WHERE machine_id = $1
+         AND entry_date >= CURRENT_DATE - INTERVAL '30 days'
+         AND working_hours > 0`,
+      [machine_id]
+    );
+    const avg_daily_hours = parseFloat(avgResult.rows[0]?.avg_daily_hours || 0);
+
+    res.json({ data: r.rows, unsynced, current_hours, current_km, avg_daily_hours });
   } catch (err) {
     console.error('getByMachine SCS error:', err);
     res.status(500).json({ error: 'Server error' });
