@@ -2777,7 +2777,8 @@ function MonthGridPanel({ machine, onBack, onMinimize, onEntrySaved, isAdmin, ca
                       <td className="px-3 py-2 text-center">
                         <div className="flex items-center justify-center gap-1">
                           <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full whitespace-nowrap"><CheckCircle2 size={10} /> Submitted</span>
-                          {canEditRangeDate && <button onClick={handleRangeEdit} className="inline-flex items-center justify-center text-gray-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit entry"><Pencil size={12} /></button>}
+                          {canEditRangeDate && !(pendingResetDate && ds >= pendingResetDate) && <button onClick={handleRangeEdit} className="inline-flex items-center justify-center text-gray-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit entry"><Pencil size={12} /></button>}
+                          {pendingResetDate && ds >= pendingResetDate && <span className="inline-flex items-center gap-1 text-[11px] text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title="Counter Reset pending — editing locked"><Lock size={9} /> Reset Pending</span>}
                         </div>
                       </td>
                     </tr>
@@ -2973,7 +2974,8 @@ function MonthGridPanel({ machine, onBack, onMinimize, onEntrySaved, isAdmin, ca
                                     !isFuture && <span className="inline-flex items-center gap-1 text-[10px] text-amber-700 bg-amber-50 border border-amber-200 px-1.5 py-0.5 rounded cursor-default whitespace-nowrap"><AlertTriangle size={9} /> Night pending</span>
                                   ) : (
                                     <>
-                                      {!isFuture && canEditDate && <button onClick={() => handleShiftEdit(ent)} className="inline-flex items-center justify-center text-gray-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit entry"><Pencil size={12} /></button>}
+                                      {!isFuture && canEditDate && !(pendingResetDate && dateStr >= pendingResetDate) && <button onClick={() => handleShiftEdit(ent)} className="inline-flex items-center justify-center text-gray-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit entry"><Pencil size={12} /></button>}
+                                      {pendingResetDate && dateStr >= pendingResetDate && <span className="inline-flex items-center gap-1 text-[11px] text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title="Counter Reset pending — editing locked"><Lock size={9} /> Reset Pending</span>}
                                     </>
                                   )}
                                 </div>
