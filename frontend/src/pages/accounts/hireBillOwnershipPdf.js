@@ -113,24 +113,21 @@ export async function downloadHireBillOwnershipPdf(data) {
     doc.addImage(logoData, 'PNG', LOGO_X, LOGO_Y, LOGO_W, LOGO_H)
   }
 
-  // Company name + title — centered in the space to the right of the logo
-  const textX = ML + LOGO_W + 4
-  const textW = TW - LOGO_W - 4
-
+  // Company name + title — centred on the FULL page width (logo sits beside, no overlap)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(13)
   doc.setTextColor(...BLACK)
-  doc.text('RVR PROJECTS PVT LTD', textX + textW / 2, 14, { align: 'center' })
+  doc.text('RVR PROJECTS PVT LTD', PW / 2, 14, { align: 'center' })
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(10)
   doc.setTextColor(...DARK)
-  doc.text('HIRE BILL ABSTRACT', textX + textW / 2, 20, { align: 'center' })
+  doc.text('HIRE BILL ABSTRACT', PW / 2, 20, { align: 'center' })
 
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   doc.setTextColor(...DARK)
-  doc.text(`For the Month of ${monthLabel}`, textX + textW / 2, 26, { align: 'center' })
+  doc.text(`For the Month of ${monthLabel}`, PW / 2, 26, { align: 'center' })
 
   // Full-width rule below header
   doc.setDrawColor(...BORD)
@@ -166,10 +163,10 @@ export async function downloadHireBillOwnershipPdf(data) {
     ['IFSC',     vendorDetails.bank_ifsc    || '—'],
   ]
   const rightRows = [
-    ['WO No',      woMachine?.wo_number || '—'],
-    ['Project',    `${data.projectCode || ''} ${data.projectName || ''}`.trim() || '—'],
-    ['Cal. Days',  `${nv(mac0.cal_days) || 30} Days`],
-    ['Working Days', `${nv(mac0.working_days).toFixed(0)} Days`],
+    ['WO No',     woMachine?.wo_number || '—'],
+    ['Project',   `${data.projectCode || ''} ${data.projectName || ''}`.trim() || '—'],
+    ['Cal. Days', `${nv(mac0.cal_days) || 30} Days`],
+    ['Working',   `${nv(mac0.working_days).toFixed(0)} Days`],
   ]
 
   const boxH = Math.max(leftRows.length, rightRows.length) * lineH + 6
@@ -192,7 +189,8 @@ export async function downloadHireBillOwnershipPdf(data) {
     doc.text(lbl, col2X + 2, bY + i * lineH)
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(...BLACK)
     const txt = String(val || '—')
-    doc.text(txt.length > 34 ? txt.slice(0, 33) + '…' : txt, col2X + 24, bY + i * lineH)
+    // Value at +20mm leaves clear space after longest label ("Cal. Days" ≈ 14mm at 7pt bold)
+    doc.text(txt.length > 36 ? txt.slice(0, 35) + '…' : txt, col2X + 20, bY + i * lineH)
   })
 
   y += boxH + 6
@@ -200,19 +198,21 @@ export async function downloadHireBillOwnershipPdf(data) {
   // ── Section-label helper (plain, no colour) ──────────────────────────────
   const secLabel = (text) => {
     doc.setFont('helvetica', 'bold')
-    doc.setFontSize(8)
+    doc.setFontSize(8.5)
     doc.setTextColor(...BLACK)
     doc.text(text, ML, y)
     doc.setDrawColor(...BORD)
-    doc.setLineWidth(0.25)
-    doc.line(ML, y + 1.5, PW - MR, y + 1.5)
-    y += 6
+    doc.setLineWidth(0.3)
+    // Rule 3mm below text baseline — clearly below descenders
+    doc.line(ML, y + 3, PW - MR, y + 3)
+    y += 8
   }
 
   // Common table style — plain grid, gray header, no colour
+  // bottom:15 keeps autoTable rows away from the footer line at PH-10
   const baseStyle = {
     theme:  'grid',
-    margin: { left: ML, right: MR },
+    margin: { left: ML, right: MR, bottom: 15 },
     styles: {
       fontSize:    7.5,
       cellPadding: 1.8,
@@ -463,7 +463,12 @@ export async function downloadHireBillOwnershipPdf(data) {
   }
 
   // ── Signature block ───────────────────────────────────────────────────────
-  y = Math.max(y, PH - 34)
+  // Push to a new page if there isn't enough room for the signature + footer
+  if (y > PH - 44) {
+    doc.addPage()
+    y = 20
+  }
+  y = Math.max(y, PH - 42)
   const sigW    = 50
   const sigGap  = (TW - 3 * sigW) / 2
   const sigX    = [ML, ML + sigW + sigGap, ML + 2 * (sigW + sigGap)]
