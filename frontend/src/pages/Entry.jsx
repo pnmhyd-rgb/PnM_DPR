@@ -3132,7 +3132,8 @@ function MonthGridPanel({ machine, onBack, onMinimize, onEntrySaved, isAdmin, ca
                           {hasEntry ? (
                             <div className="flex items-center justify-center gap-2">
                               <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-green-700 bg-green-100 px-2 py-0.5 rounded-full whitespace-nowrap"><CheckCircle2 size={10} /> Submitted</span>
-                              {!isFuture && canEditDate && <button onClick={handleEdit} className="inline-flex items-center justify-center text-gray-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit entry"><Pencil size={12} /></button>}
+                              {!isFuture && canEditDate && !(pendingResetDate && dateStr >= pendingResetDate) && <button onClick={handleEdit} className="inline-flex items-center justify-center text-gray-500 hover:text-blue-700 hover:bg-blue-50 p-1 rounded transition-colors" title="Edit entry"><Pencil size={12} /></button>}
+                              {pendingResetDate && dateStr >= pendingResetDate && <span className="inline-flex items-center gap-1 text-[11px] text-purple-700 bg-purple-50 border border-purple-200 px-2 py-0.5 rounded-full cursor-default whitespace-nowrap" title="Counter Reset pending — editing locked"><Lock size={9} /> Reset Pending</span>}
                             </div>
                           ) : isFuture ? (
                             <span className="text-xs text-gray-300">—</span>

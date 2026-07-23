@@ -9,8 +9,10 @@ const getRequests = async (req, res) => {
     const conditions = ['r.machine_id = $1'];
     const params = [machine_id];
 
-    // Non-admin users only see their own requests
-    if (req.user.role !== 'admin') {
+    // For non-admin users: pending requests are machine-level (used for calendar lock),
+    // so show all pending requests for the machine regardless of who submitted.
+    // For non-pending statuses (approved/rejected), only show the user's own requests.
+    if (req.user.role !== 'admin' && status !== 'pending') {
       params.push(req.user.id);
       conditions.push(`r.requested_by = $${params.length}`);
     }
